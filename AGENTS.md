@@ -8,6 +8,18 @@ the global `sillytavern-extension` skill for any extension work. Domain
 vocabulary lives in CONTEXT.md; decisions live in docs/adr/. The concept
 descends from the Self family in /home/opc/rp-prompting/prompts/perspective.
 
+## Development environment
+
+All live testing runs in the isolated STD installation at
+`/home/opc/SillyTavern-Dev` (`http://127.0.0.1:8001`), never in main
+SillyTavern. The extension kit at
+`/home/opc/projects/st-extensions/sillytavern-extension-kit` owns the
+deterministic checker, the STD installer, and the no-model smoke test
+(`tools/st-extension check` / `smoke-std`); its `okf/index.md` documents the
+environment contract. The upstream fork source (ST-Copilot) with its existing
+unit tests lives at
+`/home/opc/rp-prompting/workbench/extensions/st-copilot-image-generation/ST-Copilot`.
+
 ## Agent skills
 
 ### Issue tracker
