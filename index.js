@@ -6364,6 +6364,79 @@ var uiWindow = /*#__PURE__*/Object.freeze({
     updateIconVisibility: updateIconVisibility
 });
 
+// SillyTavern in-chat injection. Depth 0 is after the last message.
+const IN_CHAT = 1;
+const SYSTEM_ROLE = 0;
+const KEY_PREFIX = 'inner_voice_exchange_';
+
+const _activeKeys = new Set();
+
+function promptKey(anchorIndex) {
+    return `${KEY_PREFIX}${anchorIndex}`;
+}
+
+function exchangeDepthOf(settings) {
+    if (settings.exchangeDepth === undefined || settings.exchangeDepth === null) return 1;
+    const n = parseInt(settings.exchangeDepth, 10);
+    return Number.isFinite(n) ? Math.max(0, n) : 1;
+}
+
+function visibleAnchoredExchanges(conversation) {
+    return getExchanges(conversation).filter(e =>
+        e.anchorIndex !== null && e.anchorIndex !== undefined
+        && !isExchangeHidden(conversation, e.anchorIndex)
+    );
+}
+
+function renderExchangeBlock(turns) {
+    const body = (turns || []).map(t => {
+        const label = t.role === 'assistant' ? '{{user}}' : 'IV';
+        return `${label}: ${t.content}`;
+    }).join('\n');
+    const explanation = "This is {{user}}'s private inner exchange — one mind talking to itself. NPCs and the World cannot perceive it. IV: is the Inner Voice; {{user}}: is {{user}}.";
+    return `<inner-exchange>\n${explanation}\n\n${body}\n</inner-exchange>`;
+}
+
+function assembleSimulationView(conversation, settings, chatLength) {
+    const n = exchangeDepthOf(settings);
+    if (n === 0 || !chatLength) return [];
+    const selected = visibleAnchoredExchanges(conversation).slice(-n);
+    return selected.map(e => ({
+        anchorIndex: e.anchorIndex,
+        depth: Math.max(0, chatLength - 1 - e.anchorIndex),
+        content: renderExchangeBlock(e.turns),
+    }));
+}
+
+function syncSimulationView() {
+    const ctx = SillyTavern.getContext();
+    if (typeof ctx.setExtensionPrompt !== 'function') return;
+
+    const conv = getConversation();
+    const settings = getEffectiveSettings();
+    const chatLength = Array.isArray(ctx.chat) ? ctx.chat.length : 0;
+    const injections = assembleSimulationView(conv, settings, chatLength);
+
+    const nextKeys = new Set();
+    for (const inj of injections) {
+        const key = promptKey(inj.anchorIndex);
+        nextKeys.add(key);
+        ctx.setExtensionPrompt(key, inj.content, IN_CHAT, inj.depth, false, SYSTEM_ROLE);
+    }
+    for (const key of _activeKeys) {
+        if (!nextKeys.has(key)) ctx.setExtensionPrompt(key, '', IN_CHAT, 0, false, SYSTEM_ROLE);
+    }
+    _activeKeys.clear();
+    for (const key of nextKeys) _activeKeys.add(key);
+}
+
+var simulationView = /*#__PURE__*/Object.freeze({
+    __proto__: null,
+    assembleSimulationView: assembleSimulationView,
+    renderExchangeBlock: renderExchangeBlock,
+    syncSimulationView: syncSimulationView
+});
+
 function _getAspectEvolutiaPersonaFields() {
     try {
         const ctx = SillyTavern.getContext();
@@ -6535,7 +6608,8 @@ function getMainChatSlice(depth) {
     
     if (depth === 0) return [];
     const total = ctx.chat.length;
-    return ctx.chat.slice(-depth).map((m, i) => extractData(m, total - depth + i));
+    const start = Math.max(0, total - depth);
+    return ctx.chat.slice(start).map((m, i) => extractData(m, start + i));
 }
 
 async function assembleMessages(conversation, settings, pendingUserText) {
@@ -6577,8 +6651,15 @@ async function assembleMessages(conversation, settings, pendingUserText) {
                 }
             }
 
+            // Inner memory: each non-hidden exchange sits directly below its
+            // anchor inside this slice. Hidden or out-of-slice anchors take
+            // their exchanges with them; the UI keeps every exchange readable.
             const block = visibleSlice.map(m => {
-                return `<msg index="${m.chatIndex}" role="${m.role === 'user' ? 'user' : 'assistant'}">\n${m.content}\n</msg>`;
+                const msgXml = `<msg index="${m.chatIndex}" role="${m.role === 'user' ? 'user' : 'assistant'}">\n${m.content}\n</msg>`;
+                if (isExchangeHidden(conversation, m.chatIndex)) return msgXml;
+                const exchange = getExchangeAt(conversation, m.chatIndex);
+                if (!exchange || !exchange.turns.length) return msgXml;
+                return `${msgXml}\n\n${renderExchangeBlock(exchange.turns)}`;
             }).join('\n\n');
             
             let summaryText = '';
@@ -6594,14 +6675,6 @@ async function assembleMessages(conversation, settings, pendingUserText) {
             });
             messages.push({ role: 'assistant', content: 'Caught up. I remember all of it.' });
         }
-    }
-    // The inner memory carries the non-hidden exchanges; a hidden one is
-    // forgotten here while staying readable in the UI.
-    const limit = Math.max(1, parseInt(settings.localHistoryLimit) || 50);
-    for (const m of getVisibleTurns(conversation).slice(-limit)) {
-        let apiRole = m.role;
-        if (apiRole === 'system') apiRole = 'user';
-        messages.push({ role: apiRole, content: m.content });
     }
     if (pendingUserText !== null && pendingUserText !== undefined && pendingUserText !== '') {
         messages.push({ role: 'user', content: pendingUserText });
@@ -7189,7 +7262,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
             appendMsgEl(msgObj);
         }
 
-        const fullMessages = await assembleMessages(conversation, settings, null);
+        const fullMessages = await assembleMessages(conversation, settings, userText || null);
         const fullPromptText = fullMessages.map(m => m.content).join('\n');
         const tokensIn = await estimateTokens(fullPromptText);
 
@@ -7202,7 +7275,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
             tokensIn
         });
 
-        let result = await callGenerate(conversation, settings, null, onChunk);
+        let result = await callGenerate(conversation, settings, userText || null, onChunk);
 
         cleanupCursor();
         
@@ -8667,79 +8740,6 @@ var uiWidgets = /*#__PURE__*/Object.freeze({
     renderQuickPromptsBar: renderQuickPromptsBar,
     setupChangelogListeners: setupChangelogListeners,
     showQPIconPicker: showQPIconPicker
-});
-
-// SillyTavern in-chat injection. Depth 0 is after the last message.
-const IN_CHAT = 1;
-const SYSTEM_ROLE = 0;
-const KEY_PREFIX = 'inner_voice_exchange_';
-
-const _activeKeys = new Set();
-
-function promptKey(anchorIndex) {
-    return `${KEY_PREFIX}${anchorIndex}`;
-}
-
-function exchangeDepthOf(settings) {
-    if (settings.exchangeDepth === undefined || settings.exchangeDepth === null) return 1;
-    const n = parseInt(settings.exchangeDepth, 10);
-    return Number.isFinite(n) ? Math.max(0, n) : 1;
-}
-
-function visibleAnchoredExchanges(conversation) {
-    return getExchanges(conversation).filter(e =>
-        e.anchorIndex !== null && e.anchorIndex !== undefined
-        && !isExchangeHidden(conversation, e.anchorIndex)
-    );
-}
-
-function renderExchangeBlock(turns) {
-    const body = (turns || []).map(t => {
-        const label = t.role === 'assistant' ? '{{user}}' : 'IV';
-        return `${label}: ${t.content}`;
-    }).join('\n');
-    const explanation = "This is {{user}}'s private inner exchange — one mind talking to itself. NPCs and the World cannot perceive it. IV: is the Inner Voice; {{user}}: is {{user}}.";
-    return `<inner-exchange>\n${explanation}\n\n${body}\n</inner-exchange>`;
-}
-
-function assembleSimulationView(conversation, settings, chatLength) {
-    const n = exchangeDepthOf(settings);
-    if (n === 0 || !chatLength) return [];
-    const selected = visibleAnchoredExchanges(conversation).slice(-n);
-    return selected.map(e => ({
-        anchorIndex: e.anchorIndex,
-        depth: Math.max(0, chatLength - 1 - e.anchorIndex),
-        content: renderExchangeBlock(e.turns),
-    }));
-}
-
-function syncSimulationView() {
-    const ctx = SillyTavern.getContext();
-    if (typeof ctx.setExtensionPrompt !== 'function') return;
-
-    const conv = getConversation();
-    const settings = getEffectiveSettings();
-    const chatLength = Array.isArray(ctx.chat) ? ctx.chat.length : 0;
-    const injections = assembleSimulationView(conv, settings, chatLength);
-
-    const nextKeys = new Set();
-    for (const inj of injections) {
-        const key = promptKey(inj.anchorIndex);
-        nextKeys.add(key);
-        ctx.setExtensionPrompt(key, inj.content, IN_CHAT, inj.depth, false, SYSTEM_ROLE);
-    }
-    for (const key of _activeKeys) {
-        if (!nextKeys.has(key)) ctx.setExtensionPrompt(key, '', IN_CHAT, 0, false, SYSTEM_ROLE);
-    }
-    _activeKeys.clear();
-    for (const key of nextKeys) _activeKeys.add(key);
-}
-
-var simulationView = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    assembleSimulationView: assembleSimulationView,
-    renderExchangeBlock: renderExchangeBlock,
-    syncSimulationView: syncSimulationView
 });
 
 let extVersion = '?';

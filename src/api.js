@@ -1,6 +1,7 @@
 import { DEFAULT_SYSTEM_PROMPT, EXT_DISPLAY } from './constants.js';
 import { state } from './state.js';
-import { getEffectiveSettings, saveConversation, addTurn, getConversation, getLiveEdgeIndex, getVisibleTurns } from './conversation.js';
+import { getEffectiveSettings, saveConversation, addTurn, getConversation, getLiveEdgeIndex, getExchangeAt, isExchangeHidden } from './conversation.js';
+import { renderExchangeBlock } from './simulation-view.js';
 import { _dbgAdd } from './utils/util-debug.js';
 import { escHtml } from './utils/util-dom.js';
 import { _ensureWrapped, normalizeCharNamesInBlock } from './utils/util-text.js';
@@ -110,7 +111,8 @@ export function getMainChatSlice(depth) {
     
     if (depth === 0) return [];
     const total = ctx.chat.length;
-    return ctx.chat.slice(-depth).map((m, i) => extractData(m, total - depth + i));
+    const start = Math.max(0, total - depth);
+    return ctx.chat.slice(start).map((m, i) => extractData(m, start + i));
 }
 
 export async function assembleMessages(conversation, settings, pendingUserText) {
@@ -152,8 +154,15 @@ export async function assembleMessages(conversation, settings, pendingUserText) 
                 }
             }
 
+            // Inner memory: each non-hidden exchange sits directly below its
+            // anchor inside this slice. Hidden or out-of-slice anchors take
+            // their exchanges with them; the UI keeps every exchange readable.
             const block = visibleSlice.map(m => {
-                return `<msg index="${m.chatIndex}" role="${m.role === 'user' ? 'user' : 'assistant'}">\n${m.content}\n</msg>`;
+                const msgXml = `<msg index="${m.chatIndex}" role="${m.role === 'user' ? 'user' : 'assistant'}">\n${m.content}\n</msg>`;
+                if (isExchangeHidden(conversation, m.chatIndex)) return msgXml;
+                const exchange = getExchangeAt(conversation, m.chatIndex);
+                if (!exchange || !exchange.turns.length) return msgXml;
+                return `${msgXml}\n\n${renderExchangeBlock(exchange.turns)}`;
             }).join('\n\n');
             
             let summaryText = '';
@@ -169,14 +178,6 @@ export async function assembleMessages(conversation, settings, pendingUserText) 
             });
             messages.push({ role: 'assistant', content: 'Caught up. I remember all of it.' });
         }
-    }
-    // The inner memory carries the non-hidden exchanges; a hidden one is
-    // forgotten here while staying readable in the UI.
-    const limit = Math.max(1, parseInt(settings.localHistoryLimit) || 50);
-    for (const m of getVisibleTurns(conversation).slice(-limit)) {
-        let apiRole = m.role;
-        if (apiRole === 'system') apiRole = 'user';
-        messages.push({ role: apiRole, content: m.content });
     }
     if (pendingUserText !== null && pendingUserText !== undefined && pendingUserText !== '') {
         messages.push({ role: 'user', content: pendingUserText });
@@ -764,7 +765,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
             appendMsgEl(msgObj);
         }
 
-        const fullMessages = await assembleMessages(conversation, settings, null);
+        const fullMessages = await assembleMessages(conversation, settings, userText || null);
         const fullPromptText = fullMessages.map(m => m.content).join('\n');
         const tokensIn = await estimateTokens(fullPromptText);
 
@@ -777,7 +778,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
             tokensIn
         });
 
-        let result = await callGenerate(conversation, settings, null, onChunk);
+        let result = await callGenerate(conversation, settings, userText || null, onChunk);
 
         cleanupCursor();
         

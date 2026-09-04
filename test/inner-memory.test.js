@@ -91,6 +91,12 @@ function payloadText(messages) {
     return messages.map(m => m.content).join('\n');
 }
 
+function mainChatContent(messages) {
+    const block = messages.find(m => typeof m.content === 'string' && m.content.includes('<main_chat'));
+    assert.ok(block, 'payload has a main-chat slice');
+    return block.content;
+}
+
 async function reset() {
     files.clear();
     stub.chat = [mainMsg('The tavern falls silent.')];
@@ -189,6 +195,103 @@ test('hiding one exchange leaves the others intact and does not delete turns', a
     assert.ok(text.includes('kept thought B'));
     // Hiding is never deletion: the turn is still in the conversation.
     assert.ok(conv.messages.some(m => m.content === 'hidden thought'));
+});
+
+test('each in-slice exchange appears once, directly below its anchor, in exchange-block form', async () => {
+    stub.chat = [mainMsg('scene gamma')];
+    const conv = getConversation();
+    addTurn(conv, 'user', 'gamma thought');
+    addTurn(conv, 'assistant', 'gamma answer');
+
+    stub.chat.push(mainMsg('scene delta'));
+    addTurn(conv, 'user', 'delta thought');
+
+    const settings = getEffectiveSettings();
+    const messages = await assembleMessages(conv, settings, null);
+    const mainChat = mainChatContent(messages);
+
+    for (const [anchor, thought] of [['scene gamma', 'gamma thought'], ['scene delta', 'delta thought']]) {
+        const anchorPos = mainChat.indexOf(anchor);
+        const thoughtPos = mainChat.indexOf(thought);
+        assert.ok(anchorPos >= 0, `${anchor} is in the main-chat slice`);
+        assert.ok(thoughtPos >= 0, `${thought} is in the main-chat slice`);
+        const msgClose = mainChat.indexOf('</msg>', anchorPos);
+        assert.ok(thoughtPos > msgClose, `${thought} sits below its anchor message, not inside it`);
+        const between = mainChat.slice(msgClose, thoughtPos);
+        assert.ok(!between.includes('<msg '), `no other message between ${anchor} and ${thought}`);
+        assert.equal(mainChat.split(thought).length - 1, 1, `${thought} appears once`);
+    }
+
+    assert.match(mainChat, /<inner-exchange>/);
+    assert.match(mainChat, /<\/inner-exchange>/);
+    assert.match(mainChat, /\{\{user\}\}'s private inner exchange/);
+    assert.match(mainChat, /NPCs and the World/);
+    assert.match(mainChat, /IV: gamma thought/);
+    assert.match(mainChat, /\{\{user\}\}: gamma answer/);
+    assert.match(mainChat, /IV: delta thought/);
+});
+
+test('an exchange whose anchor is outside the depth slice appears nowhere in the payload', async () => {
+    stub.chat = [mainMsg('scene alpha')];
+    const conv = getConversation();
+    addTurn(conv, 'user', 'alpha thought');
+
+    stub.chat.push(mainMsg('scene beta'));
+    addTurn(conv, 'user', 'beta thought');
+
+    stub.chat.push(mainMsg('scene gamma'));
+    addTurn(conv, 'user', 'gamma thought');
+
+    stub.chat.push(mainMsg('scene delta'));
+    addTurn(conv, 'user', 'delta thought');
+
+    conv.overrides = { contextDepth: 2 };
+    const text = payloadText(await assembleMessages(conv, getEffectiveSettings(), null));
+
+    assert.ok(!text.includes('alpha thought'));
+    assert.ok(!text.includes('beta thought'));
+    assert.ok(text.includes('gamma thought'));
+    assert.ok(text.includes('delta thought'));
+});
+
+test('an exchange whose anchor message is hidden appears nowhere in the payload', async () => {
+    stub.chat = [mainMsg('visible one')];
+    const conv = getConversation();
+    addTurn(conv, 'user', 'visible thought one');
+
+    stub.chat.push({ mes: 'hidden scene', is_user: false, is_system: true });
+    addTurn(conv, 'user', 'hidden-anchor thought');
+
+    stub.chat.push(mainMsg('visible two'));
+    addTurn(conv, 'user', 'visible thought two');
+
+    const text = payloadText(await assembleMessages(conv, getEffectiveSettings(), null));
+
+    assert.ok(!text.includes('hidden-anchor thought'));
+    assert.ok(!text.includes('hidden scene'));
+    assert.ok(text.includes('visible thought one'));
+    assert.ok(text.includes('visible thought two'));
+});
+
+test('no flat exchange-stream section remains in the payload', async () => {
+    stub.chat = [mainMsg('scene')];
+    const conv = getConversation();
+    addTurn(conv, 'user', 'only-in-block thought');
+    addTurn(conv, 'assistant', 'only-in-block answer');
+
+    const messages = await assembleMessages(conv, getEffectiveSettings(), 'pending IV line');
+    const standalone = messages.filter(m =>
+        m.content === 'only-in-block thought' || m.content === 'only-in-block answer'
+    );
+    assert.equal(standalone.length, 0);
+
+    const mainIdx = messages.findIndex(m => typeof m.content === 'string' && m.content.includes('<main_chat'));
+    const afterMain = messages.slice(mainIdx + 1);
+    assert.equal(afterMain.length, 2);
+    assert.equal(afterMain[0].content, 'Caught up. I remember all of it.');
+    assert.equal(afterMain[1].role, 'user');
+    assert.equal(afterMain[1].content, 'pending IV line');
+    assert.ok(messages[mainIdx].content.includes('only-in-block thought'));
 });
 
 // ─── The system prompt (ticket #4 / ADR 0002) ─────────────────────────────────
