@@ -1,4 +1,4 @@
-import { THEME_PRESETS, THEME_VAR_DEFS, THEME_CSS_MAP, EXT_DISPLAY, DEFAULT_SYSTEM_PROMPT, DEFAULT_CHAR_EDIT_DIRECTIVE, DEFAULT_LB_MANAGE_PROMPT, DEFAULT_CHAT_EDIT_DIRECTIVE, TOOL_DEFINITIONS, DEFAULT_TOOLS_PROMPT, DEFAULT_MEMORY_PROMPT, I } from '../constants.js';
+import { THEME_PRESETS, THEME_VAR_DEFS, THEME_CSS_MAP, EXT_DISPLAY, DEFAULT_SYSTEM_PROMPT, DEFAULT_TOOLS_PROMPT, DEFAULT_MEMORY_PROMPT, I } from '../constants.js';
 import { state } from '../state.js';
 import { getSettings, saveSettings, getEffectiveSettings, setSessionOverride, clearAllSessionOverrides, getBindingKey, hasSessionOverrides, saveSessionsToMetadata, getCurrentSession, getSessionOverrides, getChatBucket, initChatBucket } from '../session.js';
 import { showCustomDialog, escHtml } from '../utils/util-dom.js';
@@ -23,151 +23,95 @@ import { _dbgAdd } from '../utils/util-debug.js';
 
 const _SETTINGS_DEF = [
     // ── General ──────────────────────────────────────────────────────────────
-    { key: 'enabled', stId: 'scp-enabled', spId: 'scp-sp-enabled', type: 'checkbox',
+    { key: 'enabled', stId: 'iv-enabled', spId: 'iv-sp-enabled', type: 'checkbox',
       onChange: val => {
-          const btn = document.getElementById('scp-wand-btn');
+          const btn = document.getElementById('iv-wand-btn');
           if (btn) btn.style.display = val ? '' : 'none';
           if (!val) import('./ui-window.js').then(m => m.hideWindow());
           import('./ui-window.js').then(m => {
-              m.updateIconVisibility(document.getElementById('scp-dock-icon'));
+              m.updateIconVisibility(document.getElementById('iv-dock-icon'));
               m.setupHotkey();
           });
       }
     },
-    { key: 'hotkeyEnabled',        stId: 'scp-hotkey-enabled',        spId: 'scp-sp-hotkey-enabled',        type: 'checkbox' },
-    { key: 'hotkey',               stId: 'scp-hotkey',                spId: 'scp-sp-hotkey',                type: 'input',
+    { key: 'hotkeyEnabled',        stId: 'iv-hotkey-enabled',        spId: 'iv-sp-hotkey-enabled',        type: 'checkbox' },
+    { key: 'hotkey',               stId: 'iv-hotkey',                spId: 'iv-sp-hotkey',                type: 'input',
       onChange: () => import('./ui-window.js').then(m => m.setupHotkey()) },
-    { key: 'searchHotkeyEnabled',  stId: 'scp-search-hotkey-enabled', spId: 'scp-sp-search-hotkey-enabled', type: 'checkbox',
+    { key: 'searchHotkeyEnabled',  stId: 'iv-search-hotkey-enabled', spId: 'iv-sp-search-hotkey-enabled', type: 'checkbox',
       onChange: () => import('./ui-chat.js').then(m => m.setupSearchHotkey()) },
-    { key: 'searchHotkey',         stId: 'scp-search-hotkey',         spId: 'scp-sp-search-hotkey',         type: 'input',
+    { key: 'searchHotkey',         stId: 'iv-search-hotkey',         spId: 'iv-sp-search-hotkey',         type: 'input',
       onChange: () => import('./ui-chat.js').then(m => m.setupSearchHotkey()) },
-    { key: 'floatingIconPersistent', stId: 'scp-icon-persistent', spId: 'scp-sp-icon-persistent', type: 'checkbox',
-      onChange: () => import('./ui-window.js').then(m => m.updateIconVisibility(document.getElementById('scp-dock-icon'))) },
-    { key: 'wobbleWindow',   stId: 'scp-wobble-window',  spId: 'scp-sp-wobble-window', type: 'checkbox', fromSetting: s => s.wobbleWindow !== false },
-    { key: 'performanceMode', stId: 'scp-perf-mode', spId: 'scp-sp-perf-mode', type: 'checkbox',
+    { key: 'floatingIconPersistent', stId: 'iv-icon-persistent', spId: 'iv-sp-icon-persistent', type: 'checkbox',
+      onChange: () => import('./ui-window.js').then(m => m.updateIconVisibility(document.getElementById('iv-dock-icon'))) },
+    { key: 'wobbleWindow',   stId: 'iv-wobble-window',  spId: 'iv-sp-wobble-window', type: 'checkbox', fromSetting: s => s.wobbleWindow !== false },
+    { key: 'performanceMode', stId: 'iv-perf-mode', spId: 'iv-sp-perf-mode', type: 'checkbox',
       onChange: () => import('./ui-window.js').then(m => m.applyCustomTheme(getSettings().customTheme || THEME_PRESETS.default)) },
-    { key: 'ghostModeHotkeyEnabled', stId: 'scp-ghost-hotkey-enabled', spId: 'scp-sp-ghost-hotkey-enabled', type: 'checkbox',
+    { key: 'ghostModeHotkeyEnabled', stId: 'iv-ghost-hotkey-enabled', spId: 'iv-sp-ghost-hotkey-enabled', type: 'checkbox',
       onChange: () => import('./ui-window.js').then(m => m.setupGhostHotkey()) },
-    { key: 'ghostModeHotkey', stId: 'scp-ghost-hotkey', spId: 'scp-sp-ghost-hotkey', type: 'input',
+    { key: 'ghostModeHotkey', stId: 'iv-ghost-hotkey', spId: 'iv-sp-ghost-hotkey', type: 'input',
       onChange: () => import('./ui-window.js').then(m => m.setupGhostHotkey()) },
-    { key: 'changelogAutoShow',    stId: null, spId: 'scp-sp-changelog-auto', type: 'checkbox' },
-    { key: 'includeSummaryception', stId: 'scp-include-summaryception', spId: 'scp-sp-include-summaryception', type: 'checkbox', fromSetting: s => s.includeSummaryception !== false },
-    { key: 'useAspectEvolutia',    stId: 'scp-use-aspect-evolutia',    spId: 'scp-sp-use-aspect-evolutia',    type: 'checkbox', fromSetting: s => s.useAspectEvolutia !== false },
-    { key: 'autoExpandMacros',     stId: 'scp-auto-expand-macros',     spId: 'scp-sp-auto-expand-macros',     type: 'checkbox' },
-    { key: 'includeHiddenMessages', stId: 'scp-include-hidden-msgs',   spId: 'scp-sp-include-hidden-msgs',    type: 'checkbox', updCtx: true },
-    { key: 'completionSoundOnlyWhenUnfocused', stId: 'scp-sound-unfocused', spId: 'scp-sp-sound-unfocused',  type: 'checkbox' },
+    { key: 'changelogAutoShow',    stId: null, spId: 'iv-sp-changelog-auto', type: 'checkbox' },
+    { key: 'includeSummaryception', stId: 'iv-include-summaryception', spId: 'iv-sp-include-summaryception', type: 'checkbox', fromSetting: s => s.includeSummaryception !== false },
+    { key: 'useAspectEvolutia',    stId: 'iv-use-aspect-evolutia',    spId: 'iv-sp-use-aspect-evolutia',    type: 'checkbox', fromSetting: s => s.useAspectEvolutia !== false },
+    { key: 'autoExpandMacros',     stId: 'iv-auto-expand-macros',     spId: 'iv-sp-auto-expand-macros',     type: 'checkbox' },
+    { key: 'includeHiddenMessages', stId: 'iv-include-hidden-msgs',   spId: 'iv-sp-include-hidden-msgs',    type: 'checkbox', updCtx: true },
+    { key: 'completionSoundOnlyWhenUnfocused', stId: 'iv-sound-unfocused', spId: 'iv-sp-sound-unfocused',  type: 'checkbox' },
 
     // ── Sliders ───────────────────────────────────────────────────────────────
-    { key: 'opacity', stId: 'scp-opacity-slider', spId: 'scp-sp-opacity-slider', type: 'slider', toVal: Number,
-      stValId: 'scp-opacity-val', spValId: 'scp-sp-opacity-val', valFmt: v => `${v}%`,
-      onChange: val => { const w = document.getElementById('scp-window'); if (w && !state.ghostModeActive) w.style.opacity = (val / 100).toString(); } },
-    { key: 'ghostModeOpacity', stId: 'scp-ghost-opacity', spId: 'scp-sp-ghost-opacity', type: 'slider', toVal: Number,
-      stValId: 'scp-ghost-opacity-val', spValId: 'scp-sp-ghost-opacity-val', valFmt: v => `${v}%`,
-      onChange: val => { const w = document.getElementById('scp-window'); if (w && state.ghostModeActive) w.style.opacity = (val / 100).toString(); } },
+    { key: 'opacity', stId: 'iv-opacity-slider', spId: 'iv-sp-opacity-slider', type: 'slider', toVal: Number,
+      stValId: 'iv-opacity-val', spValId: 'iv-sp-opacity-val', valFmt: v => `${v}%`,
+      onChange: val => { const w = document.getElementById('iv-window'); if (w && !state.ghostModeActive) w.style.opacity = (val / 100).toString(); } },
+    { key: 'ghostModeOpacity', stId: 'iv-ghost-opacity', spId: 'iv-sp-ghost-opacity', type: 'slider', toVal: Number,
+      stValId: 'iv-ghost-opacity-val', spValId: 'iv-sp-ghost-opacity-val', valFmt: v => `${v}%`,
+      onChange: val => { const w = document.getElementById('iv-window'); if (w && state.ghostModeActive) w.style.opacity = (val / 100).toString(); } },
 
     // ── Connection ────────────────────────────────────────────────────────────
-    { key: 'connectionSource',  stId: 'scp-conn-source',  spId: 'scp-sp-conn-source',  type: 'select', profileKey: true, onChange: _applyConnectionSourceVisibility },
-    { key: 'connectionProfileId', stId: 'scp-conn-profile', spId: 'scp-sp-conn-profile', type: 'select', profileKey: true },
-    { key: 'customUrl',   stId: 'scp-custom-url',   spId: 'scp-sp-custom-url',   type: 'input', profileKey: true },
-    { key: 'customKey',   stId: 'scp-custom-key',   spId: 'scp-sp-custom-key',   type: 'input', profileKey: true },
-    { key: 'customModel', stId: 'scp-custom-model', spId: 'scp-sp-custom-model', type: 'input', profileKey: true },
-    { key: 'maxTokens',   stId: 'scp-max-tokens',   spId: 'scp-sp-max-tokens',   type: 'input', toVal: Number, profileKey: true },
+    { key: 'connectionSource',  stId: 'iv-conn-source',  spId: 'iv-sp-conn-source',  type: 'select', profileKey: true, onChange: _applyConnectionSourceVisibility },
+    { key: 'connectionProfileId', stId: 'iv-conn-profile', spId: 'iv-sp-conn-profile', type: 'select', profileKey: true },
+    { key: 'customUrl',   stId: 'iv-custom-url',   spId: 'iv-sp-custom-url',   type: 'input', profileKey: true },
+    { key: 'customKey',   stId: 'iv-custom-key',   spId: 'iv-sp-custom-key',   type: 'input', profileKey: true },
+    { key: 'customModel', stId: 'iv-custom-model', spId: 'iv-sp-custom-model', type: 'input', profileKey: true },
+    { key: 'maxTokens',   stId: 'iv-max-tokens',   spId: 'iv-sp-max-tokens',   type: 'input', toVal: Number, profileKey: true },
 
     // ── Context ───────────────────────────────────────────────────────────────
-    { key: 'contextDepth', stId: 'scp-depth-slider', spId: 'scp-sp-depth-slider', type: 'slider', toVal: Number,
-      stValId: 'scp-depth-val', spValId: 'scp-sp-depth-val', updCtx: true, profileKey: true },
-    { key: 'localHistoryLimit',   stId: 'scp-history-limit',    spId: 'scp-sp-history-limit',    type: 'input',    toVal: Number, updCtx: true, profileKey: true },
-    { key: 'includeSystemPrompt', stId: 'scp-include-sysprompt', spId: 'scp-sp-include-sysprompt', type: 'checkbox', updCtx: true, profileKey: true },
-    { key: 'includeUserPersonality', stId: 'scp-include-persona', spId: 'scp-sp-include-persona', type: 'checkbox', updCtx: true, profileKey: true },
-    { key: 'includeAlternateSwipes', stId: 'scp-include-alt-swipes', spId: 'scp-sp-include-alt-swipes', type: 'checkbox', updCtx: true, profileKey: true },
-    { key: 'applyRegexToContext', stId: 'scp-apply-regex', spId: 'scp-sp-apply-regex', type: 'checkbox', updCtx: true, profileKey: true },
-    { key: 'reasoningTrimStrings', stId: 'scp-reasoning-trim', spId: 'scp-sp-reasoning-trim', type: 'textarea', profileKey: true },
+    { key: 'contextDepth', stId: 'iv-depth-slider', spId: 'iv-sp-depth-slider', type: 'slider', toVal: Number,
+      stValId: 'iv-depth-val', spValId: 'iv-sp-depth-val', updCtx: true, profileKey: true },
+    { key: 'localHistoryLimit',   stId: 'iv-history-limit',    spId: 'iv-sp-history-limit',    type: 'input',    toVal: Number, updCtx: true, profileKey: true },
+    { key: 'includeSystemPrompt', stId: 'iv-include-sysprompt', spId: 'iv-sp-include-sysprompt', type: 'checkbox', updCtx: true, profileKey: true },
+    { key: 'includeUserPersonality', stId: 'iv-include-persona', spId: 'iv-sp-include-persona', type: 'checkbox', updCtx: true, profileKey: true },
+    { key: 'includeAlternateSwipes', stId: 'iv-include-alt-swipes', spId: 'iv-sp-include-alt-swipes', type: 'checkbox', updCtx: true, profileKey: true },
+    { key: 'applyRegexToContext', stId: 'iv-apply-regex', spId: 'iv-sp-apply-regex', type: 'checkbox', updCtx: true, profileKey: true },
+    { key: 'reasoningTrimStrings', stId: 'iv-reasoning-trim', spId: 'iv-sp-reasoning-trim', type: 'textarea', profileKey: true },
 
     // ── Prompts ───────────────────────────────────────────────────────────────
-    { key: 'systemPrompt', stId: 'scp-sysprompt', spId: 'scp-sp-sysprompt', type: 'textarea', updCtx: true, profileKey: true,
+    { key: 'systemPrompt', stId: 'iv-sysprompt', spId: 'iv-sp-sysprompt', type: 'textarea', updCtx: true, profileKey: true,
       fromSetting: s => s.systemPrompt || DEFAULT_SYSTEM_PROMPT },
 
-    // ── Character Edit ────────────────────────────────────────────────────────
-    { key: 'charEditAIEnabled', stId: 'scp-char-edit-enabled', spId: 'scp-sp-char-edit-enabled', type: 'checkbox', updCtx: true, profileKey: true },
-    { key: 'charEditPrompt', stId: 'scp-char-edit-prompt', spId: 'scp-sp-char-edit-prompt', type: 'textarea', updCtx: true, profileKey: true,
-      fromSetting: s => s.charEditPrompt || DEFAULT_CHAR_EDIT_DIRECTIVE.trim(),
-      toVal: v => v.trim() === DEFAULT_CHAR_EDIT_DIRECTIVE.trim() ? '' : v },
-
-    // ── Lorebook ──────────────────────────────────────────────────────────────
-    { key: 'lorebookAIManageEnabled', stId: 'scp-lb-ai-enabled-st', spId: 'scp-sp-lb-ai-enabled', type: 'checkbox', profileKey: true },
-    { key: 'lorebookAutoKeyword', stId: 'scp-lb-auto-kw-st', spId: 'scp-sp-lb-auto-kw', type: 'checkbox', profileKey: true,
-      onChange: () => {
-          const s = getSettings();
-          import('../features/feature-lorebook-engine.js').then(async m => {
-              await m.buildLorebookContextBlock(s);
-              import('../features/feature-lorebook-ui.js').then(ui => {
-                  ui.updateLBFooterInfo();
-                  if (state.lbActiveBook) ui.renderEntryList(state.lbActiveBook, state.lbSearchQuery);
-              });
-          });
-      }
-    },
-    { key: 'lorebookManagePrompt', stId: 'scp-lb-manage-prompt', spId: 'scp-sp-lb-manage-prompt', type: 'textarea', profileKey: true,
-      fromSetting: s => s.lorebookManagePrompt || DEFAULT_LB_MANAGE_PROMPT },
-    { key: 'lorebookSTScanDepth',     stId: 'scp-lb-st-scan-depth',      spId: 'scp-sp-lb-st-scan-depth',      type: 'input', toVal: Number, profileKey: true },
-    { key: 'lorebookCopilotScanDepth', stId: 'scp-lb-copilot-scan-depth', spId: 'scp-sp-lb-copilot-scan-depth', type: 'input', toVal: Number, profileKey: true },
-
-    // ── Chat Edit ─────────────────────────────────────────────────────────────
-    { key: 'chatEditAIEnabled', stId: 'scp-chat-edit-enabled-st', spId: 'scp-sp-chat-edit-enabled', type: 'checkbox', updCtx: true, profileKey: true },
-    { key: 'chatEditPrompt', stId: 'scp-chat-edit-prompt-st', spId: 'scp-sp-chat-edit-prompt', type: 'textarea', updCtx: true, profileKey: true,
-      fromSetting: s => s.chatEditPrompt || DEFAULT_CHAT_EDIT_DIRECTIVE.trim(),
-      toVal: v => v.trim() === DEFAULT_CHAT_EDIT_DIRECTIVE.trim() ? '' : v },
-
     // ── Memory ────────────────────────────────────────────────────────────────
-    { key: 'memoryEnabled',      stId: 'scp-memory-enabled', spId: 'scp-sp-memory-enabled', type: 'checkbox', updCtx: true },
-    { key: 'memoryInject',       stId: 'scp-memory-inject',  spId: 'scp-sp-memory-inject',  type: 'checkbox', updCtx: true },
-    { key: 'memoryNotify',       stId: null,                 spId: 'scp-sp-memory-notify',  type: 'checkbox' },
-    { key: 'memoryManagePrompt', stId: 'scp-memory-prompt',  spId: 'scp-sp-memory-prompt',  type: 'textarea', updCtx: true,
+    { key: 'memoryEnabled',      stId: 'iv-memory-enabled', spId: 'iv-sp-memory-enabled', type: 'checkbox', updCtx: true },
+    { key: 'memoryInject',       stId: 'iv-memory-inject',  spId: 'iv-sp-memory-inject',  type: 'checkbox', updCtx: true },
+    { key: 'memoryNotify',       stId: null,                 spId: 'iv-sp-memory-notify',  type: 'checkbox' },
+    { key: 'memoryManagePrompt', stId: 'iv-memory-prompt',  spId: 'iv-sp-memory-prompt',  type: 'textarea', updCtx: true,
       fromSetting: s => s.memoryManagePrompt || DEFAULT_MEMORY_PROMPT },
 
     // ── Tools ─────────────────────────────────────────────────────────────────
-    { key: 'toolsEnabled', stId: 'scp-tools-enabled', spId: 'scp-sp-tools-enabled', type: 'checkbox', updCtx: true },
+    { key: 'toolsEnabled', stId: 'iv-tools-enabled', spId: 'iv-sp-tools-enabled', type: 'checkbox', updCtx: true },
 
     // ── Misc ──────────────────────────────────────────────────────────────────
-    { key: 'pickerPreviewLines',     stId: 'scp-picker-lines',      spId: 'scp-sp-picker-lines',      type: 'input', toVal: v => parseInt(v) || 1 },
-    { key: 'pickerPreviewLastLines', stId: 'scp-picker-last-lines', spId: 'scp-sp-picker-last-lines', type: 'input', toVal: v => parseInt(v) || 0 },
-    { key: 'imageAnalysisMode',      stId: 'scp-image-mode',        spId: 'scp-sp-image-mode',        type: 'select' },
-];
-
-// charEditFields
-const _CE_FIELDS_DEF = [
-    { fk: 'tags',                      stId: 'scp-ce-tags',           spId: 'scp-sp-ce-tags',           ovId: 'scp-sp-ov-ce-tags' },
-    { fk: 'description',               stId: 'scp-ce-description',    spId: 'scp-sp-ce-description',    ovId: 'scp-sp-ov-ce-description' },
-    { fk: 'personality',               stId: 'scp-ce-personality',    spId: 'scp-sp-ce-personality',    ovId: 'scp-sp-ov-ce-personality' },
-    { fk: 'scenario',                  stId: 'scp-ce-scenario',       spId: 'scp-sp-ce-scenario',       ovId: 'scp-sp-ov-ce-scenario' },
-    { fk: 'first_mes',                 stId: 'scp-ce-first-mes',      spId: 'scp-sp-ce-first-mes',      ovId: 'scp-sp-ov-ce-first-mes' },
-    { fk: 'mes_example',               stId: 'scp-ce-mes-example',    spId: 'scp-sp-ce-mes-example',    ovId: 'scp-sp-ov-ce-mes-example' },
-    { fk: 'authors_note',              stId: 'scp-ce-authors-note',   spId: 'scp-sp-ce-authors-note',   ovId: 'scp-sp-ov-ce-authors-note' },
-    { fk: 'system_prompt',             stId: 'scp-ce-system-prompt',  spId: 'scp-sp-ce-system-prompt',  ovId: 'scp-sp-ov-ce-system-prompt' },
-    { fk: 'post_history_instructions', stId: 'scp-ce-post-history',   spId: 'scp-sp-ce-post-history',   ovId: 'scp-sp-ov-ce-post-history' },
-    { fk: 'alternate_greetings',       stId: 'scp-ce-alt-greetings',  spId: 'scp-sp-ce-alt-greetings',  ovId: 'scp-sp-ov-ce-alt-greetings', altGreetingPicker: true },
+    { key: 'pickerPreviewLines',     stId: 'iv-picker-lines',      spId: 'iv-sp-picker-lines',      type: 'input', toVal: v => parseInt(v) || 1 },
+    { key: 'pickerPreviewLastLines', stId: 'iv-picker-last-lines', spId: 'iv-sp-picker-last-lines', type: 'input', toVal: v => parseInt(v) || 0 },
 ];
 
 // Mapping override keys to elements (for the override reset button)
 const _OV_EL_MAP = {
-    contextDepth: ['scp-sp-ov-depth-slider', 'scp-sp-ov-depth-val'],
-    maxTokens: ['scp-sp-ov-max-tokens'],           localHistoryLimit: ['scp-sp-ov-history-limit'],
-    reasoningTrimStrings: ['scp-sp-ov-reasoning-trim'], systemPrompt: ['scp-sp-ov-sysprompt'],
-    connectionSource: ['scp-sp-ov-conn-source'],   customUrl: ['scp-sp-ov-custom-url'],
-    customKey: ['scp-sp-ov-custom-key'],           customModel: ['scp-sp-ov-custom-model'],
-    connectionProfileId: ['scp-sp-ov-conn-profile'],
-    includeSystemPrompt: ['scp-sp-ov-include-sysprompt'], includeUserPersonality: ['scp-sp-ov-include-persona'],
-    includeAlternateSwipes: ['scp-sp-ov-include-alt-swipes'], applyRegexToContext: ['scp-sp-ov-apply-regex'],
-    charEditAIEnabled: ['scp-sp-ov-char-edit-enabled'], charEditPrompt: ['scp-sp-ov-char-edit-prompt'],
-    lorebookAIManageEnabled: ['scp-sp-ov-lb-ai-enabled'], lorebookManagePrompt: ['scp-sp-ov-lb-manage-prompt'],
-    lorebookAutoKeyword: ['scp-sp-ov-lb-auto-kw'], chatEditAIEnabled: ['scp-sp-ov-chat-edit-enabled'],
-    chatEditPrompt: ['scp-sp-ov-chat-edit-prompt'],
-    charField_tags: ['scp-sp-ov-ce-tags'],                 charField_description: ['scp-sp-ov-ce-description'],
-    charField_personality: ['scp-sp-ov-ce-personality'],   charField_scenario: ['scp-sp-ov-ce-scenario'],
-    charField_first_mes: ['scp-sp-ov-ce-first-mes'],       charField_mes_example: ['scp-sp-ov-ce-mes-example'],
-    charField_authors_note: ['scp-sp-ov-ce-authors-note'], charField_system_prompt: ['scp-sp-ov-ce-system-prompt'],
-    charField_post_history_instructions: ['scp-sp-ov-ce-post-history'],
-    charField_alternate_greetings: ['scp-sp-ov-ce-alt-greetings'],
+    contextDepth: ['iv-sp-ov-depth-slider', 'iv-sp-ov-depth-val'],
+    maxTokens: ['iv-sp-ov-max-tokens'],           localHistoryLimit: ['iv-sp-ov-history-limit'],
+    reasoningTrimStrings: ['iv-sp-ov-reasoning-trim'], systemPrompt: ['iv-sp-ov-sysprompt'],
+    connectionSource: ['iv-sp-ov-conn-source'],   customUrl: ['iv-sp-ov-custom-url'],
+    customKey: ['iv-sp-ov-custom-key'],           customModel: ['iv-sp-ov-custom-model'],
+    connectionProfileId: ['iv-sp-ov-conn-profile'],
+    includeSystemPrompt: ['iv-sp-ov-include-sysprompt'], includeUserPersonality: ['iv-sp-ov-include-persona'],
+    includeAlternateSwipes: ['iv-sp-ov-include-alt-swipes'], applyRegexToContext: ['iv-sp-ov-apply-regex'],
     forceStreaming: [],
 };
 
@@ -185,14 +129,12 @@ export function _takeProfileSnapshot() {
     const s = getSettings();
     _profileSnapshot = {};
     for (const k of _PROFILE_KEYS) _profileSnapshot[k] = JSON.stringify(s[k]);
-    _profileSnapshot._charEditFields = JSON.stringify(s.charEditFields || {});
 }
 
 export function isConfigProfileDirty() {
     if (!_profileSnapshot) return false;
     const s = getSettings();
     for (const k of _PROFILE_KEYS) { if (JSON.stringify(s[k]) !== _profileSnapshot[k]) return true; }
-    if (JSON.stringify(s.charEditFields || {}) !== _profileSnapshot._charEditFields) return true;
     return false;
 }
 
@@ -209,14 +151,14 @@ export function _clearDirty(type) {
 }
 
 export function _updateDirtyDots() {
-    const dot = '<span class="scp-save-dirty-dot"></span>';
-    ['scp-profile-save', 'scp-sp-profile-save'].forEach(id => {
+    const dot = '<span class="iv-save-dirty-dot"></span>';
+    ['iv-profile-save', 'iv-sp-profile-save'].forEach(id => {
         const btn = document.getElementById(id); if (!btn) return;
-        btn.querySelectorAll('.scp-save-dirty-dot').forEach(d => d.remove());
+        btn.querySelectorAll('.iv-save-dirty-dot').forEach(d => d.remove());
         if (state.configDirty) btn.insertAdjacentHTML('beforeend', dot);
     });
-    document.querySelectorAll('#scp-theme-save').forEach(btn => {
-        btn.querySelectorAll('.scp-save-dirty-dot').forEach(d => d.remove());
+    document.querySelectorAll('#iv-theme-save').forEach(btn => {
+        btn.querySelectorAll('.iv-save-dirty-dot').forEach(d => d.remove());
         if (state.themeDirty) btn.insertAdjacentHTML('beforeend', dot);
     });
 }
@@ -224,14 +166,12 @@ export function _updateDirtyDots() {
 export function saveProfile(name) {
     const s = getSettings(); const p = {};
     for (const k of _PROFILE_KEYS) p[k] = s[k];
-    p.charEditFields = JSON.parse(JSON.stringify(s.charEditFields || {}));
     s.profiles[name] = p; s.activeProfile = name; saveSettings();
 }
 
 export function loadProfile(name) {
     const s = getSettings(); const p = s.profiles[name]; if (!p) return;
     for (const k of _PROFILE_KEYS) { if (p[k] !== undefined) s[k] = p[k]; }
-    if (p.charEditFields) s.charEditFields = JSON.parse(JSON.stringify(p.charEditFields));
     s.activeProfile = name; saveSettings();
     if (typeof updateSettingsUI === 'function') updateSettingsUI();
     _takeProfileSnapshot(); state.configDirty = false; _updateDirtyDots();
@@ -246,7 +186,7 @@ export function deleteProfile(name) {
 }
 
 export function refreshProfilesDropdown() {
-    const sel = document.getElementById('scp-profile-select'); if (!sel) return;
+    const sel = document.getElementById('iv-profile-select'); if (!sel) return;
     const s = getSettings();
     if (!Object.keys(s.profiles).length) {
         s.profiles['Default'] = { systemPrompt: DEFAULT_SYSTEM_PROMPT, includeSystemPrompt: true, includeAuthorsNote: true, includeCharacterCard: true, includeUserPersonality: true, contextDepth: 15, localHistoryLimit: 50, connectionSource: 'default', connectionProfileId: '', maxTokens: 8200, applyRegexToContext: true };
@@ -263,24 +203,24 @@ export function refreshProfilesDropdown() {
 }
 
 export function updateBindingSection() {
-    const sel = document.getElementById('scp-profile-select');
-    const section = document.getElementById('scp-binding-section');
+    const sel = document.getElementById('iv-profile-select');
+    const section = document.getElementById('iv-binding-section');
     if (!section) return;
     section.style.display = sel?.value ? '' : 'none'; if (!sel?.value) return;
     const s = getSettings(); const { charId, chatId } = getBindingKey();
-    document.getElementById('scp-bind-char')?.classList.toggle('active', s.profileBindings[`char_${charId}`] === sel.value);
-    document.getElementById('scp-bind-chat')?.classList.toggle('active', s.profileBindings[`chat_${charId}_${chatId}`] === sel.value);
+    document.getElementById('iv-bind-char')?.classList.toggle('active', s.profileBindings[`char_${charId}`] === sel.value);
+    document.getElementById('iv-bind-chat')?.classList.toggle('active', s.profileBindings[`chat_${charId}_${chatId}`] === sel.value);
 }
 
 export function autoLoadBoundProfile() {
     const s = getSettings(); const { charId, chatId } = getBindingKey();
     const name = s.profileBindings[`chat_${charId}_${chatId}`] || s.profileBindings[`char_${charId}`];
-    if (name && s.profiles[name]) { loadProfile(name); const sel = document.getElementById('scp-profile-select'); if (sel) sel.value = name; }
+    if (name && s.profiles[name]) { loadProfile(name); const sel = document.getElementById('iv-profile-select'); if (sel) sel.value = name; }
     else if (name && !s.profiles[name]) _dbgAdd('PROFILE_LOAD_BINDING_MISSING', { name });
 }
 
 export async function updateProfilesList() {
-    const profSel = document.getElementById('scp-conn-profile'); if (!profSel) return;
+    const profSel = document.getElementById('iv-conn-profile'); if (!profSel) return;
     const ctx = SillyTavern.getContext(); const s = getSettings(); let currentVal = s.connectionProfileId || '';
     const service = ctx.ConnectionManagerRequestService;
     let profiles = service?.getSupportedProfiles?.() ?? ctx.extensionSettings?.connectionManager?.profiles ?? [];
@@ -295,13 +235,13 @@ export async function updateProfilesList() {
 }
 
 export async function updateSPConnProfileList() {
-    const selIds = ['scp-sp-conn-profile', 'scp-sp-ov-conn-profile'];
+    const selIds = ['iv-sp-conn-profile', 'iv-sp-ov-conn-profile'];
     const s = getSettings(); const eff = getEffectiveSettings();
     const ctx = SillyTavern.getContext(); const service = ctx.ConnectionManagerRequestService;
     let profiles = service?.getSupportedProfiles?.() ?? ctx.extensionSettings?.connectionManager?.profiles ?? [];
     selIds.forEach(sid => {
         const sel = document.getElementById(sid); if (!sel) return;
-        const isOv = sid === 'scp-sp-ov-conn-profile';
+        const isOv = sid === 'iv-sp-ov-conn-profile';
         let targetVal = isOv ? (eff.connectionProfileId || '') : (s.connectionProfileId || '');
         if (targetVal && !profiles.some(p => p.id === targetVal)) {
             if (isOv) setSessionOverride('connectionProfileId', undefined); else { s.connectionProfileId = ''; saveSettings(); }
@@ -314,7 +254,7 @@ export async function updateSPConnProfileList() {
 }
 
 export function refreshSPProfilesDropdown() {
-    const sel = document.getElementById('scp-sp-profile-select'); if (!sel) return;
+    const sel = document.getElementById('iv-sp-profile-select'); if (!sel) return;
     const s = getSettings();
     if (!Object.keys(s.profiles).length) {
         s.profiles['Default'] = { systemPrompt: DEFAULT_SYSTEM_PROMPT, includeSystemPrompt: true, includeAuthorsNote: true, includeCharacterCard: true, includeUserPersonality: true, contextDepth: 15, localHistoryLimit: 50, connectionSource: 'default', connectionProfileId: '', maxTokens: 8200, applyRegexToContext: true };
@@ -330,13 +270,13 @@ export function refreshSPProfilesDropdown() {
 }
 
 export function updateSPBindingSection() {
-    const sel = document.getElementById('scp-sp-profile-select');
-    const section = document.getElementById('scp-sp-binding-section');
+    const sel = document.getElementById('iv-sp-profile-select');
+    const section = document.getElementById('iv-sp-binding-section');
     if (!section) return;
     section.style.display = sel?.value ? '' : 'none'; if (!sel?.value) return;
     const s = getSettings(); const { charId, chatId } = getBindingKey();
-    document.getElementById('scp-sp-bind-char')?.classList.toggle('active', s.profileBindings[`char_${charId}`] === sel.value);
-    document.getElementById('scp-sp-bind-chat')?.classList.toggle('active', s.profileBindings[`chat_${charId}_${chatId}`] === sel.value);
+    document.getElementById('iv-sp-bind-char')?.classList.toggle('active', s.profileBindings[`char_${charId}`] === sel.value);
+    document.getElementById('iv-sp-bind-chat')?.classList.toggle('active', s.profileBindings[`chat_${charId}_${chatId}`] === sel.value);
 }
 
 // ─── Theme Editor ─────────────────────────────────────────────────────────────
@@ -356,25 +296,25 @@ export function isThemeDirty() {
 }
 
 export function buildThemeEditor(containerOverride) {
-    const container = containerOverride || document.getElementById('scp-theme-section'); if (!container) return;
+    const container = containerOverride || document.getElementById('iv-theme-section'); if (!container) return;
     container.innerHTML = '';
     const s = getSettings();
     if (!s.savedThemes || !Object.keys(s.savedThemes).length) {
         s.savedThemes = { 'Default': { ...THEME_PRESETS.default } }; s.activeThemeProfile = 'Default';
         s.customTheme = { ...s.savedThemes['Default'] }; saveSettings();
     }
-    const profileRow = document.createElement('div'); profileRow.className = 'scp-profile-bar'; profileRow.style.marginBottom = '12px';
+    const profileRow = document.createElement('div'); profileRow.className = 'iv-profile-bar'; profileRow.style.marginBottom = '12px';
     profileRow.innerHTML = `
-        <select id="scp-theme-profile-select"></select>
-        <button class="scp-profile-icon-btn" id="scp-theme-save" title="Save current theme"><i class="fa-solid fa-floppy-disk"></i></button>
-        <button class="scp-profile-icon-btn" id="scp-theme-create" title="Create new theme"><i class="fa-solid fa-plus"></i></button>
-        <button class="scp-profile-icon-btn" id="scp-theme-duplicate" title="Duplicate theme"><i class="fa-solid fa-copy"></i></button>
-        <button class="scp-profile-icon-btn" id="scp-theme-rename" title="Rename theme"><i class="fa-solid fa-pen"></i></button>
-        <button class="scp-profile-icon-btn danger" id="scp-theme-delete" title="Delete theme"><i class="fa-solid fa-trash"></i></button>
-        <button class="scp-profile-icon-btn" id="scp-theme-export" title="Export theme"><i class="fa-solid fa-file-export"></i></button>
-        <button class="scp-profile-icon-btn" id="scp-theme-import" title="Import theme"><i class="fa-solid fa-file-import"></i></button>`;
+        <select id="iv-theme-profile-select"></select>
+        <button class="iv-profile-icon-btn" id="iv-theme-save" title="Save current theme"><i class="fa-solid fa-floppy-disk"></i></button>
+        <button class="iv-profile-icon-btn" id="iv-theme-create" title="Create new theme"><i class="fa-solid fa-plus"></i></button>
+        <button class="iv-profile-icon-btn" id="iv-theme-duplicate" title="Duplicate theme"><i class="fa-solid fa-copy"></i></button>
+        <button class="iv-profile-icon-btn" id="iv-theme-rename" title="Rename theme"><i class="fa-solid fa-pen"></i></button>
+        <button class="iv-profile-icon-btn danger" id="iv-theme-delete" title="Delete theme"><i class="fa-solid fa-trash"></i></button>
+        <button class="iv-profile-icon-btn" id="iv-theme-export" title="Export theme"><i class="fa-solid fa-file-export"></i></button>
+        <button class="iv-profile-icon-btn" id="iv-theme-import" title="Import theme"><i class="fa-solid fa-file-import"></i></button>`;
     container.appendChild(profileRow);
-    const sel = profileRow.querySelector('#scp-theme-profile-select');
+    const sel = profileRow.querySelector('#iv-theme-profile-select');
     const optGrpDefault = document.createElement('optgroup'); optGrpDefault.label = 'Default Presets';
     for (const [key, preset] of Object.entries(THEME_PRESETS)) {
         const opt = document.createElement('option'); opt.value = `__preset__${key}`; opt.textContent = preset.label; optGrpDefault.appendChild(opt);
@@ -408,7 +348,7 @@ export function buildThemeEditor(containerOverride) {
         }
         saveSettings(); applyCustomTheme(s2.customTheme); buildThemeEditor(containerOverride);
     });
-    profileRow.querySelector('#scp-theme-save').addEventListener('click', async () => {
+    profileRow.querySelector('#iv-theme-save').addEventListener('click', async () => {
         const val = sel.value;
         if (val.startsWith('__preset__')) {
             const name = await showCustomDialog({ type: 'prompt', title: 'Save as Custom Theme', message: 'Name for your custom theme:', placeholder: 'My Theme' });
@@ -418,12 +358,12 @@ export function buildThemeEditor(containerOverride) {
             const s2 = getSettings(); s2.savedThemes[val] = { ...s2.customTheme }; saveSettings(); toastr.success(`Theme "${val}" updated`, EXT_DISPLAY); _clearDirty('theme');
         }
     });
-    profileRow.querySelector('#scp-theme-create').addEventListener('click', async () => {
+    profileRow.querySelector('#iv-theme-create').addEventListener('click', async () => {
         const name = await showCustomDialog({ type: 'prompt', title: 'New Theme', message: 'Enter name for new theme:', placeholder: 'My New Theme' });
         if (!name?.trim()) return;
         const s2 = getSettings(); s2.savedThemes[name.trim()] = { ...s2.customTheme }; s2.activeThemeProfile = name.trim(); saveSettings(); buildThemeEditor(containerOverride); toastr.success(`Created theme "${name.trim()}"`, EXT_DISPLAY);
     });
-    profileRow.querySelector('#scp-theme-duplicate').addEventListener('click', async () => {
+    profileRow.querySelector('#iv-theme-duplicate').addEventListener('click', async () => {
         const val = sel.value; if (!val) return;
         const baseTheme = val.startsWith('__preset__') ? THEME_PRESETS[val.replace('__preset__', '')] : s.savedThemes[val]; if (!baseTheme) return;
         const defaultName = (val.startsWith('__preset__') ? THEME_PRESETS[val.replace('__preset__', '')].label : val) + ' (Copy)';
@@ -432,26 +372,26 @@ export function buildThemeEditor(containerOverride) {
         const s2 = getSettings(); s2.savedThemes[name.trim()] = JSON.parse(JSON.stringify(baseTheme)); s2.activeThemeProfile = name.trim(); s2.customTheme = { ...s2.savedThemes[name.trim()] };
         saveSettings(); applyCustomTheme(s2.customTheme); buildThemeEditor(containerOverride); toastr.success(`Theme duplicated as "${name.trim()}"`, EXT_DISPLAY);
     });
-    profileRow.querySelector('#scp-theme-rename').addEventListener('click', async () => {
+    profileRow.querySelector('#iv-theme-rename').addEventListener('click', async () => {
         const val = sel.value; if (!val || val.startsWith('__preset__')) { toastr.info('Select a custom theme to rename.', EXT_DISPLAY); return; }
         const newName = await showCustomDialog({ type: 'prompt', title: 'Rename Theme', message: 'Enter new name:', defaultValue: val });
         if (!newName?.trim() || newName.trim() === val) return;
         const s2 = getSettings(); s2.savedThemes[newName.trim()] = s2.savedThemes[val]; delete s2.savedThemes[val]; s2.activeThemeProfile = newName.trim(); saveSettings(); buildThemeEditor(containerOverride); toastr.success('Theme renamed.', EXT_DISPLAY);
     });
-    profileRow.querySelector('#scp-theme-delete').addEventListener('click', async () => {
+    profileRow.querySelector('#iv-theme-delete').addEventListener('click', async () => {
         const val = sel.value; if (!val || val.startsWith('__preset__')) { toastr.info('Select a custom theme to delete.', EXT_DISPLAY); return; }
         const ok = await showCustomDialog({ type: 'confirm', title: 'Delete Theme', message: `Delete "${val}"?` }); if (!ok) return;
         const s2 = getSettings(); delete s2.savedThemes[val]; s2.activeThemeProfile = Object.keys(s2.savedThemes)[0] || '';
         s2.customTheme = s2.activeThemeProfile ? { ...s2.savedThemes[s2.activeThemeProfile] } : { ...THEME_PRESETS.default };
         saveSettings(); applyCustomTheme(s2.customTheme); buildThemeEditor(containerOverride); toastr.success('Deleted.', EXT_DISPLAY);
     });
-    profileRow.querySelector('#scp-theme-export').addEventListener('click', () => {
+    profileRow.querySelector('#iv-theme-export').addEventListener('click', () => {
         const s2 = getSettings(); const val = sel.value;
         const rawName = val.startsWith('__preset__') ? val.replace('__preset__', '') : (val || 'custom');
         const blob = new Blob([JSON.stringify({ name: rawName, version: 1, theme: s2.customTheme }, null, 2)], { type: 'application/json' });
-        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `st-copilot-theme-${rawName.replace(/[^a-z0-9]/gi, '_')}.json`; a.click(); URL.revokeObjectURL(a.href);
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `inner-voice-theme-${rawName.replace(/[^a-z0-9]/gi, '_')}.json`; a.click(); URL.revokeObjectURL(a.href);
     });
-    profileRow.querySelector('#scp-theme-import').addEventListener('click', () => {
+    profileRow.querySelector('#iv-theme-import').addEventListener('click', () => {
         const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json';
         inp.onchange = async () => {
             const file = inp.files?.[0]; if (!file) return;
@@ -465,47 +405,47 @@ export function buildThemeEditor(containerOverride) {
         };
         inp.click();
     });
-    const grid = document.createElement('div'); grid.className = 'scp-theme-var-grid';
-    const windowEl = document.getElementById('scp-window');
+    const grid = document.createElement('div'); grid.className = 'iv-theme-var-grid';
+    const windowEl = document.getElementById('iv-window');
     for (const def of THEME_VAR_DEFS) {
-        const item = document.createElement('div'); item.className = 'scp-theme-var-item';
-        const label = document.createElement('div'); label.className = 'scp-theme-var-label'; label.textContent = def.label;
-        const wrap = document.createElement('div'); wrap.className = 'scp-theme-var-wrap';
+        const item = document.createElement('div'); item.className = 'iv-theme-var-item';
+        const label = document.createElement('div'); label.className = 'iv-theme-var-label'; label.textContent = def.label;
+        const wrap = document.createElement('div'); wrap.className = 'iv-theme-var-wrap';
         const isColorKey = _COLOR_KEYS.has(def.key); const isFontKey = def.key === 'font' || def.key === 'fontSize';
-        const preview = document.createElement('div'); preview.className = 'scp-theme-var-preview';
+        const preview = document.createElement('div'); preview.className = 'iv-theme-var-preview';
         let curVal = s.customTheme?.[def.key] ?? '';
         if (def.key === 'fontSize' && /^\d+$/.test(curVal)) curVal += 'px';
-        if (isColorKey) { preview.style.background = curVal; preview.style.display = curVal ? '' : 'none'; preview.classList.add('scp-color-clickable'); }
+        if (isColorKey) { preview.style.background = curVal; preview.style.display = curVal ? '' : 'none'; preview.classList.add('iv-color-clickable'); }
         else { preview.style.display = 'none'; }
-        const input = document.createElement('input'); input.type = 'text'; input.className = 'scp-theme-var-input'; input.value = curVal; input.placeholder = def.hint; input.dataset.key = def.key;
+        const input = document.createElement('input'); input.type = 'text'; input.className = 'iv-theme-var-input'; input.value = curVal; input.placeholder = def.hint; input.dataset.key = def.key;
         const cssVar = THEME_CSS_MAP[def.key];
         const getDefaultVal = () => {
             const ss = getSettings();
             if (ss.activeThemeProfile && ss.savedThemes?.[ss.activeThemeProfile]) return ss.savedThemes[ss.activeThemeProfile][def.key] ?? '';
-            const selEl = container.querySelector('#scp-theme-profile-select'); const selVal = selEl?.value || '';
+            const selEl = container.querySelector('#iv-theme-profile-select'); const selVal = selEl?.value || '';
             if (selVal.startsWith('__preset__')) return (THEME_PRESETS[selVal.replace('__preset__', '')] || THEME_PRESETS.default)[def.key] ?? '';
             return THEME_PRESETS.default[def.key] ?? '';
         };
-        const resetBtn = document.createElement('button'); resetBtn.className = 'scp-theme-var-reset'; resetBtn.title = 'Reset to profile default'; resetBtn.textContent = '↺';
+        const resetBtn = document.createElement('button'); resetBtn.className = 'iv-theme-var-reset'; resetBtn.title = 'Reset to profile default'; resetBtn.textContent = '↺';
         const updateResetState = val => { resetBtn.disabled = !val || val === getDefaultVal(); };
         updateResetState(curVal);
         let _fontDebounce = null;
         const applyVal = val => {
             const s2 = getSettings(); if (!s2.customTheme) s2.customTheme = {};
             s2.customTheme[def.key] = val; saveSettings(); _markDirty('theme');
-            document.querySelectorAll(`input.scp-theme-var-input[data-key="${def.key}"]`).forEach(inp => { if (inp.value !== val) inp.value = val; });
+            document.querySelectorAll(`input.iv-theme-var-input[data-key="${def.key}"]`).forEach(inp => { if (inp.value !== val) inp.value = val; });
             if (isColorKey) {
-                if (cssVar) [windowEl, document.getElementById('scp-lb-overlay'), document.getElementById('scp-diff-modal')].filter(Boolean).forEach(t => t.style.setProperty(cssVar, val));
+                if (cssVar) [windowEl].filter(Boolean).forEach(t => t.style.setProperty(cssVar, val));
                 preview.style.background = val; preview.style.display = val ? '' : 'none';
             } else if (isFontKey) {
                 clearTimeout(_fontDebounce);
                 _fontDebounce = setTimeout(() => {
                     let fVal = val.trim(); if (def.key === 'fontSize' && /^\d+$/.test(fVal)) fVal += 'px';
-                    const targets = [windowEl, document.getElementById('scp-lb-overlay'), document.getElementById('scp-diff-modal'), document.getElementById('scp-settings-overlay'), document.getElementById('scp-picker-overlay')].filter(Boolean);
+                    const targets = [windowEl, document.getElementById('iv-settings-overlay'), document.getElementById('iv-picker-overlay')].filter(Boolean);
                     targets.forEach(t => { if (fVal) { t.style.setProperty(cssVar, fVal); if (def.key === 'fontSize') t.style.fontSize = fVal; } else { t.style.removeProperty(cssVar); if (def.key === 'fontSize') t.style.fontSize = ''; } });
                 }, 600);
             } else {
-                if (cssVar) [windowEl, document.getElementById('scp-lb-overlay'), document.getElementById('scp-diff-modal')].filter(Boolean).forEach(t => t.style.setProperty(cssVar, val));
+                if (cssVar) [windowEl].filter(Boolean).forEach(t => t.style.setProperty(cssVar, val));
             }
             updateResetState(val);
         };
@@ -521,8 +461,8 @@ export function buildThemeEditor(containerOverride) {
 // ─── Settings Engine ──────────────────────────────────────────────────────────
 
 function _applyConnectionSourceVisibility(val) {
-    [['scp-profile-group', 'scp-custom-profile-group'],
-     ['scp-sp-global-profile-group', 'scp-sp-custom-profile-group']].forEach(([pId, cId]) => {
+    [['iv-profile-group', 'iv-custom-profile-group'],
+     ['iv-sp-global-profile-group', 'iv-sp-custom-profile-group']].forEach(([pId, cId]) => {
         const pEl = document.getElementById(pId); const cEl = document.getElementById(cId);
         if (pEl) pEl.style.display = val === 'profile' ? '' : 'none';
         if (cEl) cEl.style.display = val === 'custom' ? '' : 'none';
@@ -537,7 +477,7 @@ function _pruneMatchingOverrides() {
         bucket.sessions.forEach(sess => {
             if (!sess.overrides) return;
             for (const key of Object.keys(sess.overrides)) {
-                const globalVal = key.startsWith('charField_') ? (s.charEditFields || {})[key.replace('charField_', '')] !== false : s[key];
+                const globalVal = s[key];
                 const isEqual = typeof globalVal === 'boolean' ? sess.overrides[key] === globalVal : String(sess.overrides[key]) === String(globalVal);
                 if (isEqual) { delete sess.overrides[key]; changed = true; }
             }
@@ -545,27 +485,6 @@ function _pruneMatchingOverrides() {
         if (changed) { saveSessionsToMetadata(); updateSessionOverrideIndicator(); }
     }
 
-    let charChanged = false;
-    if (s.charMgrFieldOverrides) {
-        for (const charId of Object.keys(s.charMgrFieldOverrides)) {
-            const ovs = s.charMgrFieldOverrides[charId];
-            for (const key of Object.keys(ovs)) {
-                const globalVal = (s.charEditFields || {})[key] !== false;
-                if (ovs[key] === globalVal) {
-                    delete ovs[key];
-                    charChanged = true;
-                }
-            }
-            if (Object.keys(ovs).length === 0) {
-                delete s.charMgrFieldOverrides[charId];
-            }
-        }
-    }
-    if (charChanged) saveSettings();
-    
-    document.querySelectorAll('.scp-char-ov-row').forEach(row => {
-        if (typeof row._refreshOverride === 'function') row._refreshOverride();
-    });
 }
 
 function _readFromSettings(def) {
@@ -611,30 +530,13 @@ function _bindSetting(def) {
     }
 }
 
-function _bindCeField(ceDef) {
-    const stEl = document.getElementById(ceDef.stId);
-    const spEl = document.getElementById(ceDef.spId);
-    const apply = val => {
-        const s = getSettings(); if (!s.charEditFields) s.charEditFields = {};
-        s.charEditFields[ceDef.fk] = val; saveSettings(); _markDirty('config'); _pruneMatchingOverrides();
-        import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession()));
-        if (ceDef.altGreetingPicker) {
-            ['scp-ce-alt-greetings-picker', 'scp-sp-ce-alt-greetings-picker'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = val ? '' : 'none'; });
-            import('../features/feature-character-ui.js').then(m => m.refreshAltGreetingsPickers());
-        }
-    };
-    stEl?.addEventListener('change', () => { if (spEl) spEl.checked = stEl.checked; apply(stEl.checked); });
-    spEl?.addEventListener('change', () => { if (stEl) stEl.checked = spEl.checked; apply(spEl.checked); });
-}
-
 function _bindAllSettings() {
     _SETTINGS_DEF.forEach(_bindSetting);
-    _CE_FIELDS_DEF.forEach(_bindCeField);
 }
 
 function _syncOvToGlobal(key, newVal) {
     const s = getSettings();
-    const globalVal = key.startsWith('charField_') ? (s.charEditFields || {})[key.replace('charField_', '')] !== false : s[key];
+    const globalVal = s[key];
     const isDefault = (newVal === undefined || newVal === null) ? true
         : (typeof globalVal === 'boolean' ? newVal === globalVal : String(newVal) === String(globalVal));
     setSessionOverride(key, isDefault ? undefined : newVal);
@@ -650,7 +552,7 @@ function _resetOvElToEffective(key) {
             el.textContent = eff.contextDepth ?? 15; return;
         }
         if (el.type === 'checkbox') {
-            el.checked = key.startsWith('charField_') ? (getSettings().charEditFields || {})[key.replace('charField_', '')] !== false : !!eff[key];
+            el.checked = !!eff[key];
         } else if (el.type === 'range') {
             el.value = eff[key] ?? 15;
         } else {
@@ -659,15 +561,15 @@ function _resetOvElToEffective(key) {
     });
     if (key === 'connectionSource') {
         const val = eff.connectionSource ?? 'default';
-        const pg = document.getElementById('scp-sp-ov-profile-group'); const cg = document.getElementById('scp-sp-ov-custom-profile-group');
+        const pg = document.getElementById('iv-sp-ov-profile-group'); const cg = document.getElementById('iv-sp-ov-custom-profile-group');
         if (pg) pg.style.display = val === 'profile' ? '' : 'none';
         if (cg) cg.style.display = val === 'custom' ? '' : 'none';
     }
     if (key === 'forceStreaming') {
         const val = eff.forceStreaming === true ? 'on' : (eff.forceStreaming === false ? 'auto' : (eff.forceStreaming || 'auto'));
-        document.querySelectorAll('.scp-ov-stream-btn').forEach(b => {
+        document.querySelectorAll('.iv-ov-stream-btn').forEach(b => {
             const active = b.dataset.stream === val; b.classList.toggle('active', active);
-            b.style.color = active ? 'var(--scp-accent)' : ''; b.style.borderColor = active ? 'var(--scp-accent-dim)' : ''; b.style.background = active ? 'var(--scp-accent-bg)' : '';
+            b.style.color = active ? 'var(--iv-accent)' : ''; b.style.borderColor = active ? 'var(--iv-accent-dim)' : ''; b.style.background = active ? 'var(--iv-accent-bg)' : '';
         });
     }
 }
@@ -682,18 +584,13 @@ export function syncOverlayUI(key, val) {
     }
     if (key === 'forceStreaming') {
         const sv = val === true ? 'on' : (val === false ? 'auto' : (val || 'auto'));
-        document.querySelectorAll('.scp-stream-btn:not(.scp-ov-stream-btn)').forEach(b => b.classList.toggle('active', b.dataset.stream === sv));
-        if (!('forceStreaming' in getSessionOverrides())) document.querySelectorAll('.scp-ov-stream-btn').forEach(b => b.classList.toggle('active', b.dataset.stream === sv));
+        document.querySelectorAll('.iv-stream-btn:not(.iv-ov-stream-btn)').forEach(b => b.classList.toggle('active', b.dataset.stream === sv));
+        if (!('forceStreaming' in getSessionOverrides())) document.querySelectorAll('.iv-ov-stream-btn').forEach(b => b.classList.toggle('active', b.dataset.stream === sv));
         return;
     }
     if (key === 'connectionSource') { _applyConnectionSourceVisibility(val); return; }
-    if (key === 'contextDepth') { const dv = document.getElementById('scp-sp-depth-val'); if (dv) dv.textContent = val ?? 15; }
+    if (key === 'contextDepth') { const dv = document.getElementById('iv-sp-depth-val'); if (dv) dv.textContent = val ?? 15; }
     if (key in getSessionOverrides()) return;
-    if (key.startsWith('charField_')) {
-        const ceDef = _CE_FIELDS_DEF.find(d => d.fk === key.replace('charField_', ''));
-        if (ceDef) { const el = document.getElementById(ceDef.ovId); if (el) el.checked = !!val; }
-        return;
-    }
     if (_OV_EL_MAP[key]) _resetOvElToEffective(key);
 }
 
@@ -708,23 +605,16 @@ export function updateSettingsUI() {
             [def.stValId, def.spValId].forEach(id => { if (!id) return; const el = document.getElementById(id); if (el) el.textContent = fmt; });
         }
     }
-    for (const ceDef of _CE_FIELDS_DEF) {
-        const val = (s.charEditFields || {})[ceDef.fk] !== false;
-        if (ceDef.stId) { const el = document.getElementById(ceDef.stId); if (el) el.checked = val; }
-        if (ceDef.spId) { const el = document.getElementById(ceDef.spId); if (el) el.checked = val; }
-    }
+
     const fsVal = s.forceStreaming === true ? 'on' : (s.forceStreaming === false ? 'auto' : (s.forceStreaming || 'auto'));
-    document.querySelectorAll('#scp-st-stream-auto, #scp-st-stream-on, #scp-st-stream-off').forEach(b => {
+    document.querySelectorAll('#iv-st-stream-auto, #iv-st-stream-on, #iv-st-stream-off').forEach(b => {
         const active = b.dataset.stream === fsVal; b.classList.toggle('active', active);
         b.style.color = active ? 'var(--SmartThemeQuoteColor,#a99bfb)' : ''; b.style.borderColor = active ? 'rgba(124,109,250,0.5)' : ''; b.style.background = active ? 'rgba(124,109,250,0.12)' : '';
     });
     _applyConnectionSourceVisibility(s.connectionSource ?? 'default');
-    const agPicker = document.getElementById('scp-ce-alt-greetings-picker');
-    if (agPicker) agPicker.style.display = s.charEditFields?.alternate_greetings ? '' : 'none';
     refreshProfilesDropdown(); buildThemeEditor();
-    import('./ui-window.js').then(m => m._setupBgUpload('scp-bg-upload-btn', 'scp-bg-url', () => _syncBgToOverlay()));
-    import('./ui-widgets.js').then(m => m.buildSoundSettingsUI(document.getElementById('scp-sound-settings')));
-    import('../features/feature-character-ui.js').then(m => m.refreshAltGreetingsPickers());
+    import('./ui-window.js').then(m => m._setupBgUpload('iv-bg-upload-btn', 'iv-bg-url', () => _syncBgToOverlay()));
+    import('./ui-widgets.js').then(m => m.buildSoundSettingsUI(document.getElementById('iv-sound-settings')));
 }
 
 export function syncSPFromSettings() {
@@ -737,13 +627,9 @@ export function syncSPFromSettings() {
         _writeToEl(document.getElementById(def.spId), def, val);
         if (def.type === 'slider' && def.spValId) { const el = document.getElementById(def.spValId); if (el) el.textContent = def.valFmt ? def.valFmt(val) : String(val ?? ''); }
     }
-    for (const ceDef of _CE_FIELDS_DEF) {
-        const val = (s.charEditFields || {})[ceDef.fk] !== false;
-        const el = document.getElementById(ceDef.spId); if (el) el.checked = val;
-    }
 
     const streamVal = s.forceStreaming === true ? 'on' : (s.forceStreaming === false ? 'auto' : (s.forceStreaming || 'auto'));
-    document.querySelectorAll('.scp-stream-btn:not(.scp-ov-stream-btn)').forEach(b => { b.classList.toggle('active', b.dataset.stream === streamVal); b.style.color = ''; b.style.borderColor = ''; b.style.background = ''; });
+    document.querySelectorAll('.iv-stream-btn:not(.iv-ov-stream-btn)').forEach(b => { b.classList.toggle('active', b.dataset.stream === streamVal); b.style.color = ''; b.style.borderColor = ''; b.style.background = ''; });
     _applyConnectionSourceVisibility(s.connectionSource ?? 'default');
     refreshSPProfilesDropdown(); updateSPConnProfileList();
 
@@ -751,113 +637,93 @@ export function syncSPFromSettings() {
     const g  = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
     const gC = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
 
-    const ovDs = document.getElementById('scp-sp-ov-depth-slider'); const ovDv = document.getElementById('scp-sp-ov-depth-val');
+    const ovDs = document.getElementById('iv-sp-ov-depth-slider'); const ovDv = document.getElementById('iv-sp-ov-depth-val');
     if (ovDs) ovDs.value = eff.contextDepth ?? 15; if (ovDv) ovDv.textContent = eff.contextDepth ?? 15;
 
-    g('scp-sp-ov-conn-source', eff.connectionSource ?? 'default');
-    const ovPg = document.getElementById('scp-sp-ov-profile-group'); const ovCus = document.getElementById('scp-sp-ov-custom-profile-group');
+    g('iv-sp-ov-conn-source', eff.connectionSource ?? 'default');
+    const ovPg = document.getElementById('iv-sp-ov-profile-group'); const ovCus = document.getElementById('iv-sp-ov-custom-profile-group');
     if (ovPg) ovPg.style.display = eff.connectionSource === 'profile' ? '' : 'none';
     if (ovCus) ovCus.style.display = eff.connectionSource === 'custom' ? '' : 'none';
-    g('scp-sp-ov-conn-profile', eff.connectionProfileId ?? '');
+    g('iv-sp-ov-conn-profile', eff.connectionProfileId ?? '');
 
     const ovi = (id, key) => { const el = document.getElementById(id); if (el) el.value = key in ov ? (ov[key] ?? '') : ''; };
-    ovi('scp-sp-ov-custom-url', 'customUrl'); ovi('scp-sp-ov-custom-key', 'customKey'); ovi('scp-sp-ov-custom-model', 'customModel');
-    ovi('scp-sp-ov-max-tokens', 'maxTokens'); ovi('scp-sp-ov-history-limit', 'localHistoryLimit');
-    ovi('scp-sp-ov-reasoning-trim', 'reasoningTrimStrings'); ovi('scp-sp-ov-sysprompt', 'systemPrompt');
-    ovi('scp-sp-ov-char-edit-prompt', 'charEditPrompt'); ovi('scp-sp-ov-lb-manage-prompt', 'lorebookManagePrompt'); ovi('scp-sp-ov-chat-edit-prompt', 'chatEditPrompt');
+    ovi('iv-sp-ov-custom-url', 'customUrl'); ovi('iv-sp-ov-custom-key', 'customKey'); ovi('iv-sp-ov-custom-model', 'customModel');
+    ovi('iv-sp-ov-max-tokens', 'maxTokens'); ovi('iv-sp-ov-history-limit', 'localHistoryLimit');
+    ovi('iv-sp-ov-reasoning-trim', 'reasoningTrimStrings'); ovi('iv-sp-ov-sysprompt', 'systemPrompt');
 
-    gC('scp-sp-ov-include-sysprompt', eff.includeSystemPrompt); gC('scp-sp-ov-include-persona', eff.includeUserPersonality);
-    gC('scp-sp-ov-include-alt-swipes', eff.includeAlternateSwipes); gC('scp-sp-ov-apply-regex', eff.applyRegexToContext);
-    gC('scp-sp-ov-char-edit-enabled',  'charEditAIEnabled'        in ov ? ov.charEditAIEnabled        : s.charEditAIEnabled);
-    gC('scp-sp-ov-lb-ai-enabled',      'lorebookAIManageEnabled'  in ov ? ov.lorebookAIManageEnabled  : s.lorebookAIManageEnabled);
-    gC('scp-sp-ov-chat-edit-enabled',  'chatEditAIEnabled'        in ov ? ov.chatEditAIEnabled        : s.chatEditAIEnabled);
-    gC('scp-sp-ov-lb-auto-kw',         'lorebookAutoKeyword'      in ov ? ov.lorebookAutoKeyword      : s.lorebookAutoKeyword);
+    gC('iv-sp-ov-include-sysprompt', eff.includeSystemPrompt); gC('iv-sp-ov-include-persona', eff.includeUserPersonality);
+    gC('iv-sp-ov-include-alt-swipes', eff.includeAlternateSwipes); gC('iv-sp-ov-apply-regex', eff.applyRegexToContext);
 
     const ovStreamVal = eff.forceStreaming === true ? 'on' : (eff.forceStreaming === false ? 'auto' : (eff.forceStreaming || 'auto'));
-    document.querySelectorAll('.scp-ov-stream-btn').forEach(b => {
+    document.querySelectorAll('.iv-ov-stream-btn').forEach(b => {
         const active = b.dataset.stream === ovStreamVal; b.classList.toggle('active', active);
-        b.style.color = active ? 'var(--scp-accent)' : ''; b.style.borderColor = active ? 'var(--scp-accent-dim)' : ''; b.style.background = active ? 'var(--scp-accent-bg)' : '';
+        b.style.color = active ? 'var(--iv-accent)' : ''; b.style.borderColor = active ? 'var(--iv-accent-dim)' : ''; b.style.background = active ? 'var(--iv-accent-bg)' : '';
     });
-    for (const ceDef of _CE_FIELDS_DEF) {
-        const ovKey = 'charField_' + ceDef.fk;
-        const val = ovKey in ov ? !!ov[ovKey] : (s.charEditFields || {})[ceDef.fk] !== false;
-        const el = document.getElementById(ceDef.ovId); if (el) el.checked = val;
-    }
-    const altGrOvEl = document.getElementById('scp-sp-ov-ce-alt-greetings');
-    if (altGrOvEl) {
-        const picker = document.getElementById('scp-sp-ov-ce-alt-greetings-picker');
-        if (picker) picker.style.display = altGrOvEl.checked ? '' : 'none';
-        import('../features/feature-character-ui.js').then(m => m.refreshAltGreetingsPickers());
-    }
     updateSPOverrideIndicators();
-    buildThemeEditor(document.getElementById('scp-sp-theme-section'));
-    buildBackgroundSettingsUI(document.getElementById('scp-sp-bg-settings'));
-    import('./ui-window.js').then(m => m._setupBgUpload('scp-sp-bg-upload-btn', 'scp-sp-bg-url', () => _syncBgToOverlay()));
+    buildThemeEditor(document.getElementById('iv-sp-theme-section'));
+    buildBackgroundSettingsUI(document.getElementById('iv-sp-bg-settings'));
+    import('./ui-window.js').then(m => m._setupBgUpload('iv-sp-bg-upload-btn', 'iv-sp-bg-url', () => _syncBgToOverlay()));
     import('../features/feature-memory.js').then(m => m.updateMemoryDot());
 }
 
 export function updateSPOverrideIndicators() {
     const ov = getSessionOverrides();
-    document.querySelectorAll('.scp-sp-ov-label[data-ovkey]').forEach(l => l.classList.toggle('has-override', l.dataset.ovkey in ov));
-    document.querySelectorAll('.scp-sp-ov-clear[data-ovkey]').forEach(btn => {
+    document.querySelectorAll('.iv-sp-ov-label[data-ovkey]').forEach(l => l.classList.toggle('has-override', l.dataset.ovkey in ov));
+    document.querySelectorAll('.iv-sp-ov-clear[data-ovkey]').forEach(btn => {
         const active = btn.dataset.ovkey in ov; btn.classList.toggle('active', active); btn.disabled = !active;
     });
 }
 
 export function updateSessionOverrideIndicator() {
     const has = hasSessionOverrides();
-    const dot = document.getElementById('scp-sp-override-dot'); if (dot) dot.style.display = has ? '' : 'none';
-    const gearDot = document.getElementById('scp-gear-ov-dot'); if (gearDot) gearDot.style.display = has ? '' : 'none';
-    document.getElementById('scp-ext-settings-btn')?.classList.toggle('scp-has-overrides', has);
+    const dot = document.getElementById('iv-sp-override-dot'); if (dot) dot.style.display = has ? '' : 'none';
+    const gearDot = document.getElementById('iv-gear-ov-dot'); if (gearDot) gearDot.style.display = has ? '' : 'none';
+    document.getElementById('iv-ext-settings-btn')?.classList.toggle('iv-has-overrides', has);
     updateSPOverrideIndicators();
-    const info = document.getElementById('scp-sp-footer-info');
+    const info = document.getElementById('iv-sp-footer-info');
     if (info) { const count = Object.keys(getSessionOverrides()).length; info.textContent = count ? `${count} session override${count !== 1 ? 's' : ''} active` : ''; }
     const ov = getSessionOverrides(); const hasDepthOv = 'contextDepth' in ov;
-    document.getElementById('scp-depth-slider')?.classList.toggle('scp-slider-overridden', hasDepthOv);
-    document.getElementById('scp-depth-val')?.classList.toggle('scp-depth-val-overridden', hasDepthOv);
+    document.getElementById('iv-depth-slider')?.classList.toggle('iv-slider-overridden', hasDepthOv);
+    document.getElementById('iv-depth-val')?.classList.toggle('iv-depth-val-overridden', hasDepthOv);
 }
 
 // ─── Panel Open/Close ─────────────────────────────────────────────────────────
 
 export function openSettingsPanel() {
-    const overlay = document.getElementById('scp-settings-overlay'); if (!overlay) return;
+    const overlay = document.getElementById('iv-settings-overlay'); if (!overlay) return;
     import('./ui-window.js').then(m => m.applyCustomTheme(getSettings().customTheme || THEME_PRESETS.default));
-    syncSPFromSettings(); buildThemeEditor(document.getElementById('scp-sp-theme-section')); _updateDirtyDots();
+    syncSPFromSettings(); buildThemeEditor(document.getElementById('iv-sp-theme-section')); _updateDirtyDots();
     import('./ui-widgets.js').then(mod => {
-        mod.buildSoundSettingsUI(document.getElementById('scp-sp-sound-settings'));
-        buildQPSettingsUI(document.getElementById('scp-sp-qp-container'));
-        mod.buildQPSetManager(document.getElementById('scp-sp-qp-set-manager'), () => buildQPSettingsUI(document.getElementById('scp-sp-qp-container')));
+        mod.buildSoundSettingsUI(document.getElementById('iv-sp-sound-settings'));
+        buildQPSettingsUI(document.getElementById('iv-sp-qp-container'));
+        mod.buildQPSetManager(document.getElementById('iv-sp-qp-set-manager'), () => buildQPSettingsUI(document.getElementById('iv-sp-qp-container')));
         const mkPresetMgr = (containerId, getTextId, dictKey) => mod.buildPromptPresetManager(
             document.getElementById(containerId),
             () => document.getElementById(getTextId)?.value || '',
             text => { const ta = document.getElementById(getTextId); if (ta) { ta.value = text; ta.dispatchEvent(new Event('input', { bubbles: true })); } },
             dictKey
         );
-        mkPresetMgr('scp-sp-prompt-preset-manager',      'scp-sp-ov-sysprompt',       undefined);
-        mkPresetMgr('scp-sp-ov-char-preset-manager',     'scp-sp-ov-char-edit-prompt', 'charEditPromptPresets');
-        mkPresetMgr('scp-sp-ov-lb-preset-manager',       'scp-sp-ov-lb-manage-prompt', 'lbEditPromptPresets');
-        mkPresetMgr('scp-sp-ov-chat-preset-manager',     'scp-sp-ov-chat-edit-prompt', 'chatEditPromptPresets');
+        mkPresetMgr('iv-sp-prompt-preset-manager',      'iv-sp-ov-sysprompt',       undefined);
     }).catch(() => {});
-    import('../features/feature-character-ui.js').then(m => m.refreshAltGreetingsPickers());
     overlay.style.display = 'flex'; updateSessionOverrideIndicator();
     bringWindowToFront();
     import('../features/feature-memory.js').then(m => m.updateMemoryDot());
-    overlay.querySelectorAll('.scp-sp-tab').forEach(t => t.classList.toggle('active', t.dataset.sptab === 'global'));
-    overlay.querySelectorAll('.scp-sp-tab-pane').forEach(p => { p.style.display = p.id === 'scp-sp-pane-global' ? '' : 'none'; });
+    overlay.querySelectorAll('.iv-sp-tab').forEach(t => t.classList.toggle('active', t.dataset.sptab === 'global'));
+    overlay.querySelectorAll('.iv-sp-tab-pane').forEach(p => { p.style.display = p.id === 'iv-sp-pane-global' ? '' : 'none'; });
 }
 
 export function closeSettingsPanel() {
-    const overlay = document.getElementById('scp-settings-overlay'); if (overlay) overlay.style.display = 'none';
+    const overlay = document.getElementById('iv-settings-overlay'); if (overlay) overlay.style.display = 'none';
 }
 
 // ─── Background Sync Helper ───────────────────────────────────────────────────
 
 export function _syncBgToOverlay() {
     const s = getSettings(); const bgId = s.windowBg || 'none';
-    ['scp-sp-bg-type', 'scp-bg-type'].forEach(id => { const el = document.getElementById(id); if (el) el.value = bgId; });
+    ['iv-sp-bg-type', 'iv-bg-type'].forEach(id => { const el = document.getElementById(id); if (el) el.value = bgId; });
     const dim = s.windowBgDim ?? 50;
-    ['scp-sp-bg-dim', 'scp-bg-dim'].forEach(id => { const el = document.getElementById(id); if (el) el.value = dim; });
-    ['scp-sp-bg-dim-val', 'scp-bg-dim-val'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = `${dim}%`; });
+    ['iv-sp-bg-dim', 'iv-bg-dim'].forEach(id => { const el = document.getElementById(id); if (el) el.value = dim; });
+    ['iv-sp-bg-dim-val', 'iv-bg-dim-val'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = `${dim}%`; });
 }
 
 // ─── Main Setup Functions ─────────────────────────────────────────────────────
@@ -866,7 +732,7 @@ export function setupSettingsHandlers() {
     _bindAllSettings();
 
     // ── forceStreaming button group ──
-    document.querySelectorAll('#scp-st-stream-auto, #scp-st-stream-on, #scp-st-stream-off').forEach(btn => {
+    document.querySelectorAll('#iv-st-stream-auto, #iv-st-stream-on, #iv-st-stream-off').forEach(btn => {
         btn.addEventListener('click', () => {
             const val = btn.dataset.stream; getSettings().forceStreaming = val; saveSettings();
             syncOverlayUI('forceStreaming', val); _markDirty('config');
@@ -878,99 +744,87 @@ export function setupSettingsHandlers() {
         const ok = await showCustomDialog({ type: 'confirm', title: `Reset ${label}`, message: `Reset to default?` }); if (!ok) return;
         getSettings()[key] = defaultVal === '' ? '' : undefined; if (defaultVal !== '') getSettings()[key] = defaultVal;
         saveSettings(); _markDirty('config');
-        const displayVal = defaultVal || (key === 'charEditPrompt' ? DEFAULT_CHAR_EDIT_DIRECTIVE.trim() : key === 'chatEditPrompt' ? DEFAULT_CHAT_EDIT_DIRECTIVE.trim() : key === 'lorebookManagePrompt' ? DEFAULT_LB_MANAGE_PROMPT : key === 'memoryManagePrompt' ? DEFAULT_MEMORY_PROMPT : DEFAULT_SYSTEM_PROMPT);
+        const displayVal = defaultVal || (key === 'memoryManagePrompt' ? DEFAULT_MEMORY_PROMPT : DEFAULT_SYSTEM_PROMPT);
         [stId, spId].forEach(id => { const el = document.getElementById(id); if (el) el.value = displayVal; });
         import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession()));
         toastr.success(`${label} reset.`, EXT_DISPLAY);
     };
-    document.getElementById('scp-reset-prompt')?.addEventListener('click', () => _resetPrompt('systemPrompt', DEFAULT_SYSTEM_PROMPT, 'scp-sysprompt', 'scp-sp-sysprompt', 'System Prompt'));
-    document.getElementById('scp-reset-char-edit-prompt')?.addEventListener('click', async () => {
-        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Char Edit Prompt', message: 'Reset to built-in default?' }); if (!ok) return;
-        getSettings().charEditPrompt = ''; saveSettings(); _markDirty('config');
-        ['scp-char-edit-prompt', 'scp-sp-char-edit-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_CHAR_EDIT_DIRECTIVE.trim(); });
-        import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession())); toastr.success('Char edit prompt reset.', EXT_DISPLAY);
-    });
-    document.getElementById('scp-reset-lb-prompt')?.addEventListener('click', async () => {
-        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Lorebook Prompt', message: 'Reset to default?' }); if (!ok) return;
-        getSettings().lorebookManagePrompt = DEFAULT_LB_MANAGE_PROMPT; saveSettings();
-        ['scp-lb-manage-prompt', 'scp-sp-lb-manage-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_LB_MANAGE_PROMPT; });
-        toastr.success('Lorebook prompt reset.', EXT_DISPLAY);
-    });
-    document.getElementById('scp-reset-memory-prompt')?.addEventListener('click', async () => {
+    document.getElementById('iv-reset-prompt')?.addEventListener('click', () => _resetPrompt('systemPrompt', DEFAULT_SYSTEM_PROMPT, 'iv-sysprompt', 'iv-sp-sysprompt', 'System Prompt'));
+    document.getElementById('iv-reset-memory-prompt')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Prompt', message: 'Reset memory prompt to default?' }); if (!ok) return;
         getSettings().memoryManagePrompt = DEFAULT_MEMORY_PROMPT; saveSettings();
-        ['scp-memory-prompt', 'scp-sp-memory-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_MEMORY_PROMPT; });
+        ['iv-memory-prompt', 'iv-sp-memory-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_MEMORY_PROMPT; });
         import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession())); toastr.success('Prompt reset.', EXT_DISPLAY);
     });
 
     // ── Profile management (ST drawer) ──
-    document.getElementById('scp-profile-select')?.addEventListener('change', async () => {
-        const sel = document.getElementById('scp-profile-select'); const name = sel.value;
+    document.getElementById('iv-profile-select')?.addEventListener('change', async () => {
+        const sel = document.getElementById('iv-profile-select'); const name = sel.value;
         if (isConfigProfileDirty()) {
             const ok = await showCustomDialog({ type: 'confirm', title: 'Unsaved Configuration', message: 'You have unsaved changes. Switch anyway?' });
             if (!ok) { sel.value = getSettings().activeProfile || ''; return; }
         }
         if (name) loadProfile(name); updateBindingSection();
     });
-    document.getElementById('scp-profile-save')?.addEventListener('click', async () => {
-        const sel = document.getElementById('scp-profile-select'); let name = sel?.value;
+    document.getElementById('iv-profile-save')?.addEventListener('click', async () => {
+        const sel = document.getElementById('iv-profile-select'); let name = sel?.value;
         if (!name) { name = await showCustomDialog({ type: 'prompt', title: 'Save Configuration', message: 'Enter a name for this configuration:', placeholder: 'My Config' }); if (!name?.trim()) return; name = name.trim(); }
         saveProfile(name); refreshProfilesDropdown(); if (sel) sel.value = name;
         updateBindingSection(); toastr.success(`Saved "${name}"`, EXT_DISPLAY); _clearDirty('config');
     });
-    document.getElementById('scp-profile-create-new')?.addEventListener('click', async () => {
+    document.getElementById('iv-profile-create-new')?.addEventListener('click', async () => {
         const name = await showCustomDialog({ type: 'prompt', title: 'New Configuration', message: 'Enter a name for the new default profile:', placeholder: 'New Config' }); if (!name?.trim()) return;
         const n = name.trim(); const s = getSettings();
         s.profiles[n] = { systemPrompt: DEFAULT_SYSTEM_PROMPT, includeSystemPrompt: true, includeAuthorsNote: true, includeCharacterCard: true, includeUserPersonality: true, contextDepth: 15, localHistoryLimit: 50, connectionSource: 'default', connectionProfileId: '', maxTokens: 8200 };
         saveSettings(); refreshProfilesDropdown(); loadProfile(n);
-        const sel = document.getElementById('scp-profile-select'); if (sel) sel.value = n;
+        const sel = document.getElementById('iv-profile-select'); if (sel) sel.value = n;
         updateBindingSection(); toastr.success(`Created "${n}"`, EXT_DISPLAY);
     });
-    document.getElementById('scp-profile-duplicate')?.addEventListener('click', async () => {
-        const sel = document.getElementById('scp-profile-select'); if (!sel?.value) return toastr.info('No configuration selected.', EXT_DISPLAY);
+    document.getElementById('iv-profile-duplicate')?.addEventListener('click', async () => {
+        const sel = document.getElementById('iv-profile-select'); if (!sel?.value) return toastr.info('No configuration selected.', EXT_DISPLAY);
         const newName = await showCustomDialog({ type: 'prompt', title: 'Duplicate Configuration', message: 'Name for the new profile:', defaultValue: sel.value + ' (Copy)' }); if (!newName?.trim()) return;
         const n = newName.trim(); const s = getSettings(); const p = s.profiles[sel.value]; if (!p) return;
         s.profiles[n] = JSON.parse(JSON.stringify(p)); saveSettings(); refreshProfilesDropdown(); refreshSPProfilesDropdown(); loadProfile(n);
-        const newSel = document.getElementById('scp-profile-select'); if (newSel) newSel.value = n;
+        const newSel = document.getElementById('iv-profile-select'); if (newSel) newSel.value = n;
         updateBindingSection(); toastr.success(`Duplicated as "${n}"`, EXT_DISPLAY);
     });
-    document.getElementById('scp-profile-rename')?.addEventListener('click', async () => {
-        const sel = document.getElementById('scp-profile-select'); if (!sel?.value) return toastr.info('No configuration selected.', EXT_DISPLAY);
+    document.getElementById('iv-profile-rename')?.addEventListener('click', async () => {
+        const sel = document.getElementById('iv-profile-select'); if (!sel?.value) return toastr.info('No configuration selected.', EXT_DISPLAY);
         const newName = await showCustomDialog({ type: 'prompt', title: 'Rename Configuration', message: 'New name:', defaultValue: sel.value }); if (!newName?.trim() || newName.trim() === sel.value) return;
         const s = getSettings(); const p = s.profiles[sel.value]; if (!p) return;
         s.profiles[newName.trim()] = p; delete s.profiles[sel.value];
         if (s.activeProfile === sel.value) s.activeProfile = newName.trim();
         for (const k in s.profileBindings) { if (s.profileBindings[k] === sel.value) s.profileBindings[k] = newName.trim(); }
         saveSettings(); refreshProfilesDropdown();
-        const newSel = document.getElementById('scp-profile-select'); if (newSel) newSel.value = newName.trim();
+        const newSel = document.getElementById('iv-profile-select'); if (newSel) newSel.value = newName.trim();
         updateBindingSection(); toastr.success('Renamed.', EXT_DISPLAY);
     });
-    document.getElementById('scp-profile-delete')?.addEventListener('click', async () => {
-        const sel = document.getElementById('scp-profile-select'); if (!sel?.value) return;
+    document.getElementById('iv-profile-delete')?.addEventListener('click', async () => {
+        const sel = document.getElementById('iv-profile-select'); if (!sel?.value) return;
         const s = getSettings(); if (Object.keys(s.profiles).length <= 1) { toastr.warning('Cannot delete the last remaining configuration profile.', EXT_DISPLAY); return; }
         const ok = await showCustomDialog({ type: 'confirm', title: 'Delete Configuration', message: `Delete "${sel.value}"?` }); if (!ok) return;
         deleteProfile(sel.value); refreshProfilesDropdown(); updateBindingSection(); toastr.success('Deleted.', EXT_DISPLAY);
     });
-    document.getElementById('scp-bind-char')?.addEventListener('click', () => {
-        const sel = document.getElementById('scp-profile-select'); if (!sel?.value) return;
+    document.getElementById('iv-bind-char')?.addEventListener('click', () => {
+        const sel = document.getElementById('iv-profile-select'); if (!sel?.value) return;
         const s = getSettings(); const { charId } = getBindingKey(); const key = `char_${charId}`;
         if (s.profileBindings[key] === sel.value) delete s.profileBindings[key]; else s.profileBindings[key] = sel.value;
         _dbgAdd(s.profileBindings[key] ? 'PROFILE_BIND' : 'PROFILE_UNBIND', { target: 'char', profile: sel.value }); saveSettings(); updateBindingSection();
     });
-    document.getElementById('scp-bind-chat')?.addEventListener('click', () => {
-        const sel = document.getElementById('scp-profile-select'); if (!sel?.value) return;
+    document.getElementById('iv-bind-chat')?.addEventListener('click', () => {
+        const sel = document.getElementById('iv-profile-select'); if (!sel?.value) return;
         const s = getSettings(); const { charId, chatId } = getBindingKey(); const key = `chat_${charId}_${chatId}`;
         if (s.profileBindings[key] === sel.value) delete s.profileBindings[key]; else s.profileBindings[key] = sel.value;
         _dbgAdd(s.profileBindings[key] ? 'PROFILE_BIND' : 'PROFILE_UNBIND', { target: 'chat', profile: sel.value }); saveSettings(); updateBindingSection();
     });
 
     // ── Misc buttons ──
-    document.getElementById('scp-open-window')?.addEventListener('click', () => import('./ui-window.js').then(m => m.showWindow()));
-    document.getElementById('scp-download-debug')?.addEventListener('click', () => import('../utils/util-debug.js').then(m => m.dbgDownload()));
-    document.getElementById('scp-open-memory-settings')?.addEventListener('click', () => { openSettingsPanel(); setTimeout(() => document.querySelector('[data-sptab="memory"]')?.click(), 80); });
-    document.getElementById('scp-open-tools-settings')?.addEventListener('click', () => { openSettingsPanel(); setTimeout(() => document.querySelector('[data-sptab="tools"]')?.click(), 80); });
-    document.getElementById('scp-clear-sessions')?.addEventListener('click', async () => {
-        const ok = await showCustomDialog({ type: 'confirm', title: 'Clear All Sessions', message: 'Delete ALL Copilot sessions? This cannot be undone.', delayConfirm: 3 }); if (!ok) return;
+    document.getElementById('iv-open-window')?.addEventListener('click', () => import('./ui-window.js').then(m => m.showWindow()));
+    document.getElementById('iv-download-debug')?.addEventListener('click', () => import('../utils/util-debug.js').then(m => m.dbgDownload()));
+    document.getElementById('iv-open-memory-settings')?.addEventListener('click', () => { openSettingsPanel(); setTimeout(() => document.querySelector('[data-sptab="memory"]')?.click(), 80); });
+    document.getElementById('iv-open-tools-settings')?.addEventListener('click', () => { openSettingsPanel(); setTimeout(() => document.querySelector('[data-sptab="tools"]')?.click(), 80); });
+    document.getElementById('iv-clear-sessions')?.addEventListener('click', async () => {
+        const ok = await showCustomDialog({ type: 'confirm', title: 'Clear Conversation', message: 'Delete the whole inner conversation for this chat? This cannot be undone.', delayConfirm: 3 }); if (!ok) return;
         const { charId, chatId } = getBindingKey();
         _dbgAdd('SESSION_CLEAR_REQUESTED', { source: 'st-drawer', charId, chatId });
         getSettings().sessions = {}; saveSettings();
@@ -987,37 +841,35 @@ export function setupSettingsHandlers() {
     });
 
     // ── Background (ST) ──
-    buildBackgroundSettingsUI(document.getElementById('scp-bg-settings'));
-    import('./ui-window.js').then(m => m._setupBgUpload('scp-bg-upload-btn', 'scp-bg-url', () => _syncBgToOverlay()));
+    buildBackgroundSettingsUI(document.getElementById('iv-bg-settings'));
+    import('./ui-window.js').then(m => m._setupBgUpload('iv-bg-upload-btn', 'iv-bg-url', () => _syncBgToOverlay()));
 
     refreshProfilesDropdown();
 }
 
 export function setupSettingsPanelListeners() {
-    const overlay = document.getElementById('scp-settings-overlay'); if (!overlay) return;
+    const overlay = document.getElementById('iv-settings-overlay'); if (!overlay) return;
 
-    document.getElementById('scp-sp-close')?.addEventListener('click', () => closeSettingsPanel());
+    document.getElementById('iv-sp-close')?.addEventListener('click', () => closeSettingsPanel());
     let _spMD = null;
     overlay.addEventListener('mousedown', e => { _spMD = e.target; });
     overlay.addEventListener('click', e => { if (e.target === overlay && _spMD === overlay) closeSettingsPanel(); });
 
     // ── Tab switching ──
-    overlay.querySelectorAll('.scp-sp-tab').forEach(tab => {
+    overlay.querySelectorAll('.iv-sp-tab').forEach(tab => {
         tab.addEventListener('click', () => {
-            overlay.querySelectorAll('.scp-sp-tab').forEach(t => t.classList.remove('active')); tab.classList.add('active');
+            overlay.querySelectorAll('.iv-sp-tab').forEach(t => t.classList.remove('active')); tab.classList.add('active');
             const pane = tab.dataset.sptab;
-            overlay.querySelectorAll('.scp-sp-tab-pane').forEach(p => { p.style.display = p.id === `scp-sp-pane-${pane}` ? '' : 'none'; });
-            if (pane === 'stats') import('../features/feature-stats.js').then(m => { const c = document.getElementById('scp-sp-stats-container'); if (c) m.renderStatsPane(c); });
+            overlay.querySelectorAll('.iv-sp-tab-pane').forEach(p => { p.style.display = p.id === `iv-sp-pane-${pane}` ? '' : 'none'; });
             if (pane === 'memory') import('../features/feature-memory.js').then(m => m.setupMemorySettingsUI());
             if (pane === 'tools') {
                 import('../features/feature-tools-ui.js').then(m => m.setupToolsSettingsUI());
-                import('../features/feature-image-ui.js').then(m => m.setupImageSettings());
             }
         });
     });
 
     // ── SP forceStreaming ──
-    document.querySelectorAll('.scp-stream-btn:not(.scp-ov-stream-btn)').forEach(btn => {
+    document.querySelectorAll('.iv-stream-btn:not(.iv-ov-stream-btn)').forEach(btn => {
         btn.addEventListener('click', () => {
             const val = btn.dataset.stream; getSettings().forceStreaming = val; saveSettings();
             syncOverlayUI('forceStreaming', val); _markDirty('config');
@@ -1025,114 +877,96 @@ export function setupSettingsPanelListeners() {
     });
 
     // ── SP Profile management ──
-    document.getElementById('scp-sp-profile-select')?.addEventListener('change', async () => {
-        const sel = document.getElementById('scp-sp-profile-select'); if (!sel?.value) return;
+    document.getElementById('iv-sp-profile-select')?.addEventListener('change', async () => {
+        const sel = document.getElementById('iv-sp-profile-select'); if (!sel?.value) return;
         if (isConfigProfileDirty()) {
             const ok = await showCustomDialog({ type: 'confirm', title: 'Unsaved Configuration', message: 'Unsaved changes. Switch anyway?' });
             if (!ok) { sel.value = getSettings().activeProfile || ''; return; }
         }
         loadProfile(sel.value); syncSPFromSettings(); updateSettingsUI(); updateSPBindingSection();
     });
-    document.getElementById('scp-sp-profile-save')?.addEventListener('click', async () => {
-        const sel = document.getElementById('scp-sp-profile-select'); let name = sel?.value;
+    document.getElementById('iv-sp-profile-save')?.addEventListener('click', async () => {
+        const sel = document.getElementById('iv-sp-profile-select'); let name = sel?.value;
         if (!name) { name = await showCustomDialog({ type: 'prompt', title: 'Save Configuration', message: 'Profile name:', placeholder: 'My Config' }); if (!name?.trim()) return; name = name.trim(); }
         saveProfile(name); refreshSPProfilesDropdown(); refreshProfilesDropdown(); if (sel) sel.value = name;
         updateSPBindingSection(); toastr.success(`Saved "${name}"`, EXT_DISPLAY); _clearDirty('config');
     });
-    document.getElementById('scp-sp-profile-create')?.addEventListener('click', async () => {
+    document.getElementById('iv-sp-profile-create')?.addEventListener('click', async () => {
         const name = await showCustomDialog({ type: 'prompt', title: 'New Configuration', message: 'Name:', placeholder: 'New Config' }); if (!name?.trim()) return;
         const n = name.trim(); const s = getSettings();
         s.profiles[n] = { systemPrompt: DEFAULT_SYSTEM_PROMPT, includeSystemPrompt: true, includeAuthorsNote: true, includeCharacterCard: true, includeUserPersonality: true, contextDepth: 15, localHistoryLimit: 50, connectionSource: 'default', connectionProfileId: '', maxTokens: 8200, applyRegexToContext: true };
         saveSettings(); refreshSPProfilesDropdown(); refreshProfilesDropdown(); loadProfile(n); syncSPFromSettings(); updateSettingsUI();
-        const sel = document.getElementById('scp-sp-profile-select'); if (sel) sel.value = n;
+        const sel = document.getElementById('iv-sp-profile-select'); if (sel) sel.value = n;
         updateSPBindingSection(); toastr.success(`Created "${n}"`, EXT_DISPLAY);
     });
-    document.getElementById('scp-sp-profile-duplicate')?.addEventListener('click', async () => {
-        const sel = document.getElementById('scp-sp-profile-select'); if (!sel?.value) return toastr.info('No configuration selected.', EXT_DISPLAY);
+    document.getElementById('iv-sp-profile-duplicate')?.addEventListener('click', async () => {
+        const sel = document.getElementById('iv-sp-profile-select'); if (!sel?.value) return toastr.info('No configuration selected.', EXT_DISPLAY);
         const newName = await showCustomDialog({ type: 'prompt', title: 'Duplicate Configuration', message: 'Name for the new profile:', defaultValue: sel.value + ' (Copy)' }); if (!newName?.trim()) return;
         const n = newName.trim(); const s = getSettings(); const p = s.profiles[sel.value]; if (!p) return;
         s.profiles[n] = JSON.parse(JSON.stringify(p)); saveSettings(); refreshSPProfilesDropdown(); refreshProfilesDropdown(); loadProfile(n); syncSPFromSettings(); updateSettingsUI();
-        const newSel = document.getElementById('scp-sp-profile-select'); if (newSel) newSel.value = n;
+        const newSel = document.getElementById('iv-sp-profile-select'); if (newSel) newSel.value = n;
         updateSPBindingSection(); toastr.success(`Duplicated as "${n}"`, EXT_DISPLAY);
     });
-    document.getElementById('scp-sp-profile-rename')?.addEventListener('click', async () => {
-        const sel = document.getElementById('scp-sp-profile-select'); if (!sel?.value) return;
+    document.getElementById('iv-sp-profile-rename')?.addEventListener('click', async () => {
+        const sel = document.getElementById('iv-sp-profile-select'); if (!sel?.value) return;
         const newName = await showCustomDialog({ type: 'prompt', title: 'Rename', message: 'New name:', defaultValue: sel.value }); if (!newName?.trim() || newName.trim() === sel.value) return;
         const s = getSettings(); const p = s.profiles[sel.value]; if (!p) return;
         s.profiles[newName.trim()] = p; delete s.profiles[sel.value];
         if (s.activeProfile === sel.value) s.activeProfile = newName.trim();
         for (const k in s.profileBindings) { if (s.profileBindings[k] === sel.value) s.profileBindings[k] = newName.trim(); }
         saveSettings(); refreshSPProfilesDropdown(); refreshProfilesDropdown();
-        const newSel = document.getElementById('scp-sp-profile-select'); if (newSel) newSel.value = newName.trim();
+        const newSel = document.getElementById('iv-sp-profile-select'); if (newSel) newSel.value = newName.trim();
         updateSPBindingSection(); toastr.success('Renamed.', EXT_DISPLAY);
     });
-    document.getElementById('scp-sp-profile-delete')?.addEventListener('click', async () => {
-        const sel = document.getElementById('scp-sp-profile-select'); if (!sel?.value) return;
+    document.getElementById('iv-sp-profile-delete')?.addEventListener('click', async () => {
+        const sel = document.getElementById('iv-sp-profile-select'); if (!sel?.value) return;
         const s = getSettings(); if (Object.keys(s.profiles).length <= 1) { toastr.warning('Cannot delete the last profile.', EXT_DISPLAY); return; }
         const ok = await showCustomDialog({ type: 'confirm', title: 'Delete Profile', message: `Delete "${sel.value}"?` }); if (!ok) return;
         deleteProfile(sel.value); refreshSPProfilesDropdown(); refreshProfilesDropdown(); updateSPBindingSection(); toastr.success('Deleted.', EXT_DISPLAY);
     });
-    document.getElementById('scp-sp-bind-char')?.addEventListener('click', () => {
-        const sel = document.getElementById('scp-sp-profile-select'); if (!sel?.value) return;
+    document.getElementById('iv-sp-bind-char')?.addEventListener('click', () => {
+        const sel = document.getElementById('iv-sp-profile-select'); if (!sel?.value) return;
         const s = getSettings(); const { charId } = getBindingKey(); const key = `char_${charId}`;
         if (s.profileBindings[key] === sel.value) delete s.profileBindings[key]; else s.profileBindings[key] = sel.value;
-        saveSettings(); updateSPBindingSection(); document.getElementById('scp-sp-bind-char')?.classList.toggle('active', s.profileBindings[key] === sel.value);
+        saveSettings(); updateSPBindingSection(); document.getElementById('iv-sp-bind-char')?.classList.toggle('active', s.profileBindings[key] === sel.value);
     });
-    document.getElementById('scp-sp-bind-chat')?.addEventListener('click', () => {
-        const sel = document.getElementById('scp-sp-profile-select'); if (!sel?.value) return;
+    document.getElementById('iv-sp-bind-chat')?.addEventListener('click', () => {
+        const sel = document.getElementById('iv-sp-profile-select'); if (!sel?.value) return;
         const s = getSettings(); const { charId, chatId } = getBindingKey(); const key = `chat_${charId}_${chatId}`;
         if (s.profileBindings[key] === sel.value) delete s.profileBindings[key]; else s.profileBindings[key] = sel.value;
-        saveSettings(); updateSPBindingSection(); document.getElementById('scp-sp-bind-chat')?.classList.toggle('active', s.profileBindings[key] === sel.value);
+        saveSettings(); updateSPBindingSection(); document.getElementById('iv-sp-bind-chat')?.classList.toggle('active', s.profileBindings[key] === sel.value);
     });
 
     // ── SP conn profile ──
-    document.getElementById('scp-sp-conn-profile')?.addEventListener('change', e => {
+    document.getElementById('iv-sp-conn-profile')?.addEventListener('change', e => {
         getSettings().connectionProfileId = e.target.value; saveSettings(); syncOverlayUI('connectionProfileId', e.target.value); _markDirty('config');
     });
 
     // ── SP Reset buttons ──
-    document.getElementById('scp-sp-reset-prompt')?.addEventListener('click', async () => {
+    document.getElementById('iv-sp-reset-prompt')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset System Prompt', message: 'Reset to default?' }); if (!ok) return;
         getSettings().systemPrompt = DEFAULT_SYSTEM_PROMPT; saveSettings();
-        ['scp-sp-sysprompt', 'scp-sysprompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_SYSTEM_PROMPT; });
+        ['iv-sp-sysprompt', 'iv-sysprompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_SYSTEM_PROMPT; });
         import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession())); toastr.success('System prompt reset.', EXT_DISPLAY);
     });
-    document.getElementById('scp-sp-reset-lb-prompt')?.addEventListener('click', async () => {
-        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset LB Prompt', message: 'Reset to default?' }); if (!ok) return;
-        getSettings().lorebookManagePrompt = DEFAULT_LB_MANAGE_PROMPT; saveSettings();
-        ['scp-sp-lb-manage-prompt', 'scp-lb-manage-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_LB_MANAGE_PROMPT; });
-        toastr.success('Lorebook prompt reset.', EXT_DISPLAY);
-    });
-    document.getElementById('scp-sp-reset-char-edit-prompt')?.addEventListener('click', async () => {
-        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Char Edit Prompt', message: 'Reset to built-in default?' }); if (!ok) return;
-        getSettings().charEditPrompt = ''; saveSettings(); _markDirty('config');
-        ['scp-sp-char-edit-prompt', 'scp-char-edit-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_CHAR_EDIT_DIRECTIVE.trim(); });
-        import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession())); toastr.success('Char edit prompt reset.', EXT_DISPLAY);
-    });
-    document.getElementById('scp-sp-reset-chat-edit-prompt')?.addEventListener('click', async () => {
-        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Chat Edit Prompt', message: 'Reset to default?' }); if (!ok) return;
-        getSettings().chatEditPrompt = ''; saveSettings(); _markDirty('config');
-        ['scp-sp-chat-edit-prompt', 'scp-chat-edit-prompt-st'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_CHAT_EDIT_DIRECTIVE.trim(); });
-        import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession())); toastr.success('Chat edit prompt reset.', EXT_DISPLAY);
-    });
-    document.getElementById('scp-sp-reset-memory-prompt')?.addEventListener('click', async () => {
+    document.getElementById('iv-sp-reset-memory-prompt')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Prompt', message: 'Reset memory prompt to default?' }); if (!ok) return;
         getSettings().memoryManagePrompt = DEFAULT_MEMORY_PROMPT; saveSettings();
-        ['scp-sp-memory-prompt', 'scp-memory-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_MEMORY_PROMPT; });
+        ['iv-sp-memory-prompt', 'iv-memory-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_MEMORY_PROMPT; });
         toastr.success('Prompt reset.', EXT_DISPLAY);
     });
-    document.getElementById('scp-sp-tools-reset')?.addEventListener('click', async () => {
+    document.getElementById('iv-sp-tools-reset')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Prompt', message: 'Reset tools prompt to default?' }); if (!ok) return;
         getSettings().toolsSystemPrompt = DEFAULT_TOOLS_PROMPT; saveSettings();
-        const ta = document.getElementById('scp-sp-tools-prompt'); if (ta) ta.value = DEFAULT_TOOLS_PROMPT;
+        const ta = document.getElementById('iv-sp-tools-prompt'); if (ta) ta.value = DEFAULT_TOOLS_PROMPT;
         toastr.success('Tools prompt reset.', EXT_DISPLAY);
     });
 
     // ── Misc SP ──
-    document.getElementById('scp-sp-open-changelog')?.addEventListener('click', () => { closeSettingsPanel(); import('./ui-widgets.js').then(m => m.openChangelog()); });
-    document.getElementById('scp-sp-download-debug')?.addEventListener('click', () => import('../utils/util-debug.js').then(m => m.dbgDownload()));
-    document.getElementById('scp-sp-clear-sessions')?.addEventListener('click', async () => {
-        const ok = await showCustomDialog({ type: 'confirm', title: 'Clear All Sessions', message: 'Delete ALL Copilot sessions? This cannot be undone.', delayConfirm: 3 }); if (!ok) return;
+    document.getElementById('iv-sp-open-changelog')?.addEventListener('click', () => { closeSettingsPanel(); import('./ui-widgets.js').then(m => m.openChangelog()); });
+    document.getElementById('iv-sp-download-debug')?.addEventListener('click', () => import('../utils/util-debug.js').then(m => m.dbgDownload()));
+    document.getElementById('iv-sp-clear-sessions')?.addEventListener('click', async () => {
+        const ok = await showCustomDialog({ type: 'confirm', title: 'Clear Conversation', message: 'Delete the whole inner conversation for this chat? This cannot be undone.', delayConfirm: 3 }); if (!ok) return;
         const { charId, chatId } = getBindingKey();
         _dbgAdd('SESSION_CLEAR_REQUESTED', { source: 'settings-overlay', charId, chatId });
         getSettings().sessions = {}; saveSettings();
@@ -1146,7 +980,7 @@ export function setupSettingsPanelListeners() {
             toastr.error(`Failed to clear sessions: ${e.message}`, EXT_DISPLAY);
         }
     });
-    document.getElementById('scp-sp-reset-all-overrides')?.addEventListener('click', async () => {
+    document.getElementById('iv-sp-reset-all-overrides')?.addEventListener('click', async () => {
         if (!hasSessionOverrides()) { toastr.info('No session overrides active.', EXT_DISPLAY); return; }
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Session Overrides', message: 'Clear all session overrides for this session?' }); if (!ok) return;
         clearAllSessionOverrides(); syncSPFromSettings();
@@ -1163,56 +997,39 @@ export function setupSettingsPanelListeners() {
     };
     const bindOvSel = (id, key) => { const el = document.getElementById(id); if (!el) return; el.addEventListener('change', () => _syncOvToGlobal(key, el.value || undefined)); };
 
-    const ovDs = document.getElementById('scp-sp-ov-depth-slider'); const ovDv = document.getElementById('scp-sp-ov-depth-val');
+    const ovDs = document.getElementById('iv-sp-ov-depth-slider'); const ovDv = document.getElementById('iv-sp-ov-depth-val');
     if (ovDs) { ovDs.addEventListener('input', () => { if (ovDv) ovDv.textContent = ovDs.value; }); ovDs.addEventListener('change', () => _syncOvToGlobal('contextDepth', parseInt(ovDs.value))); }
 
-    document.getElementById('scp-sp-ov-conn-source')?.addEventListener('change', e => {
+    document.getElementById('iv-sp-ov-conn-source')?.addEventListener('change', e => {
         _syncOvToGlobal('connectionSource', e.target.value);
-        const pg = document.getElementById('scp-sp-ov-profile-group'); const cg = document.getElementById('scp-sp-ov-custom-profile-group');
+        const pg = document.getElementById('iv-sp-ov-profile-group'); const cg = document.getElementById('iv-sp-ov-custom-profile-group');
         if (pg) pg.style.display = e.target.value === 'profile' ? '' : 'none';
         if (cg) cg.style.display = e.target.value === 'custom' ? '' : 'none';
         if (e.target.value === 'profile') updateSPConnProfileList();
     });
-    bindOv('scp-sp-ov-custom-url', 'customUrl'); bindOv('scp-sp-ov-custom-key', 'customKey'); bindOv('scp-sp-ov-custom-model', 'customModel');
-    bindOvSel('scp-sp-ov-conn-profile', 'connectionProfileId');
-    bindOv('scp-sp-ov-max-tokens', 'maxTokens', false, Number); bindOv('scp-sp-ov-history-limit', 'localHistoryLimit', false, Number);
-    bindOv('scp-sp-ov-reasoning-trim', 'reasoningTrimStrings'); bindOv('scp-sp-ov-char-edit-prompt', 'charEditPrompt');
-    bindOv('scp-sp-ov-lb-manage-prompt', 'lorebookManagePrompt'); bindOv('scp-sp-ov-chat-edit-prompt', 'chatEditPrompt');
-    document.getElementById('scp-sp-ov-sysprompt')?.addEventListener('input', e => _syncOvToGlobal('systemPrompt', e.target.value || undefined));
-    bindOv('scp-sp-ov-include-sysprompt',  'includeSystemPrompt',     true);
-    bindOv('scp-sp-ov-include-persona',    'includeUserPersonality',   true);
-    bindOv('scp-sp-ov-include-alt-swipes', 'includeAlternateSwipes',   true);
-    bindOv('scp-sp-ov-apply-regex',        'applyRegexToContext',      true);
-    bindOv('scp-sp-ov-char-edit-enabled',  'charEditAIEnabled',        true);
-    bindOv('scp-sp-ov-lb-ai-enabled',      'lorebookAIManageEnabled',  true);
-    bindOv('scp-sp-ov-chat-edit-enabled',  'chatEditAIEnabled',        true);
-    bindOv('scp-sp-ov-lb-auto-kw',         'lorebookAutoKeyword',      true);
+    bindOv('iv-sp-ov-custom-url', 'customUrl'); bindOv('iv-sp-ov-custom-key', 'customKey'); bindOv('iv-sp-ov-custom-model', 'customModel');
+    bindOvSel('iv-sp-ov-conn-profile', 'connectionProfileId');
+    bindOv('iv-sp-ov-max-tokens', 'maxTokens', false, Number); bindOv('iv-sp-ov-history-limit', 'localHistoryLimit', false, Number);
+    bindOv('iv-sp-ov-reasoning-trim', 'reasoningTrimStrings');
+    document.getElementById('iv-sp-ov-sysprompt')?.addEventListener('input', e => _syncOvToGlobal('systemPrompt', e.target.value || undefined));
+    bindOv('iv-sp-ov-include-sysprompt',  'includeSystemPrompt',     true);
+    bindOv('iv-sp-ov-include-persona',    'includeUserPersonality',   true);
+    bindOv('iv-sp-ov-include-alt-swipes', 'includeAlternateSwipes',   true);
+    bindOv('iv-sp-ov-apply-regex',        'applyRegexToContext',      true);
 
     // Override streaming buttons
-    document.querySelectorAll('.scp-ov-stream-btn').forEach(btn => {
+    document.querySelectorAll('.iv-ov-stream-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const val = btn.dataset.stream; _syncOvToGlobal('forceStreaming', val);
-            document.querySelectorAll('.scp-ov-stream-btn').forEach(b => {
+            document.querySelectorAll('.iv-ov-stream-btn').forEach(b => {
                 const active = b.dataset.stream === val; b.classList.toggle('active', active);
-                b.style.color = active ? 'var(--scp-accent)' : ''; b.style.borderColor = active ? 'var(--scp-accent-dim)' : ''; b.style.background = active ? 'var(--scp-accent-bg)' : '';
+                b.style.color = active ? 'var(--iv-accent)' : ''; b.style.borderColor = active ? 'var(--iv-accent-dim)' : ''; b.style.background = active ? 'var(--iv-accent-bg)' : '';
             });
         });
     });
 
-    // CE override fields
-    _CE_FIELDS_DEF.forEach(ceDef => {
-        bindOv(ceDef.ovId, 'charField_' + ceDef.fk, true);
-        if (ceDef.altGreetingPicker) {
-            document.getElementById(ceDef.ovId)?.addEventListener('change', e => {
-                const picker = document.getElementById('scp-sp-ov-ce-alt-greetings-picker');
-                if (picker) picker.style.display = e.target.checked ? '' : 'none';
-                import('../features/feature-character-ui.js').then(m => m.refreshAltGreetingsPickers());
-            });
-        }
-    });
-
     // Override clear buttons
-    document.querySelectorAll('.scp-sp-ov-clear[data-ovkey]').forEach(btn => {
+    document.querySelectorAll('.iv-sp-ov-clear[data-ovkey]').forEach(btn => {
         btn.addEventListener('click', () => {
             setSessionOverride(btn.dataset.ovkey, undefined);
             _resetOvElToEffective(btn.dataset.ovkey);
@@ -1222,7 +1039,7 @@ export function setupSettingsPanelListeners() {
     });
 
     // ── SP background ──
-    import('./ui-window.js').then(m => m._setupBgUpload('scp-sp-bg-upload-btn', 'scp-sp-bg-url', () => _syncBgToOverlay()));
+    import('./ui-window.js').then(m => m._setupBgUpload('iv-sp-bg-upload-btn', 'iv-sp-bg-url', () => _syncBgToOverlay()));
 }
 
 // ─── Background Settings UI ───────────────────────────────────────────────────
@@ -1231,15 +1048,15 @@ export function buildBackgroundSettingsUI(container) {
     if (!container) return;
     container.innerHTML = '';
     const s = getSettings(); if (!s.customBackgrounds) s.customBackgrounds = {};
-    const isSP = container.id === 'scp-sp-bg-settings';
+    const isSP = container.id === 'iv-sp-bg-settings';
 
-    const mkRow = () => { const d = document.createElement('div'); d.className = isSP ? 'scp-sp-field' : ''; return d; };
-    const mkLbl = text => { const l = document.createElement(isSP ? 'label' : 'b'); l.className = isSP ? 'scp-sp-label' : ''; if (!isSP) l.style.cssText = 'font-size:11px;color:#888;display:block;margin-bottom:4px'; l.textContent = text; return l; };
-    const mkBtn = (icon, label, cls, cb) => { const b = document.createElement('button'); b.className = isSP ? `scp-action-btn${cls ? ' '+cls : ''}` : 'menu_button interactable'; b.innerHTML = `<i class="fa-solid fa-${icon}"></i><span>${label}</span>`; if (!isSP) b.style.flex = '1'; b.addEventListener('click', cb); return b; };
+    const mkRow = () => { const d = document.createElement('div'); d.className = isSP ? 'iv-sp-field' : ''; return d; };
+    const mkLbl = text => { const l = document.createElement(isSP ? 'label' : 'b'); l.className = isSP ? 'iv-sp-label' : ''; if (!isSP) l.style.cssText = 'font-size:11px;color:#888;display:block;margin-bottom:4px'; l.textContent = text; return l; };
+    const mkBtn = (icon, label, cls, cb) => { const b = document.createElement('button'); b.className = isSP ? `iv-action-btn${cls ? ' '+cls : ''}` : 'menu_button interactable'; b.innerHTML = `<i class="fa-solid fa-${icon}"></i><span>${label}</span>`; if (!isSP) b.style.flex = '1'; b.addEventListener('click', cb); return b; };
 
     const typeRow = mkRow(); const typeLbl = mkLbl('Background Type');
     const typeWrap = document.createElement('div'); typeWrap.style.cssText = 'display:flex;gap:6px;align-items:center';
-    const typeSel = document.createElement('select'); typeSel.className = isSP ? 'scp-sp-select text_pole' : 'text_pole'; typeSel.style.flex = '1';
+    const typeSel = document.createElement('select'); typeSel.className = isSP ? 'iv-sp-select text_pole' : 'text_pole'; typeSel.style.flex = '1';
 
     const renderDropdown = () => {
         typeSel.innerHTML = '<option value="none">None</option>';
@@ -1254,7 +1071,7 @@ export function buildBackgroundSettingsUI(container) {
     typeWrap.appendChild(typeSel); typeRow.appendChild(typeLbl); typeRow.appendChild(typeWrap); container.appendChild(typeRow);
 
     const actWrap = document.createElement('div'); actWrap.style.cssText = isSP ? 'display:flex;gap:6px;margin-top:6px' : 'display:flex;gap:6px;margin-top:6px;align-items:center';
-    const rebuildAll = () => { [document.getElementById('scp-bg-settings'), document.getElementById('scp-sp-bg-settings')].filter(Boolean).forEach(c => buildBackgroundSettingsUI(c)); import('./ui-window.js').then(m => m.applyWindowBackground()); };
+    const rebuildAll = () => { [document.getElementById('iv-bg-settings'), document.getElementById('iv-sp-bg-settings')].filter(Boolean).forEach(c => buildBackgroundSettingsUI(c)); import('./ui-window.js').then(m => m.applyWindowBackground()); };
 
     actWrap.appendChild(mkBtn('upload', 'Upload', '', () => {
         const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*,video/mp4,video/webm';
@@ -1280,7 +1097,7 @@ export function buildBackgroundSettingsUI(container) {
         const newName = await showCustomDialog({ type: 'prompt', title: 'Rename Background', message: 'New name:', defaultValue: s.customBackgrounds[val]?.name });
         if (newName?.trim()) { s.customBackgrounds[val].name = newName.trim(); saveSettings(); rebuildAll(); }
     }));
-    actWrap.appendChild(mkBtn('trash', 'Delete', isSP ? 'scp-sp-danger-btn' : '', async () => {
+    actWrap.appendChild(mkBtn('trash', 'Delete', isSP ? 'iv-sp-danger-btn' : '', async () => {
         const val = typeSel.value; if (val === 'none') return;
         const ok = await showCustomDialog({ type: 'confirm', title: 'Delete Background', message: 'Delete this background?' }); if (!ok) return;
         const s2 = getSettings(); delete s2.customBackgrounds[val]; s2.windowBg = 'none'; saveSettings(); rebuildAll();
@@ -1289,16 +1106,16 @@ export function buildBackgroundSettingsUI(container) {
 
     const extraWrap = document.createElement('div'); extraWrap.style.marginTop = '12px';
     const fitRow = mkRow(); const fitLbl = mkLbl('Image/Video Fit');
-    const fitSel = document.createElement('select'); fitSel.className = isSP ? 'scp-sp-select text_pole' : 'text_pole'; fitSel.id = isSP ? 'scp-sp-fit-sel' : 'scp-fit-sel';
+    const fitSel = document.createElement('select'); fitSel.className = isSP ? 'iv-sp-select text_pole' : 'text_pole'; fitSel.id = isSP ? 'iv-sp-fit-sel' : 'iv-fit-sel';
     ['cover','contain','fill','center'].forEach(f => { const o = document.createElement('option'); o.value = f; o.textContent = f; fitSel.appendChild(o); });
     fitSel.value = s.customBackgrounds[s.windowBg]?.fit || 'cover';
     fitSel.addEventListener('change', () => { if (s.windowBg !== 'none' && s.customBackgrounds[s.windowBg]) { s.customBackgrounds[s.windowBg].fit = fitSel.value; saveSettings(); import('./ui-window.js').then(m => m.applyWindowBackground()); } });
     fitRow.appendChild(fitLbl); fitRow.appendChild(fitSel); extraWrap.appendChild(fitRow);
 
     const dimRow = mkRow(); dimRow.style.marginTop = '8px'; const dimLbl = mkLbl('Darkness Overlay');
-    const dimFlex = document.createElement('div'); dimFlex.className = isSP ? 'scp-sp-row' : ''; if (!isSP) dimFlex.style.cssText = 'display:flex;align-items:center;gap:10px';
-    const dimSlider = document.createElement('input'); dimSlider.type = 'range'; dimSlider.min = '0'; dimSlider.max = '100'; dimSlider.className = isSP ? 'scp-slider' : 'neo-range-slider'; dimSlider.style.flex = '1'; dimSlider.value = s.windowBgDim ?? 50;
-    const dimVal = document.createElement('span'); dimVal.style.cssText = isSP ? 'min-width:32px;text-align:right;font-size:11px;color:var(--scp-accent)' : 'font-size:12px;min-width:34px;text-align:right;color:var(--SmartThemeQuoteColor,#a99bfb)'; dimVal.textContent = `${dimSlider.value}%`;
+    const dimFlex = document.createElement('div'); dimFlex.className = isSP ? 'iv-sp-row' : ''; if (!isSP) dimFlex.style.cssText = 'display:flex;align-items:center;gap:10px';
+    const dimSlider = document.createElement('input'); dimSlider.type = 'range'; dimSlider.min = '0'; dimSlider.max = '100'; dimSlider.className = isSP ? 'iv-slider' : 'neo-range-slider'; dimSlider.style.flex = '1'; dimSlider.value = s.windowBgDim ?? 50;
+    const dimVal = document.createElement('span'); dimVal.style.cssText = isSP ? 'min-width:32px;text-align:right;font-size:11px;color:var(--iv-accent)' : 'font-size:12px;min-width:34px;text-align:right;color:var(--SmartThemeQuoteColor,#a99bfb)'; dimVal.textContent = `${dimSlider.value}%`;
     dimSlider.addEventListener('input', () => { dimVal.textContent = `${dimSlider.value}%`; });
     dimSlider.addEventListener('change', () => { getSettings().windowBgDim = parseInt(dimSlider.value); saveSettings(); import('./ui-window.js').then(m => m.applyWindowBackground()); _syncBgToOverlay(); });
     dimFlex.appendChild(dimSlider); dimFlex.appendChild(dimVal); dimRow.appendChild(dimLbl); dimRow.appendChild(dimFlex); extraWrap.appendChild(dimRow);
@@ -1314,36 +1131,36 @@ export function buildBackgroundSettingsUI(container) {
 export function buildQPSettingsUI(container) {
     if (!container) return;
     container.innerHTML = '';
-    const list = document.createElement('div'); list.className = 'scp-qp-settings-list';
+    const list = document.createElement('div'); list.className = 'iv-qp-settings-list';
 
     const renderList = () => {
         list.innerHTML = '';
         const prompts = getSettings().quickPrompts || [];
-        if (!prompts.length) { list.innerHTML = `<div style="font-size:11px;color:var(--scp-text-muted);text-align:center;padding:10px 0">No quick prompts yet. Add one below.</div>`; }
+        if (!prompts.length) { list.innerHTML = `<div style="font-size:11px;color:var(--iv-text-muted);text-align:center;padding:10px 0">No quick prompts yet. Add one below.</div>`; }
         prompts.forEach((qp, idx) => {
-            const row = document.createElement('div'); row.className = 'scp-qp-settings-row';
-            const iconBtn = document.createElement('button'); iconBtn.className = 'scp-qp-settings-icon-btn'; iconBtn.textContent = qp.icon || '⚡'; iconBtn.title = 'Change icon';
+            const row = document.createElement('div'); row.className = 'iv-qp-settings-row';
+            const iconBtn = document.createElement('button'); iconBtn.className = 'iv-qp-settings-icon-btn'; iconBtn.textContent = qp.icon || '⚡'; iconBtn.title = 'Change icon';
             import('./ui-widgets.js').then(mod => {
                 iconBtn.addEventListener('click', e => { e.stopPropagation(); mod.showQPIconPicker(iconBtn, qp.icon || '⚡', emoji => { getSettings().quickPrompts[idx].icon = emoji; saveSettings(); iconBtn.textContent = emoji; mod.renderQuickPromptsBar(); }); });
             });
-            const labelInput = document.createElement('input'); labelInput.type = 'text'; labelInput.className = 'scp-qp-settings-label-input scp-sp-input'; labelInput.placeholder = 'Label'; labelInput.value = qp.label || '';
+            const labelInput = document.createElement('input'); labelInput.type = 'text'; labelInput.className = 'iv-qp-settings-label-input iv-sp-input'; labelInput.placeholder = 'Label'; labelInput.value = qp.label || '';
             labelInput.addEventListener('input', () => { getSettings().quickPrompts[idx].label = labelInput.value; saveSettings(); import('./ui-widgets.js').then(m => m.renderQuickPromptsBar()); });
-            const moveUpBtn = document.createElement('button'); moveUpBtn.className = 'scp-qp-settings-move'; moveUpBtn.textContent = '↑'; moveUpBtn.title = 'Move up'; moveUpBtn.disabled = idx === 0;
+            const moveUpBtn = document.createElement('button'); moveUpBtn.className = 'iv-qp-settings-move'; moveUpBtn.textContent = '↑'; moveUpBtn.title = 'Move up'; moveUpBtn.disabled = idx === 0;
             moveUpBtn.addEventListener('click', () => { if (idx === 0) return; const arr = getSettings().quickPrompts; [arr[idx-1], arr[idx]] = [arr[idx], arr[idx-1]]; saveSettings(); renderList(); import('./ui-widgets.js').then(m => m.renderQuickPromptsBar()); });
-            const moveDnBtn = document.createElement('button'); moveDnBtn.className = 'scp-qp-settings-move'; moveDnBtn.textContent = '↓'; moveDnBtn.title = 'Move down'; moveDnBtn.disabled = idx === prompts.length - 1;
+            const moveDnBtn = document.createElement('button'); moveDnBtn.className = 'iv-qp-settings-move'; moveDnBtn.textContent = '↓'; moveDnBtn.title = 'Move down'; moveDnBtn.disabled = idx === prompts.length - 1;
             moveDnBtn.addEventListener('click', () => { const arr = getSettings().quickPrompts; if (idx >= arr.length - 1) return; [arr[idx], arr[idx+1]] = [arr[idx+1], arr[idx]]; saveSettings(); renderList(); import('./ui-widgets.js').then(m => m.renderQuickPromptsBar()); });
-            const delBtn = document.createElement('button'); delBtn.className = 'scp-qp-settings-del'; delBtn.innerHTML = I.trash; delBtn.title = 'Delete';
+            const delBtn = document.createElement('button'); delBtn.className = 'iv-qp-settings-del'; delBtn.innerHTML = I.trash; delBtn.title = 'Delete';
             delBtn.addEventListener('click', async () => { const ok = await showCustomDialog({ type: 'confirm', title: 'Delete Prompt', message: `Delete "${qp.label || 'this prompt'}"?` }); if (!ok) return; getSettings().quickPrompts.splice(idx, 1); saveSettings(); renderList(); import('./ui-widgets.js').then(m => m.renderQuickPromptsBar()); });
-            const textArea = document.createElement('textarea'); textArea.className = 'scp-qp-settings-text scp-sp-textarea'; textArea.placeholder = 'Prompt text… (supports {{user}}, {{char}} macros)'; textArea.rows = 2; textArea.value = qp.text || '';
+            const textArea = document.createElement('textarea'); textArea.className = 'iv-qp-settings-text iv-sp-textarea'; textArea.placeholder = 'Prompt text… (supports {{user}}, {{char}} macros)'; textArea.rows = 2; textArea.value = qp.text || '';
             textArea.addEventListener('input', () => { getSettings().quickPrompts[idx].text = textArea.value; saveSettings(); });
-            const controls = document.createElement('div'); controls.className = 'scp-qp-settings-controls'; controls.appendChild(moveUpBtn); controls.appendChild(moveDnBtn); controls.appendChild(delBtn);
-            const top = document.createElement('div'); top.className = 'scp-qp-settings-row-top'; top.appendChild(iconBtn); top.appendChild(labelInput); top.appendChild(controls);
+            const controls = document.createElement('div'); controls.className = 'iv-qp-settings-controls'; controls.appendChild(moveUpBtn); controls.appendChild(moveDnBtn); controls.appendChild(delBtn);
+            const top = document.createElement('div'); top.className = 'iv-qp-settings-row-top'; top.appendChild(iconBtn); top.appendChild(labelInput); top.appendChild(controls);
             row.appendChild(top); row.appendChild(textArea); list.appendChild(row);
         });
     };
     renderList();
 
-    const addBtn = document.createElement('button'); addBtn.className = 'scp-action-btn'; addBtn.style.marginTop = '8px'; addBtn.innerHTML = `${I.plus}<span>Add Prompt</span>`;
+    const addBtn = document.createElement('button'); addBtn.className = 'iv-action-btn'; addBtn.style.marginTop = '8px'; addBtn.innerHTML = `${I.plus}<span>Add Prompt</span>`;
     addBtn.addEventListener('click', async () => {
         const label = await showCustomDialog({ type: 'prompt', title: 'New Quick Prompt', message: 'Label for this prompt:', placeholder: 'My Prompt' }); if (label === null) return;
         getSettings().quickPrompts.push({ id: 'qp_'+Date.now(), label: label.trim() || 'Prompt', icon: '⚡', text: '' }); saveSettings(); renderList(); import('./ui-widgets.js').then(m => m.renderQuickPromptsBar());

@@ -1,29 +1,25 @@
 import { DEFAULT_SYSTEM_PROMPT, EXT_DISPLAY } from './constants.js';
 import { state } from './state.js';
-import { getSettings, getEffectiveSettings, saveSettings, getCurrentSession, saveSessionsToMetadata, addMessage, expandMacros, getBindingKey } from './session.js';
-import { beginImageRun, endImageRun, takePendingImageProposals, attachProposalsToMessage, persistGeneratedPendingIfAny } from './features/feature-image-engine.js';
-import { sanitizeToolCallsForSave, shouldAuthorizeImageRun } from './features/image-core.js';
+import { getEffectiveSettings, saveSessionsToMetadata, addMessage, getCurrentSession } from './session.js';
 import { _dbgAdd } from './utils/util-debug.js';
 import { escHtml } from './utils/util-dom.js';
 import { _ensureWrapped, normalizeCharNamesInBlock } from './utils/util-text.js';
 import { getCharInfo, getUserPersona } from './utils/util-st.js';
-import { recordStat, SM } from './features/feature-stats.js';
-import { _mergeContent } from './features/feature-attachments.js';
-
-import { _getAspectEvolutiaCharFields, _getAspectEvolutiaPersonaFields } from './integrations/integ-evolutia.js';
+import { _getAspectEvolutiaPersonaFields } from './integrations/integ-evolutia.js';
 import { _getSummaryceptionSummary } from './integrations/integ-summaryception.js';
 import { applyRegexIfEnabled } from './integrations/integ-regex.js';
 
-import { buildLorebookContextBlock, buildLBAIInstructions, expandOutletsAsync } from './features/feature-lorebook-engine.js';
-import { buildCharacterContextBlock, buildCharEditAIInstructions } from './features/feature-character-engine.js';
-import { buildChatEditAIInstructions } from './features/feature-chatedit-engine.js';
 import { buildMemoryContextBlock, buildMemoryAIInstructions, processMemoryUpdates, stripMemoryBlock } from './features/feature-memory.js';
 import { buildToolCallsSystemBlock, parseToolCallsFromText, executeTool, getEnabledTools } from './features/feature-tools-engine.js';
 
-import { updateMsgCount, smartScrollToBottom, setGeneratingState, showGenerationError, _renderMsgBodyContent, updateSwipeBar, _refreshSwipeBars, appendMsgEl } from './ui/ui-chat.js';
+import { updateMsgCount, smartScrollToBottom, setGeneratingState, showGenerationError, _renderMsgBodyContent, _refreshSwipeBars, appendMsgEl } from './ui/ui-chat.js';
 import { getDisplayContent, extractToolCallPlaceholders, renderMarkdown, postProcessHTMLBlocks } from './ui/ui-chat.js'; 
 import { postProcessToolCalls, executeAskUser } from './features/feature-tools-ui.js';
 import { playCompletionSound } from './ui/ui-widgets.js';
+
+function sanitizeToolCallsForSave(toolCalls) {
+    return (toolCalls || []).map(tc => ({ ...tc }));
+}
 
 export async function buildSystemContent(settings) {
     let sysPromptRaw = (typeof settings.systemPrompt === 'string' && settings.systemPrompt.trim()) ? settings.systemPrompt : DEFAULT_SYSTEM_PROMPT;
@@ -52,19 +48,9 @@ export async function buildSystemContent(settings) {
     const memoryBlock = buildMemoryContextBlock(settings)
     if (memoryBlock) parts.push(memoryBlock);
 
-    const lbBlock = await buildLorebookContextBlock(settings);
-    if (lbBlock) parts.push(lbBlock);
-
-    {
-    const editXml = buildCharacterContextBlock(settings);
-    if (ctx.groupId) {
-        if (editXml) parts.push('\n\n' + editXml);
-    } else {
-        let inner = `Name: ${charInfo ? charInfo.name : (ctx.name2 || 'Character')}\n`;
-        if (editXml) inner += '\n' + editXml;
-        parts.push(`\n\n<character_information>\n${inner}\n</character_information>`);
+    if (!ctx.groupId) {
+        parts.push(`\n\n<character_information>\nName: ${charInfo ? charInfo.name : (ctx.name2 || 'Character')}\n</character_information>`);
     }
-}
 
     {
         const userName = ctx.name1 || 'User';
@@ -88,44 +74,16 @@ export async function buildSystemContent(settings) {
         parts.push(`\n\n<{{user}}_persona>\n${inner}\n</{{user}}_persona>`);
     }
 
-    const aiInstructions = buildLBAIInstructions(settings).trim();
-    const charEditDirective = buildCharEditAIInstructions(settings).trim();
-    const chatEditDirective = buildChatEditAIInstructions(settings).trim();
     const memoryAIInstr = buildMemoryAIInstructions(settings).trim();
     const toolsBlock = buildToolCallsSystemBlock().trim();
 
-    const modules = [memoryAIInstr, aiInstructions, charEditDirective, chatEditDirective, toolsBlock].filter(Boolean);
+    const modules = [memoryAIInstr, toolsBlock].filter(Boolean);
     if (modules.length > 0) {
         const reminder = `\n\n[SYSTEM REMINDER: If you intend to modify anything you MUST write the appropriate structured markdown block containing your instructions. The system strictly relies on these blocks to parse and apply your changes automatically. Simply describing your changes in plain text without outputting the corresponding markdown block will result in failure to apply them.]`;
         parts.push(`\n\n<modules>\n${modules.join('\n\n')}${reminder}\n</modules>`);
     }
 
     return parts.join('\n');
-}
-
-export function _buildAiContextForHistoryMsg(msg) {
-    try {
-        const swipe = msg.swipes?.[msg.swipeIndex || 0];
-        const lines = swipe?.historyLines || msg.appliedLines || [];
-        const charName = swipe?._charName || msg._charName || null;
-
-        const entries = lines.map(line => {
-            const plain = line.replace(/\*\*/g, '').replace(/`/g, '');
-            const statusMatch = plain.match(/^[✓✕·]\s+(ACCEPTED|REJECTED|DISMISSED[^:]*)/);
-            const status = statusMatch ? statusMatch[1] : 'UNKNOWN';
-            const restMatch = plain.match(/(?:ACCEPTED|REJECTED|DISMISSED[^:]*): (.+)/);
-            const detail = restMatch ? restMatch[1].trim() : plain;
-            return { status, detail };
-        });
-
-        const ctg = msg.isCharEditHistory ? 'character_card_changes' : (msg.isChatEditHistory ? 'chat_messages_edits' : 'lorebook_changes');
-        const obj = { type: 'system_notification', category: ctg, entries };
-        if (charName) obj.character = charName;
-
-        return `${JSON.stringify(obj)}\n\n[System Note: \`${ctg}\` block deleted to save tokens. DO NOT regenerate it. Proceed with user's next request.]`;
-    } catch (_) {
-        return msg.content || '';
-    }
 }
 
 export function getMainChatSlice(depth) {
@@ -156,7 +114,7 @@ export function getMainChatSlice(depth) {
     return ctx.chat.slice(-depth).map((m, i) => extractData(m, total - depth + i));
 }
 
-export async function assembleMessages(session, settings, pendingUserText, pendingAtts = null) {
+export async function assembleMessages(session, settings, pendingUserText) {
     const messages = [{ role: 'system', content: await buildSystemContent(settings) }];
     const depth = Math.max(0, parseInt(settings.contextDepth) || 0);
     const hasPicked = !!(session.pickedChatIndices && session.pickedChatIndices.length > 0);
@@ -215,52 +173,12 @@ export async function assembleMessages(session, settings, pendingUserText, pendi
     }
     const limit = Math.max(1, parseInt(settings.localHistoryLimit) || 50);
     for (const m of session.messages.slice(-limit)) {
-        let content = m.content;
-        
-        const currentSwipe = m.swipes?.[m.swipeIndex || 0];
-        const hasAttachedHistory = currentSwipe?.historyLines?.length > 0;
-
-        if (m.isLBHistory || m.isCharEditHistory || m.isChatEditHistory) {
-            content = _buildAiContextForHistoryMsg(m);
-            messages.push({ role: 'user', content: _mergeContent(content, m.attachments) });
-        } else {
-            const finalContent = _mergeContent(content, m.attachments);
-            let apiRole = m.role;
-            if (apiRole === 'system') apiRole = 'user';
-            
-            messages.push({ role: apiRole, content: finalContent });
-
-            if (hasAttachedHistory) {
-                let cat = 'system_action_results';
-                const firstLine = currentSwipe.historyLines[0] || '';
-                if (firstLine.includes('Character') || firstLine.includes('Tags') || firstLine.includes('Description') || firstLine.includes('Personality')) cat = 'character_card_changes';
-                else if (firstLine.includes('message')) cat = 'chat_messages_edits';
-                else cat = 'lorebook_changes';
-
-                const dummy = { appliedLines: currentSwipe.historyLines, isCharEditHistory: cat === 'character_card_changes', isChatEditHistory: cat === 'chat_messages_edits' };
-                const historyContext = _buildAiContextForHistoryMsg(dummy);
-                
-                messages.push({ role: 'user', content: historyContext });
-            }
-        }
+        let apiRole = m.role;
+        if (apiRole === 'system') apiRole = 'user';
+        messages.push({ role: apiRole, content: m.content });
     }
-    if (pendingUserText !== null && pendingUserText !== undefined) {
-        const finalContent = _mergeContent(pendingUserText, pendingAtts);
-        if (finalContent || (Array.isArray(finalContent) && finalContent.length)) {
-            messages.push({ role: 'user', content: finalContent });
-        }
-    }
-
-    for (let m of messages) {
-        if (typeof m.content === 'string') {
-            m.content = await expandOutletsAsync(m.content);
-        } else if (Array.isArray(m.content)) {
-            for (let part of m.content) {
-                if (part.type === 'text') {
-                    part.text = await expandOutletsAsync(part.text);
-                }
-            }
-        }
+    if (pendingUserText !== null && pendingUserText !== undefined && pendingUserText !== '') {
+        messages.push({ role: 'user', content: pendingUserText });
     }
 
     return messages;
@@ -539,7 +457,7 @@ export async function callGenerate(session, settings, pendingText, onChunk) {
                 throw new Error(`Connection profile "${settings.connectionProfileId}" not found. Available: ${profiles.map(p => p.name).join(', ') || 'None'}`);
             }
         } else {
-            throw new Error('No profile selected in ST-Copilot settings.');
+            throw new Error('No profile selected in Inner Voice settings.');
         }
     } else if (settings.connectionSource !== 'custom') {
         const domSelect = document.getElementById('connection_profiles');
@@ -741,7 +659,7 @@ export async function callGenerate(session, settings, pendingText, onChunk) {
     return { text: text.trim(), reasoning, isMaxTokens };
 }
 
-export async function runGenerate(session, userText, addUserMsg = true, processedAtts = null, options = {}) {
+export async function runGenerate(session, userText, addUserMsg = true) {
     if (state.generating) return;
     state.generating = true;
     state.activeToolCalls = [];
@@ -776,27 +694,27 @@ export async function runGenerate(session, userText, addUserMsg = true, processe
             
             appendMsgEl(placeholder, true);
             
-            streamMsgEl = document.querySelector(`.scp-msg[data-id="${streamMsgId}"]`);
+            streamMsgEl = document.querySelector(`.iv-msg[data-id="${streamMsgId}"]`);
             if (streamMsgEl) {
-                const body = streamMsgEl.querySelector('.scp-msg-body');
-                streamContentEl = streamMsgEl.querySelector('.scp-msg-content');
+                const body = streamMsgEl.querySelector('.iv-msg-body');
+                streamContentEl = streamMsgEl.querySelector('.iv-msg-content');
 
                 streamReasoningBlockEl = document.createElement('details');
-                streamReasoningBlockEl.className = 'scp-reasoning-block';
+                streamReasoningBlockEl.className = 'iv-reasoning-block';
                 streamReasoningBlockEl.style.display = 'none';
                 streamReasoningSummaryEl = document.createElement('summary');
-                streamReasoningSummaryEl.className = 'scp-reasoning-summary';
+                streamReasoningSummaryEl.className = 'iv-reasoning-summary';
                 streamReasoningSummaryEl.textContent = 'Thinking…';
                 streamReasoningContentEl = document.createElement('div');
-                streamReasoningContentEl.className = 'scp-reasoning-content';
+                streamReasoningContentEl.className = 'iv-reasoning-content';
                 streamReasoningBlockEl.appendChild(streamReasoningSummaryEl);
                 streamReasoningBlockEl.appendChild(streamReasoningContentEl);
                 if (body) body.insertBefore(streamReasoningBlockEl, streamContentEl);
 
                 cursorEl = document.createElement('span');
-                cursorEl.className = 'scp-stream-cursor';
+                cursorEl.className = 'iv-stream-cursor';
 
-                const bar = document.getElementById('scp-thinking-bar');
+                const bar = document.getElementById('iv-thinking-bar');
                 if (bar) bar.style.display = 'flex';
             }
         }
@@ -840,32 +758,9 @@ export async function runGenerate(session, userText, addUserMsg = true, processe
     };
 
     try {
-        if (addUserMsg && (userText || (processedAtts && processedAtts.length))) {
-            const msgObj = addMessage(session, 'user', userText, { 
-                attachments: processedAtts || []
-            });
+        if (addUserMsg && userText) {
+            const msgObj = addMessage(session, 'user', userText);
             appendMsgEl(msgObj);
-            recordStat(SM.msg);
-        }
-
-        endImageRun();
-        const allowImageGeneration = shouldAuthorizeImageRun({
-            addUserMsg,
-            allowImageGeneration: options.allowImageGeneration,
-        });
-        if (allowImageGeneration) {
-            const lastUser = [...(session.messages || [])].reverse().find(m => m.role === 'user');
-            const turnText = userText || lastUser?.content || '';
-            const turnAtts = processedAtts || lastUser?.attachments || [];
-            const { chatId, charId } = getBindingKey();
-            beginImageRun({
-                userTurn: turnText,
-                attachments: turnAtts,
-                binding: { chatId: String(chatId || ''), charId: String(charId || ''), sessionId: session.id },
-                sessionId: session.id,
-                mode: 'natural',
-                authorized: true,
-            });
         }
 
         const fullMessages = await assembleMessages(session, settings, null);
@@ -978,9 +873,9 @@ export async function runGenerate(session, userText, addUserMsg = true, processe
 
                 extraHistory.push({ role: 'user', content: `<tool_results>\n${toolResultsText}\n</tool_results>\n\nCONTINUE your response using these results. Write exactly where you left off.` });
 
-                const thinkingText = document.getElementById('scp-thinking-text');
+                const thinkingText = document.getElementById('iv-thinking-text');
                 if (thinkingText) thinkingText.textContent = `Round ${round + 2}/${maxRounds + 1}…`;
-                const bar = document.getElementById('scp-thinking-bar');
+                const bar = document.getElementById('iv-thinking-bar');
                 if (bar) bar.style.display = 'flex';
 
                 for (const eh of extraHistory) {
@@ -990,7 +885,7 @@ export async function runGenerate(session, userText, addUserMsg = true, processe
                 isStreaming = false;
                 streamAccumText = '';
                 const cursor2 = document.createElement('span');
-                cursor2.className = 'scp-stream-cursor';
+                cursor2.className = 'iv-stream-cursor';
                 
                 const tempSession = { 
                     ...session, 
@@ -1040,7 +935,6 @@ export async function runGenerate(session, userText, addUserMsg = true, processe
         processMemoryUpdates(rawNormalized, streamMsgId);
         const fullText = stripMemoryBlock(rawNormalized);
 
-        const imageProposals = takePendingImageProposals();
         const savedToolCalls = state.activeToolCalls.length ? sanitizeToolCallsForSave(JSON.parse(JSON.stringify(state.activeToolCalls))) : undefined;
 
         if (streamMsgId) {
@@ -1049,32 +943,26 @@ export async function runGenerate(session, userText, addUserMsg = true, processe
                 msg.content = fullText; 
                 msg.reasoning = fullReasoning || null; 
                 msg.toolCalls = savedToolCalls; 
-                attachProposalsToMessage(msg, imageProposals);
                 msg.swipes = [{ content: fullText, reasoning: fullReasoning || null }];
                 msg.swipeIndex = 0;
             }
-            if (imageProposals.length) await persistGeneratedPendingIfAny(imageProposals);
-            else saveSessionsToMetadata();
+            saveSessionsToMetadata();
 
             if (msg && streamMsgEl) {
                 _renderMsgBodyContent(streamMsgEl, msg);
             }
         } else {
             const newMsg = addMessage(session, 'assistant', fullText, { reasoning: fullReasoning || null, toolCalls: savedToolCalls });
-            attachProposalsToMessage(newMsg, imageProposals);
             newMsg.swipes = [{ content: fullText, reasoning: fullReasoning || null }];
             newMsg.swipeIndex = 0;
-            if (imageProposals.length) await persistGeneratedPendingIfAny(imageProposals);
-            else saveSessionsToMetadata();
+            saveSessionsToMetadata();
             appendMsgEl(newMsg);
         }
 
         _refreshSwipeBars(session);
         state.activeToolCalls = [];
 
-        if (tokensIn > 0) recordStat(SM.tokIn, tokensIn);
         const tokensOut = await estimateTokens(fullText);
-        if (tokensOut > 0) recordStat(SM.tokOut, tokensOut);
 
         playCompletionSound();
         _dbgAdd('GEN_DONE', { chars: fullText?.length || 0, hasReasoning: !!fullReasoning, tokensOut });
@@ -1087,7 +975,7 @@ export async function runGenerate(session, userText, addUserMsg = true, processe
             return;
         }
         
-        const inputEl = document.getElementById('scp-input');
+        const inputEl = document.getElementById('iv-input');
         if (inputEl && inputEl.value.trim() === '' && userText) {
             inputEl.value = userText;
         }
@@ -1097,7 +985,6 @@ export async function runGenerate(session, userText, addUserMsg = true, processe
         
         showGenerationError(err);
     } finally {
-        endImageRun();
         state.generating = false;
         setGeneratingState(false);
     }
@@ -1130,8 +1017,8 @@ export async function runContinue(session, targetMsgId) {
     let streamAccumContinuation = '';
     const originalContent = targetMsg.content;
 
-    const targetEl = document.querySelector(`.scp-msg[data-id="${targetMsgId}"]`);
-    if (targetEl) streamContentEl = targetEl.querySelector('.scp-msg-content');
+    const targetEl = document.querySelector(`.iv-msg[data-id="${targetMsgId}"]`);
+    if (targetEl) streamContentEl = targetEl.querySelector('.iv-msg-content');
 
     const cleanupCursor = () => {
         if (cursorEl && cursorEl.parentNode) cursorEl.remove();
@@ -1143,8 +1030,8 @@ export async function runContinue(session, targetMsgId) {
         streamAccumContinuation = text;
         if (!cursorEl) {
             cursorEl = document.createElement('span');
-            cursorEl.className = 'scp-stream-cursor';
-            const bar = document.getElementById('scp-thinking-bar');
+            cursorEl.className = 'iv-stream-cursor';
+            const bar = document.getElementById('iv-thinking-bar');
             if (bar) bar.style.display = 'flex';
         }
         const combined = _joinContinuation(originalContent, text);
@@ -1222,10 +1109,7 @@ export async function runContinue(session, targetMsgId) {
         saveSessionsToMetadata();
         _applyFinalContinuation(combined);
 
-        if (tokensIn > 0) recordStat(SM.tokIn, tokensIn);
-        
         const tokensOut = await estimateTokens(continuation);
-        if (tokensOut > 0) recordStat(SM.tokOut, tokensOut);
 
         updateMsgCount(session);
         playCompletionSound();

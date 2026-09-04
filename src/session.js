@@ -3,12 +3,16 @@ import {
     EXT_DISPLAY, 
     DEFAULT_SYSTEM_PROMPT, 
     DEFAULT_MEMORY_PROMPT, 
-    DEFAULT_LB_MANAGE_PROMPT, 
     THEME_PRESETS 
 } from './constants.js';
 import { _dbgAdd, _dbgDiffSettings } from './utils/util-debug.js';
 import { _repairJSON } from './utils/util-text.js';
-import { defaultImageSettings, migrateBucket } from './features/image-core.js';
+
+function migrateBucket(bucket) {
+    const next = bucket && typeof bucket === 'object' ? bucket : { activeSessionId: null, sessions: [] };
+    if (!Array.isArray(next.sessions)) next.sessions = [];
+    return next;
+}
 
 // ─── Settings ───────────────────────────────────────────────────────────────
 export function getSettings() {
@@ -50,14 +54,6 @@ export function getSettings() {
         savedThemes: {},
         activeThemeProfile: '',
         sessions: {},
-        lorebookEnabled: true,
-        lorebookAutoKeyword: true,
-        lorebookSelectedBooks: [],
-        lorebookEntryOverrides: {},
-        lorebookAIManageEnabled: true,
-        lorebookManagePrompt: DEFAULT_LB_MANAGE_PROMPT,
-        lorebookSTScanDepth: 5,
-        lorebookCopilotScanDepth: 6,
         floatingIconPersistent: false,
         reasoningTrimStrings: '',
         ghostModeOpacity: 15,
@@ -77,32 +73,17 @@ export function getSettings() {
         stats: { g:{}, c:{}, ch:{} },
         changelogAutoShow: true,
         lastSeenVersion: '',
-        starredMessages: {},
         forceStreaming: 'auto',
         applyRegexToContext: true,
-        charEditAIEnabled: true,
-        charEditPrompt: '',
-        charEditFields: {
-            tags: true, description: true, personality: true,
-            scenario: true, first_mes: true, mes_example: true,
-            alternate_greetings: false, authors_note: true,
-            system_prompt: true, post_history_instructions: true, name: false,
-        },
         completionSound: 'none',
         completionSoundVolume: 80,
         completionSoundOnlyWhenUnfocused: false,
         wobbleWindow: false,
-        altGreetingIndices: [],
-        chatEditAIEnabled: true,
-        chatEditPrompt: '',
-        lorebookExcludedBooks: [],
         windowBgUrl: '',
         windowBgDim: 50,
         windowBgType: 'none',
         pickerPreviewLines: 1,
         pickerPreviewLastLines: 0,
-        imageAnalysisMode: 'direct',
-        attachedFiles: [],
         memoryEnabled: true,
         memoryInject: true,
         memoryScope: 'global',
@@ -113,13 +94,9 @@ export function getSettings() {
         toolsThinking: false,
         toolsMaxRounds: 5,
         toolsEnabled_search_chat: true,
-        toolsEnabled_search_lorebook: true,
-        toolsEnabled_get_lorebooks: true,
         toolsEnabled_ask_user: true,
-        toolsEnabled_get_char_info: true,
         toolsEnabled_get_chat_stats: true,
         toolsEnabled_get_recent_messages: true,
-        ...defaultImageSettings(),
         includeSummaryception: true,
         useAspectEvolutia: true,
         autoExpandMacros: false,
@@ -274,9 +251,9 @@ export async function initChatBucket({ forceReset = false } = {}) {
     const { charId, chatId } = getBindingKey();
 
     if (forceReset) {
-        const prevMeta = ctx.chatMetadata.st_copilot || null;
-        const freshId = `copilot_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
-        ctx.chatMetadata.st_copilot = { format: 'v4', file_id: freshId, chat_id: chatId };
+        const prevMeta = ctx.chatMetadata.inner_voice || null;
+        const freshId = `inner_voice_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
+        ctx.chatMetadata.inner_voice = { format: 'v4', file_id: freshId, chat_id: chatId };
         if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
         _currentSessionFileId = freshId;
         _inMemoryBucket = migrateBucket({ activeSessionId: null, sessions: [] });
@@ -291,7 +268,7 @@ export async function initChatBucket({ forceReset = false } = {}) {
         saveSessionFile(fileId, item.payload);
     }
 
-    let meta = ctx.chatMetadata.st_copilot;
+    let meta = ctx.chatMetadata.inner_voice;
     let targetFileId = null;
     let payload = null;
 
@@ -302,21 +279,21 @@ export async function initChatBucket({ forceReset = false } = {}) {
         } else {
             _dbgAdd('STORAGE_CHAT_BRANCH_DETECTED', { oldChatId: meta.chat_id, newChatId: chatId });
             payload = await loadSessionFile(meta.file_id);
-            targetFileId = `copilot_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
+            targetFileId = `inner_voice_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
             
             if (payload && payload !== false) {
                 await saveSessionFile(targetFileId, payload);
             }
             
-            ctx.chatMetadata.st_copilot = { format: 'v4', file_id: targetFileId, chat_id: chatId };
+            ctx.chatMetadata.inner_voice = { format: 'v4', file_id: targetFileId, chat_id: chatId };
             if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
         }
     } else {
-        targetFileId = `copilot_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
+        targetFileId = `inner_voice_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
         _dbgAdd('STORAGE_MIGRATION_V4_INIT', { targetFileId });
         
         const safeChatId = chatId.replace(/[^a-zA-Z0-9_-]/g, '_');
-        payload = await loadSessionFile(`copilot_sess_${safeChatId}.json`);
+        payload = await loadSessionFile(`inner_voice_sess_${safeChatId}.json`);
 
         if (!payload && meta && meta.file_id && meta.format !== 'v4') {
             payload = await loadSessionFile(meta.file_id);
@@ -335,7 +312,7 @@ export async function initChatBucket({ forceReset = false } = {}) {
             }
         }
 
-        ctx.chatMetadata.st_copilot = { format: 'v4', file_id: targetFileId, chat_id: chatId };
+        ctx.chatMetadata.inner_voice = { format: 'v4', file_id: targetFileId, chat_id: chatId };
         if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
     }
 
@@ -343,8 +320,8 @@ export async function initChatBucket({ forceReset = false } = {}) {
 
     if (payload === false) {
         _dbgAdd('STORAGE_LOAD_CORRUPTED_RECOVERY', { brokenFileId: targetFileId, charId, chatId });
-        const recoveryFileId = `copilot_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
-        ctx.chatMetadata.st_copilot = { format: 'v4', file_id: recoveryFileId, chat_id: chatId, recoveredFrom: targetFileId };
+        const recoveryFileId = `inner_voice_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
+        ctx.chatMetadata.inner_voice = { format: 'v4', file_id: recoveryFileId, chat_id: chatId, recoveredFrom: targetFileId };
         if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
 
         targetFileId = recoveryFileId;
@@ -352,7 +329,7 @@ export async function initChatBucket({ forceReset = false } = {}) {
         _currentSessionFileId = targetFileId;
         await commitBucketChanges(true);
 
-        toastr.error('Copilot session file was corrupted and could not be recovered. Started a fresh session storage for this chat; the broken file was kept on disk for manual recovery.', EXT_DISPLAY, { timeOut: 15000 });
+        toastr.error('The inner conversation file was corrupted and could not be recovered. Started fresh storage for this chat; the broken file was kept on disk for manual recovery.', EXT_DISPLAY, { timeOut: 15000 });
         return;
     }
 
@@ -407,10 +384,6 @@ export function saveSessionsToMetadata() {
     commitBucketChanges();
 }
 
-export async function persistImageStateTransition() {
-    await commitBucketChanges(true);
-}
-
 export function getChatBucket() {
     _inMemoryBucket = migrateBucket(_inMemoryBucket);
     return _inMemoryBucket;
@@ -420,60 +393,27 @@ export function getChatBucket() {
 
 export function genId(prefix) { return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`; }
 
-export function createSession(name, isTemporary = false, recordStats = true) {
+export function createSession(name) {
     const bucket = getChatBucket();
     const id = genId('sess');
-    const sess = { id, name: name || `Session ${bucket.sessions.length + 1}`, created: Date.now(), messages: [], isTemporary };
-    
-    if (recordStats) {
-        const prev = bucket.sessions.find(s => s.id === bucket.activeSessionId);
-        if (prev && prev.isTemporary) {
-            bucket.sessions = bucket.sessions.filter(s => s.id !== prev.id);
-        }
-    }
+    const sess = { id, name: name || `Session ${bucket.sessions.length + 1}`, created: Date.now(), messages: [] };
 
     bucket.sessions.push(sess);
     bucket.activeSessionId = id;
-    
-    if (recordStats) {
-        import('./features/feature-stats.js').then(m => m.recordStat(m.SM.sess));
-    }
+
     saveSessionsToMetadata();
-    _dbgAdd('SESSION_CREATED', { id: sess.id, name: sess.name, isTemporary });
+    _dbgAdd('SESSION_CREATED', { id: sess.id, name: sess.name });
     return sess;
 }
 
 export function getActiveSession(autoCreate = true) {
     const bucket = getChatBucket();
     if (!bucket.sessions.length || !bucket.activeSessionId) {
-        return autoCreate ? createSession(undefined, false, false) : null;
+        return autoCreate ? createSession() : null;
     }
     const sess = bucket.sessions.find(s => s.id === bucket.activeSessionId);
     if (sess) return sess;
-    return autoCreate ? createSession(undefined, false, false) : null;
-}
-
-export function setActiveSession(sessionId) {
-    const bucket = getChatBucket();
-    if (!bucket.sessions.find(s => s.id === sessionId)) return;
-    const prev = bucket.sessions.find(s => s.id === bucket.activeSessionId);
-    if (prev && prev.isTemporary && prev.id !== sessionId) {
-        bucket.sessions = bucket.sessions.filter(s => s.id !== prev.id);
-    }
-    bucket.activeSessionId = sessionId;
-    saveSessionsToMetadata();
-    _dbgAdd('SESSION_SWITCHED', { id: sessionId });
-}
-
-export function deleteCurrentSession() {
-    const bucket = getChatBucket();
-    if (!bucket.sessions.length) return createSession();
-    const deletedId = bucket.activeSessionId;
-    bucket.sessions = bucket.sessions.filter(s => s.id !== bucket.activeSessionId);
-    bucket.activeSessionId = bucket.sessions.length ? bucket.sessions[bucket.sessions.length - 1].id : null;
-    saveSessionsToMetadata();
-    _dbgAdd('SESSION_DELETED', { id: deletedId });
-    return getActiveSession(true);
+    return autoCreate ? createSession() : null;
 }
 
 export function getCurrentSession() {
@@ -571,136 +511,4 @@ export function expandMacros(text) {
     } catch (_) {
         return text;
     }
-}
-
-import { showCustomDialog, escHtml } from './utils/util-dom.js';
-
-export function exportCurrentSession() {
-    try {
-        const sess = getCurrentSession();
-        const { charId, chatId } = getBindingKey();
-        const ctx = SillyTavern.getContext();
-        const charName = ctx.characters?.[ctx.characterId]?.name || 'unknown';
-        const exportData = {
-            version: 1,
-            exported: new Date().toISOString(),
-            charName,
-            session: JSON.parse(JSON.stringify(sess)),
-        };
-        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const safeName = sess.name.replace(/[^a-z0-9]/gi, '_').slice(0, 40) || 'session';
-        a.download = `st-copilot-session-${safeName}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-        toastr.success('Session exported.', EXT_DISPLAY);
-    } catch (e) {
-        toastr.error(`Export failed: ${e.message}`, EXT_DISPLAY);
-    }
-}
-
-export function importSession(onSuccessCallback) {
-    const inp = document.createElement('input');
-    inp.type = 'file'; inp.accept = '.json';
-    inp.onchange = async () => {
-        const file = inp.files?.[0]; if (!file) return;
-        try {
-            const text = await file.text();
-            const data = JSON.parse(text);
-            if (!data.session || !data.session.id || !Array.isArray(data.session.messages)) {
-                toastr.error('Invalid session file.', EXT_DISPLAY); return;
-            }
-            const ok = await showCustomDialog({
-                type: 'confirm',
-                title: 'Import Session',
-                message: `Import session "${data.session.name || 'unnamed'}"${data.charName ? ` (from ${data.charName})` : ''}? It will be added to the current chat metadata.`,
-            });
-            if (!ok) return;
-            const bucket = getChatBucket();
-            const imported = { ...data.session, id: genId('sess'), name: `${data.session.name || 'Imported'} (imported)` };
-            imported.isTemporary = false;
-            bucket.sessions.push(imported);
-            bucket.activeSessionId = imported.id;
-            saveSessionsToMetadata();
-            toastr.success(`Session "${escHtml(imported.name)}" imported.`, EXT_DISPLAY);
-            if (onSuccessCallback) onSuccessCallback();
-        } catch (e) {
-            toastr.error(`Import failed: ${e.message}`, EXT_DISPLAY);
-        }
-    };
-    inp.click();
-}
-
-export function showSessionDialog({ defaultName = '' } = {}) {
-    return new Promise(resolve => {
-        const overlay = document.createElement('div');
-        overlay.className = 'scp-dialog-overlay';
-        overlay.style.zIndex = '2147483050';
-        overlay.innerHTML = `
-            <div class="scp-dialog-box">
-                <div class="scp-dialog-title">New Session</div>
-                <div class="scp-dialog-msg">Session name:</div>
-                <input type="text" class="scp-dialog-input" value="${escHtml(defaultName)}" placeholder="${escHtml(defaultName)}">
-                <label class="scp-sess-tmp-label">
-                    <div class="scp-lb-toggle" id="scp-sess-tmp-toggle"><div class="scp-lb-toggle-knob"></div></div>
-                    <span>Temporary — auto-delete when switching</span>
-                </label>
-                <div class="scp-dialog-btns">
-                    <button class="scp-dialog-btn scp-dialog-cancel">Cancel</button>
-                    <button class="scp-dialog-btn scp-dialog-ok">Create</button>
-                </div>
-            </div>`;
-        document.body.appendChild(overlay);
-        let isTemporary = false;
-        const toggle = overlay.querySelector('#scp-sess-tmp-toggle');
-        toggle.addEventListener('click', () => {
-            isTemporary = !isTemporary;
-            toggle.classList.toggle('active', isTemporary);
-        });
-        const input = overlay.querySelector('.scp-dialog-input');
-        const okBtn = overlay.querySelector('.scp-dialog-ok');
-        const cancelBtn = overlay.querySelector('.scp-dialog-cancel');
-        const close = val => { overlay.classList.remove('visible'); setTimeout(() => overlay.remove(), 150); resolve(val); };
-        input.focus(); input.select();
-        okBtn.addEventListener('click', () => close({ name: input.value, isTemporary }));
-        cancelBtn.addEventListener('click', () => close(null));
-        let _mdTarget = null;
-        overlay.addEventListener('mousedown', e => { _mdTarget = e.target; });
-        overlay.addEventListener('click', e => { if (e.target === overlay && _mdTarget === overlay) close(null); });
-        input.addEventListener('keydown', e => {
-            if (e.key === 'Enter') { e.preventDefault(); close({ name: input.value, isTemporary }); }
-            if (e.key === 'Escape') close(null);
-        });
-        requestAnimationFrame(() => overlay.classList.add('visible'));
-    });
-}
-
-export function getSessionFavKey() {
-    const { charId, chatId } = getBindingKey();
-    return `${charId} ${chatId}`;
-}
-
-export function getStarredMessages() {
-    const s = getSettings();
-    const key = getSessionFavKey();
-    if (!s.starredMessages[key]) s.starredMessages[key] = [];
-    return s.starredMessages[key];
-}
-
-export function isMessageStarred(msgId) {
-    return getStarredMessages().includes(msgId);
-}
-
-export function toggleStarMessage(msgId) {
-    const s = getSettings();
-    const key = getSessionFavKey();
-    if (!s.starredMessages[key]) s.starredMessages[key] = [];
-    const arr = s.starredMessages[key];
-    const idx = arr.indexOf(msgId);
-    if (idx >= 0) arr.splice(idx, 1);
-    else arr.push(msgId);
-    saveSettings();
-    return idx < 0; // true = now starred
 }

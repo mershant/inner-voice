@@ -3,24 +3,24 @@ import { state } from '../state.js';
 import { THEME_CSS_MAP, THEME_PRESETS, ICON_STORAGE_KEY, WIN_ID, EXT_DISPLAY } from '../constants.js';
 import { scrollToBottom, saveScrollPosition, restoreScrollPosition } from './ui-chat.js';
 
-const SCP_TOP_Z_INDEX = 2147483000;
-const WIN_POS_STORAGE_KEY = 'scp-win-pos';
+const IV_TOP_Z_INDEX = 2147483000;
+const WIN_POS_STORAGE_KEY = 'iv-win-pos';
 
 export function bringWindowToFront() {
     const targets = Array.from(document.body.children).filter(el =>
-        el.id?.startsWith('scp-') || el.classList?.contains('scp-dialog-overlay')
+        el.id?.startsWith('iv-') || el.classList?.contains('iv-dialog-overlay')
     );
     
     const getLayer = (el) => {
-        if (el.classList?.contains('scp-dialog-overlay')) return 50;
+        if (el.classList?.contains('iv-dialog-overlay')) return 50;
         if (el.id?.endsWith('-modal')) return 40;
         if (el.id?.endsWith('-overlay')) return 30;
-        if (el.id === 'scp-dock-icon') return 20;
+        if (el.id === 'iv-dock-icon') return 20;
         return 10;
     };
 
     for (const el of targets) {
-        el.style.zIndex = String(SCP_TOP_Z_INDEX + getLayer(el));
+        el.style.zIndex = String(IV_TOP_Z_INDEX + getLayer(el));
     }
 }
 
@@ -121,7 +121,7 @@ export function makeDraggable(handle, target) {
     };
 
     handle.addEventListener('pointerdown', e => {
-        if (e.target.closest('.scp-hbtn,.scp-tbtn,select,input,button,.scp-opacity-wrap,.scp-rh,.scp-sess-dropdown,.scp-sess-wrap')) return;
+        if (e.target.closest('.iv-hbtn,.iv-tbtn,select,input,button,.iv-opacity-wrap,.iv-rh,.iv-sess-dropdown,.iv-sess-wrap')) return;
         
         isWobbly = getSettings().wobbleWindow !== false && !getSettings().performanceMode;
 
@@ -150,7 +150,7 @@ export function makeDraggable(handle, target) {
 
         active = true;
         handle.setPointerCapture(e.pointerId);
-        target.classList.add('scp-dragging');
+        target.classList.add('iv-dragging');
         e.preventDefault();
         
         if (!_rafId) _rafId = requestAnimationFrame(tick);
@@ -165,7 +165,7 @@ export function makeDraggable(handle, target) {
     const onEnd = () => {
         if (!active) return;
         active = false;
-        target.classList.remove('scp-dragging');
+        target.classList.remove('iv-dragging');
         if (!isWobbly) saveWindowState(target);
     };
 
@@ -176,8 +176,8 @@ export function makeDraggable(handle, target) {
 
 export function makeResizable(target) {
     const MIN_W = 320, MIN_H = 300;
-    target.querySelectorAll('.scp-rh').forEach(h => {
-        const dir = [...h.classList].find(c => /^scp-rh-\w/.test(c))?.replace('scp-rh-', '') || '';
+    target.querySelectorAll('.iv-rh').forEach(h => {
+        const dir = [...h.classList].find(c => /^iv-rh-\w/.test(c))?.replace('iv-rh-', '') || '';
         let active = false, sw, sh, sl, st, sx, sy, _rafId = null, _s = {};
 
         const flush = () => {
@@ -194,7 +194,7 @@ export function makeResizable(target) {
             const r = target.getBoundingClientRect();
             sx = e.clientX; sy = e.clientY; sw = r.width; sh = r.height; sl = r.left; st = r.top;
             h.setPointerCapture(e.pointerId);
-            target.classList.add('scp-resizing');
+            target.classList.add('iv-resizing');
         });
 
         h.addEventListener('pointermove', e => {
@@ -212,14 +212,14 @@ export function makeResizable(target) {
             if (!active) return;
             active = false;
             if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; flush(); }
-            target.classList.remove('scp-resizing');
+            target.classList.remove('iv-resizing');
             saveWindowState(target);
         });
 
         h.addEventListener('pointercancel', () => {
             active = false;
             if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; }
-            target.classList.remove('scp-resizing');
+            target.classList.remove('iv-resizing');
         });
 
         h.style.touchAction = 'none';
@@ -339,7 +339,7 @@ export function makeIconDraggable(iconTarget) {
         const moveDist = Math.sqrt((tx - startX) * (tx - startX) + (ty - startY) * (ty - startY));
         if (!dragging && moveDist > 6) {
             dragging = true;
-            iconTarget.classList.add('scp-icon-dragging');
+            iconTarget.classList.add('iv-icon-dragging');
         }
 
         if (!_rafId) _rafId = requestAnimationFrame(tick);
@@ -350,7 +350,7 @@ export function makeIconDraggable(iconTarget) {
             iconTarget.releasePointerCapture(e.pointerId);
         }
         active = false;
-        iconTarget.classList.remove('scp-icon-dragging');
+        iconTarget.classList.remove('iv-icon-dragging');
         
         if (dragging) {
             dragging = false;
@@ -365,7 +365,7 @@ export function makeIconDraggable(iconTarget) {
         }
         dragging = false;
         active = false;
-        iconTarget.classList.remove('scp-icon-dragging');
+        iconTarget.classList.remove('iv-icon-dragging');
     });
 
     iconTarget.style.touchAction = 'none';
@@ -386,15 +386,12 @@ export function applyCustomTheme(theme) {
     
     // Lazy get elements just to be safe
     const windowEl = document.getElementById(WIN_ID);
-    const iconEl = document.getElementById('scp-dock-icon');
+    const iconEl = document.getElementById('iv-dock-icon');
     const targets = [
         windowEl, 
         iconEl, 
-        document.getElementById('scp-lb-overlay'), 
-        document.getElementById('scp-char-overlay'),
-        document.getElementById('scp-diff-modal'), 
-        document.getElementById('scp-settings-overlay'), 
-        document.getElementById('scp-picker-overlay')
+        document.getElementById('iv-settings-overlay'), 
+        document.getElementById('iv-picker-overlay')
     ].filter(Boolean);
     const s = getSettings();
     
@@ -416,18 +413,18 @@ export function applyCustomTheme(theme) {
     }
     const fontVal = (theme.font || '').trim();
     targets.forEach(t => fontVal
-        ? t.style.setProperty('--scp-font', fontVal)
-        : t.style.removeProperty('--scp-font'));
+        ? t.style.setProperty('--iv-font', fontVal)
+        : t.style.removeProperty('--iv-font'));
         
     let fontSizeVal = (theme.fontSize || '').trim();
     if (/^\d+$/.test(fontSizeVal)) fontSizeVal += 'px';
     
     targets.forEach(t => {
         if (fontSizeVal) {
-            t.style.setProperty('--scp-font-size', fontSizeVal);
+            t.style.setProperty('--iv-font-size', fontSizeVal);
             t.style.fontSize = fontSizeVal;
         } else {
-            t.style.removeProperty('--scp-font-size');
+            t.style.removeProperty('--iv-font-size');
             t.style.fontSize = '';
         }
     });
@@ -440,10 +437,10 @@ export function applyWindowBackground() {
     const bgId = s.windowBg || 'none';
     const dim = (s.windowBgDim ?? 50) / 100;
 
-    windowEl.style.removeProperty('--scp-bg-image');
-    windowEl.classList.remove('scp-has-bg');
+    windowEl.style.removeProperty('--iv-bg-image');
+    windowEl.classList.remove('iv-has-bg');
     
-    let mediaEl = document.getElementById('scp-bg-media');
+    let mediaEl = document.getElementById('iv-bg-media');
 
     if (bgId === 'none' || !s.customBackgrounds || !s.customBackgrounds[bgId]) {
         if (mediaEl) mediaEl.remove();
@@ -464,7 +461,7 @@ export function applyWindowBackground() {
 
     if (!mediaEl) {
         mediaEl = document.createElement(isVideo ? 'video' : 'img');
-        mediaEl.id = 'scp-bg-media';
+        mediaEl.id = 'iv-bg-media';
         if (isVideo) {
             mediaEl.autoplay = true; 
             mediaEl.loop = true; 
@@ -474,11 +471,11 @@ export function applyWindowBackground() {
         windowEl.insertBefore(mediaEl, windowEl.firstChild);
     }
 
-    mediaEl.className = `scp-bg-media bg-${fit}`;
+    mediaEl.className = `iv-bg-media bg-${fit}`;
     if (mediaEl.src !== bg.dataUrl) mediaEl.src = bg.dataUrl;
     
-    windowEl.style.setProperty('--scp-bg-dim', dim);
-    windowEl.classList.add('scp-has-bg');
+    windowEl.style.setProperty('--iv-bg-dim', dim);
+    windowEl.classList.add('iv-has-bg');
 }
 
 export function restoreWindowState(windowEl, iconEl) {
@@ -590,15 +587,15 @@ export function setGhostMode(enabled) {
     state.ghostModeActive = enabled;
     if (!windowEl) return;
     const s = getSettings();
-    const ghostBtn = document.getElementById('scp-ghost-btn');
+    const ghostBtn = document.getElementById('iv-ghost-btn');
 
     if (enabled) {
         const opacity = Math.max(15, Math.min(50, s.ghostModeOpacity ?? 15)) / 100;
-        windowEl.classList.add('scp-ghost-mode');
+        windowEl.classList.add('iv-ghost-mode');
         windowEl.style.opacity = opacity.toString();
         ghostBtn?.classList.add('active');
     } else {
-        windowEl.classList.remove('scp-ghost-mode');
+        windowEl.classList.remove('iv-ghost-mode');
         windowEl.style.opacity = ((s.opacity ?? 95) / 100).toString();
         ghostBtn?.classList.remove('active');
     }
@@ -624,7 +621,7 @@ export function setupHotkey() {
         if (e.key.toLowerCase() !== key) return;
         if (needAlt !== e.altKey || needCtrl !== e.ctrlKey || needShift !== e.shiftKey || needMeta !== e.metaKey) return;
         const active = document.activeElement;
-        if (active && active !== document.getElementById('scp-input') && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) return;
+        if (active && active !== document.getElementById('iv-input') && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) return;
         e.preventDefault(); toggleVisibility();
     };
     document.addEventListener('keydown', _hotkeyHandler);
@@ -654,23 +651,23 @@ export function setupGhostHotkey() {
 export function minimize() { 
     saveScrollPosition();
     const windowEl = document.getElementById(WIN_ID);
-    const iconEl = document.getElementById('scp-dock-icon');
+    const iconEl = document.getElementById('iv-dock-icon');
     setGhostMode(false); 
     const s = getSettings(); 
     s.minimized = true; 
     if(windowEl) windowEl.style.display = 'none'; 
-    state.copilotActive = false;
+    state.windowActive = false;
     saveSettings(); 
     updateIconVisibility(iconEl);
 }
 
 export function restoreFromMinimize() { 
     const windowEl = document.getElementById(WIN_ID);
-    const iconEl = document.getElementById('scp-dock-icon');
+    const iconEl = document.getElementById('iv-dock-icon');
     const s = getSettings(); 
     s.minimized = false; 
     if(windowEl) windowEl.style.display = 'flex'; 
-    state.copilotActive = true;
+    state.windowActive = true;
     saveSettings(); 
     updateIconVisibility(iconEl);
     restoreScrollPosition(); 
@@ -680,26 +677,26 @@ export function restoreFromMinimize() {
 export function hideWindow() { 
     saveScrollPosition();
     const windowEl = document.getElementById(WIN_ID);
-    const iconEl = document.getElementById('scp-dock-icon');
+    const iconEl = document.getElementById('iv-dock-icon');
     setGhostMode(false); 
     const s = getSettings(); 
     s.windowVisible = false; 
     s.minimized = false; 
     if(windowEl) windowEl.style.display = 'none'; 
-    state.copilotActive = false;
+    state.windowActive = false;
     saveSettings(); 
     updateIconVisibility(iconEl);
 }
 
 export function showWindow() {
     const windowEl = document.getElementById(WIN_ID);
-    const iconEl = document.getElementById('scp-dock-icon');
+    const iconEl = document.getElementById('iv-dock-icon');
     const s = getSettings(); 
-    if (!s.enabled) { toastr.warning('ST-Copilot is disabled.', EXT_DISPLAY); return; }
+    if (!s.enabled) { toastr.warning('Inner Voice is disabled.', EXT_DISPLAY); return; }
     s.windowVisible = true; 
     s.minimized = false;
     if(windowEl) windowEl.style.display = 'flex';
-    state.copilotActive = true;
+    state.windowActive = true;
     saveSettings(); 
     updateIconVisibility(iconEl);
     restoreScrollPosition();
@@ -743,7 +740,7 @@ export function _setupBgUpload(btnId, inputId, onUploadSuccess) {
         inp.onchange = async () => {
             const file = inp.files[0];
             if (!file) return;
-            if (file.size > 25 * 1024 * 1024) { toastr.warning('File is too large (>25MB). Use URL instead.', 'ST-Copilot'); return; }
+            if (file.size > 25 * 1024 * 1024) { toastr.warning('File is too large (>25MB). Use URL instead.', EXT_DISPLAY); return; }
             const url = await _uploadBgToST(file).catch(() => null);
             if (url) {
                 getSettings().windowBgUrl = url;
@@ -753,7 +750,7 @@ export function _setupBgUpload(btnId, inputId, onUploadSuccess) {
                 applyWindowBackground();
                 if (onUploadSuccess) onUploadSuccess();
             } else {
-                toastr.error('Failed to upload background.', 'ST-Copilot');
+                toastr.error('Failed to upload background.', EXT_DISPLAY);
             }
         };
         inp.click();

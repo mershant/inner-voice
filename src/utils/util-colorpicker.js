@@ -34,24 +34,24 @@ export function showColorPicker(anchorEl, initialVal, onChange) {
     const hexVal = parsed ? _rgbToHex(parsed.r, parsed.g, parsed.b) : '#7c6dfa';
     const alphaVal = parsed ? Math.round(parsed.a * 100) : 100;
 
-    const settingsOverlay = anchorEl.closest('#scp-settings-overlay');
+    const settingsOverlay = anchorEl.closest('#iv-settings-overlay');
     if (settingsOverlay) {
         settingsOverlay.style.opacity = '0';
         settingsOverlay.style.pointerEvents = 'none';
     }
 
     const pop = document.createElement('div');
-    pop.className = 'scp-color-pop';
+    pop.className = 'iv-color-pop';
     pop.innerHTML = `
-        <div class="scp-color-pop-row">
-            <input type="color" class="scp-color-pop-wheel" value="${hexVal}">
-            <div class="scp-color-pop-alpha-col">
-                <span class="scp-color-pop-alpha-label">Alpha</span>
-                <input type="range" class="scp-slider scp-color-pop-alpha" min="0" max="100" value="${alphaVal}">
-                <span class="scp-color-pop-alpha-val">${alphaVal}%</span>
+        <div class="iv-color-pop-row">
+            <input type="color" class="iv-color-pop-wheel" value="${hexVal}">
+            <div class="iv-color-pop-alpha-col">
+                <span class="iv-color-pop-alpha-label">Alpha</span>
+                <input type="range" class="iv-slider iv-color-pop-alpha" min="0" max="100" value="${alphaVal}">
+                <span class="iv-color-pop-alpha-val">${alphaVal}%</span>
             </div>
         </div>
-        <input type="text" class="scp-color-pop-text text_pole" value="${escHtml(initialVal)}">
+        <input type="text" class="iv-color-pop-text text_pole" value="${escHtml(initialVal)}">
     `;
     document.body.appendChild(pop);
     _activeColorPop = pop;
@@ -64,10 +64,10 @@ export function showColorPicker(anchorEl, initialVal, onChange) {
         if (pr.bottom > window.innerHeight - 8) pop.style.top = `${rect.top - pr.height - 6}px`;
     });
 
-    const wheel = pop.querySelector('.scp-color-pop-wheel');
-    const alpha = pop.querySelector('.scp-color-pop-alpha');
-    const alphaValEl = pop.querySelector('.scp-color-pop-alpha-val');
-    const textEl = pop.querySelector('.scp-color-pop-text');
+    const wheel = pop.querySelector('.iv-color-pop-wheel');
+    const alpha = pop.querySelector('.iv-color-pop-alpha');
+    const alphaValEl = pop.querySelector('.iv-color-pop-alpha-val');
+    const textEl = pop.querySelector('.iv-color-pop-text');
 
     let _emitPending = false;
     const buildVal = () => {

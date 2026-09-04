@@ -31,24 +31,24 @@ export function autoResize(el) {
 export function showCustomDialog({ type = 'alert', title = '', message = '', htmlMessage = '', defaultValue = '', placeholder = '', delayConfirm = 0 }) {
     return new Promise(resolve => {
         const overlay = document.createElement('div');
-        overlay.className = 'scp-dialog-overlay';
+        overlay.className = 'iv-dialog-overlay';
         overlay.style.zIndex = '2147483050';
         const isPrompt = type === 'prompt';
         const isConfirm = type === 'confirm';
         overlay.innerHTML = `
-            <div class="scp-dialog-box">
-                ${title ? `<div class="scp-dialog-title">${escHtml(title)}</div>` : ''}
-                ${message ? `<div class="scp-dialog-msg">${escHtml(message)}</div>` : (htmlMessage ? `<div class="scp-dialog-msg">${htmlMessage}</div>` : '')}
-                ${isPrompt ? `<input type="text" class="scp-dialog-input" value="${escHtml(defaultValue)}" placeholder="${escHtml(placeholder)}">` : ''}
-                <div class="scp-dialog-btns">
-                    ${(isPrompt || isConfirm) ? `<button class="scp-dialog-btn scp-dialog-cancel">Cancel</button>` : ''}
-                    <button class="scp-dialog-btn scp-dialog-ok${isConfirm ? ' danger' : ''}">${isConfirm ? 'Confirm' : 'OK'}</button>
+            <div class="iv-dialog-box">
+                ${title ? `<div class="iv-dialog-title">${escHtml(title)}</div>` : ''}
+                ${message ? `<div class="iv-dialog-msg">${escHtml(message)}</div>` : (htmlMessage ? `<div class="iv-dialog-msg">${htmlMessage}</div>` : '')}
+                ${isPrompt ? `<input type="text" class="iv-dialog-input" value="${escHtml(defaultValue)}" placeholder="${escHtml(placeholder)}">` : ''}
+                <div class="iv-dialog-btns">
+                    ${(isPrompt || isConfirm) ? `<button class="iv-dialog-btn iv-dialog-cancel">Cancel</button>` : ''}
+                    <button class="iv-dialog-btn iv-dialog-ok${isConfirm ? ' danger' : ''}">${isConfirm ? 'Confirm' : 'OK'}</button>
                 </div>
             </div>`;
         document.body.appendChild(overlay);
-        const input = overlay.querySelector('.scp-dialog-input');
-        const okBtn = overlay.querySelector('.scp-dialog-ok');
-        const cancelBtn = overlay.querySelector('.scp-dialog-cancel');
+        const input = overlay.querySelector('.iv-dialog-input');
+        const okBtn = overlay.querySelector('.iv-dialog-ok');
+        const cancelBtn = overlay.querySelector('.iv-dialog-cancel');
         
         let timerIntv = null;
         let currentDelay = delayConfirm;

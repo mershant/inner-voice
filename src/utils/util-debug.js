@@ -119,7 +119,7 @@ export function dbgDownload() {
         characterId: ctx.characterId,
         chatId: ctx.chatId,
         stChatLength: ctx.chat?.length || 0,
-        copilotSessionMsgs: sessionMsgs,
+        sessionMsgs,
         hasActiveSessionOverrides: hasSessionOverrides(),
         activeConnectionProfile: activeProfileName,
         activeConnectionProfileData: activeProfileData,
@@ -131,7 +131,7 @@ export function dbgDownload() {
     };
 
     const lines = [
-        '=== ST-Copilot Debug Log ===',
+        '=== Inner Voice Debug Log ===',
         `Version: ${extVersion} | Session Start: ${DBG_STATE.sessionStart} | Downloaded: ${new Date().toISOString()}`,
         `Entries: ${DBG_STATE.log.length} / ${DBG_STATE.MAX} max`,
         '='.repeat(70),
@@ -150,7 +150,7 @@ export function dbgDownload() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `st-copilot-debug-${Date.now()}.txt`;
+    a.download = `inner-voice-debug-${Date.now()}.txt`;
     a.click();
     URL.revokeObjectURL(url);
     toastr.success('Debug log downloaded.', EXT_DISPLAY);

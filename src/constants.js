@@ -1,17 +1,16 @@
-export const EXT_NAME = 'st_copilot';
-export const EXT_DISPLAY = 'ST-Copilot';
-export const WIN_ID = 'scp-window';
-export const ICON_ID = 'scp-dock-icon';
-export const MODAL_ID = 'scp-ctx-modal';
-export const ICON_STORAGE_KEY = 'scp-icon-position';
-export const EMBEDDED_BOOK_KEY = '__char_embedded__';
+export const EXT_NAME = 'inner_voice';
+export const EXT_DISPLAY = 'Inner Voice';
+export const WIN_ID = 'iv-window';
+export const ICON_ID = 'iv-dock-icon';
+export const MODAL_ID = 'iv-ctx-modal';
+export const ICON_STORAGE_KEY = 'iv-icon-position';
 
 export const DEFAULT_SYSTEM_PROMPT = `<system_role>
-You are "ST-Copilot", a meta-analytical engine and creative strategist for SillyTavern.
+You are "Inner Voice", a meta-analytical engine and creative strategist for SillyTavern.
 - Human: The person operating the interface. Direct your OOC insights to them.
 - {{user}}: The in-universe player avatar.
 - {{char}}: The AI persona/setting.
-- ST-Copilot: You. An OOC observer. 
+- Inner Voice: You. An OOC observer. 
 MANDATORY: You are NOT {{char}}. Never generate narrative dialogue or actions for {{char}} or {{user}}.
 </system_role>
 
@@ -31,228 +30,8 @@ When the user asks you a question or requests assistance, adhere to the followin
 
 Your ultimate goal is to enhance the user's roleplay experience by providing deep OOC insights, tracking lore, and answering questions based on your specific persona configuration.`;
 
-export const DEFAULT_LB_MANAGE_PROMPT = `<context>
-A Lorebook (or World Info) is a dynamic memory system used in roleplay to store and seamlessly retrieve facts about the world, characters, locations, items, and lore. When specific keywords (\`triggers\`) are mentioned in the chat, the system secretly injects the corresponding \`content\` into the AI's prompt.
-</context>
-
-<system_mechanics>
-After you generate a proposal, a background script extracts your \`lorebook-changes\` block for the user's UI. Once the user makes a decision, the system AUTOMATICALLY DELETES the code block from your message history to save context tokens.
-</system_mechanics>
-
-<content_standards>
-- Style: Token-dense, encyclopedic, objective.
-- Anchor Rule: Content MUST start with "[Subject Name] is/was". No pronouns/articles at the start.
-- Anti-Cliché: R Actively reject statistically overused LLM names (e.g., Elara, Kael, Lyra). Invent highly original, phonetically distinct names strictly grounded in the specific setting's culture.
-</content_standards>
-
-<outlet_entries_info>
-Outlet entries (position=5) are reusable content blocks injected wherever {{outlet::outlet_name}} macro appears in other prompts or scenarios. They are NOT directly added to context.
-To create an outlet entry: use "add" action with "outlet":true and "outlet_name":"your_outlet_name".
-To convert an existing entry to outlet: use "edit" with "outlet":true and "outlet_name":"your_outlet_name".
-Active outlet entries are listed in lorebook_context under "Outlet Entries" (if exists).
-</outlet_entries_info>
-
-<modification_protocol>
-- \`add\` / \`delete\`: entry from lorebook.
-- \`prepend\` / \`append\`: Insert text EXACTLY BEFORE or AFTER existing entry content.
-- \`edit\`: Total rewrite (<300 words entries only).
-- \`patch\`: Default for entries. 
-   - Triggers: Use specific nouns.
-   - Boundary Syntax: "First 3 words || Last 3 words" (string-string match). 
-     * BAD: "The ancient castle was built in 1240 by a grumpy dwarf."
-     * GOOD: "The ancient castle || grumpy dwarf."
-</modification_protocol>
-
-<output_requirement>
-MANDATORY: Proposals MUST be contained in a \`lorebook-changes\` block at the absolute end.
-Active lorebooks (use sctrict-strict match): {{active_lorebooks}}
-
-Explain reasoning to the Human briefly, then provide the block: 
-{{lorebook_output}}
-</output_requirement>`;
-
-export const DEFAULT_CHAR_EDIT_DIRECTIVE = `<context>
-SillyTavern utilizes Character Cards—complex JSON structures that define {{char}} cognitive profile, physical attributes, and behavioral heuristics. In this module you can also edit \`user_persona\` (if you have access)
-</context>
-
-<logic_constraints>
-- Transient Memory: Previous \`character-edits\` blocks are purged post-execution. Do not reference them.
-- Macro Imperative: ABSOLUTELY PROHIBITED from using raw names. Use \`{{char}}\` and \`{{user}}\` exclusively in JSON.
-</logic_constraints>
-
-<character_architecture>
-To maximize semantic density and prevent AI hallucinations, you MUST adhere to this framework:
-
-1. THE TAGS FIELD (\`tags\`):
-   - The Semantic Index. Provide an array of universally recognized, highly common tags (e.g., "Fantasy", "Villain", "Tsundere", "Slow Burn", "NSFW/SFW").
-   - Purpose: Immediate cognitive mapping and rapid differentiation. Choose broad, defining descriptors that instantly communicate the core archetype, genre, and dynamic. Strictly avoid hyper-specific, long, or obscure labels.
-
-2. THE DESCRIPTION FIELD (\`description\`):
-   - The Factual Summary Block. Use XML tags (e.g., \`<appearance>\`, \`<mind>\`, \`<background>\`) for dense, scannable facts.
-   - Add texture to traits (e.g., "Loyal (would starve for them)", not just "Loyal").
-   - *Setting Exception*: If creating a world/RPG system, the \`description\` MUST begin EXACTLY with \`"{{char}} is not a character, it's a setting."\` placed right before the first XML tag.
-
-3. THE PERSONALITY FIELD (\`personality\`):
-   - The Voice & Behavioral Anchor. Use the Interview format here.
-   - Show, don't tell. Write a brief Q&A where a neutral interviewer asks questions and \`{{char}}\` answers. 
-   - STRICT FORMATTING: All spoken dialogue MUST be enclosed in standard quotes (e.g., "I don't need your help."). All physical actions, body language, and narration MUST be enclosed in asterisks (e.g., *{{char}} crosses their arms and looks away*).
-   - This must demonstrate \`{{char}}\`'s unique voice, verbal tics, deflections, and body language. Do NOT list flat traits here.
-
-4. THE SCENARIO (\`scenario\`):
-   - The Permanent Stage. Use ONLY for facts that are ALWAYS TRUE.
-   - NEVER put temporary states or starting locations here. 
-
-5. THE FIRST MESSAGE (\`first_mes\`):
-   - The Template. Length: 200-500 words.
-   - STRICTEST RULE: DO NOT CONTROL \`{{user}}\`. Write strictly from \`{{char}}\`'s 3rd-person perspective. 
-   - \`{{char}}\` cannot know what \`{{user}}\` thinks, feels, or does. \`{{char}}\` can only react to \`{{user}}\`'s presence.
-   - End with a "Hook" (an open question, a tense silence, an action) that invites \`{{user}}\` to respond.
-
-6. EXAMPLE DIALOGUE (\`mes_example\`):
-   - The Voice Coach. Drill speech patterns and emotional range.
-   - FORMAT: Isolate examples with \`<START>\` on a new line. End the section with \`<START>\`.
-   - STRICT FORMATTING: All spoken dialogue MUST be in quotes ("..."). All actions/body language MUST be in asterisks (*...*). Every example should combine speech with a physical action to demonstrate body language.
-   - STRICTEST RULE: NO \`{{user}}\` PROMPTS/DIALOGUE. Do NOT write back-and-forth Q&A here. Make examples context-independent (2-4 sentences showing \`{{char}}\` speaking + acting). Show emotional range (e.g., angry, flustered, guarded)
-
-</character_architecture>
-
-<group_chat_protocol>
-This roleplay may involve a single character (solo chat) or several (group chat). Active characters are listed as \`<character name="ExactName">\` blocks inside \`<character_information>\`.
-
-MANDATORY: every tag you output in the \`character-changes\` block below MUST carry a \`char="ExactName"\` attribute — copied character-for-character from that name — even in solo chats with a single character. Never omit it. Never invent a name absent from context. This is routing metadata; it is NOT subject to the macro rule below (use the real name here, never \`{{char}}\`/\`{{user}}\` — \`{{char}}\` in the format example below is only a documentation placeholder).
-
-If multiple characters need changes, output one tag PER character PER field — never merge edits for two characters into a single tag.
-</group_chat_protocol>
-
-<edit_syntax>
-- \`overwrite\`: Full rewrite.
-- \`prepend\` / \`append\`: Edge insertion.
-- \`replace\`: Surgical patch. Use Boundary Anchor: "3-4 Start Words || 3-4 End Words". 
-  * BAD: "The quick brown fox jumps over the lazy dog."
-  * GOOD: "The quick brown || lazy dog."
-- Every tag above requires \`char="ExactName"\` per <group_chat_protocol>.
-</edit_syntax>
-
-<the_macro_imperative>
-CRITICAL FATAL ERROR PREVENTION: Hardcoding names destroys card portability. 
-You are strictly forbidden from writing the raw name of the character or the user in the JSON block.
-- Replace ANY character/setting name with EXACTLY: \`{{char}}\`
-- Replace ANY user/player name with EXACTLY: \`{{user}}\`
-- BAD: "Alex looks at John's sword." -> GOOD: "{{char}} looks at {{user}}'s sword."
-This rule overrides everything else. Apply it to EVERY field, EVERY JSON value, EVERY time.
-</the_macro_imperative>
-
-<output_requirement>
-MANDATORY: Append \`character-edits\` or \`character-creation\` block at the absolute end. 
-Fields: {{char_edit_fields}}.
-
-Character Edit Format: 
-{{char_edit_format}}
-
-Character creation Format:
-{{char_create_format}}.
-</output_requirement>`;
-
-export const DEFAULT_CHAT_EDIT_DIRECTIVE = `<context>
-Read/Write access to chat indices (\`<msg index="N">\`).
-</context>
-
-<system_mechanics>
-Generated \`chat-changes\` blocks are automatically executed and purged from the visible chat history when user makes decision. Missing past blocks are intentional. NEVER hallucinate or re-generate previous blocks.
-</system_mechanics>
-
-<operational_rules>
-1. Target: Use \`msg_index\`, \`msg_range\`, or \`msg_indices\` from \`<roleplay_context>\`.
-2. Operations:
-   - \`add\` / \`delete\`: Insert at \`msg_index\`.
-   - \`prepend\` / \`append\`: Insert exactly at the extreme start/end of a message.
-   - \`hide\` / \`unhide\`: Toggle message visibility for AI.
-   - \`overwrite\`: 100% message replacement.
-   - \`regex\`: Execute pattern-based modification using standard regex syntax.
-   - \`replace\`: Surgical patch (Anchor: "3-4 Start || 3-4 End").
-     * GOOD: "The character looked || ever return home."
-     * BAD: (Writing the entire sentence wastes tokens and breaks matching).
-   - \`bulk_replace\`: Mass search-and-replace across a \`msg_range\`.
-3. Guidelines: No narrative introduction of code.
-</operational_rules>
-
-<output_formatting>
-{{chat_edit_format}}
-
-Active chat message indices are shown in the \`<roleplay_context>\` block as: \`<msg index="N" role="user|assistant">\`
-Currently visible messages: {{active_chat_ids}}
-</output_formatting>`;
-
-export const LB_FORMAT_BLOCK = `\`\`\`lorebook-changes
-{"changes":[
-  {"action":"add","worldName":"BookName","name":"EntryName","triggers":["keyword"],"content":"Entry content","constant":false},
-  {"action":"add","worldName":"BookName","name":"OutletEntry","content":"Outlet content here","outlet":true,"outlet_name":"my_outlet_name"},
-  {"action":"delete","worldName":"BookName","uid":123,"name":"EntryName"}
-  {"action":"prepend","worldName":"BookName","uid":123,"content":"Text to add at the start"},
-  {"action":"append","worldName":"BookName","uid":123,"content":"Text to add at the end"},
-  {"action":"edit","worldName":"BookName","uid":123,"name":"NewName","triggers":null | ["newKw"],"content":"New content","constant":false},
-  {"action":"patch","worldName":"BookName","uid":123,"triggers":null | ["newKw"],"patches":[{"anchor":"first || last","replace":"replacement"}]},
-]}
-\`\`\`
-
-Triggers field rules:
-- Omit or set \`null\` to keep the original triggers unchanged (preferred for patches, appends and partial edits)
-- Provide an array to set new triggers`;
-
-export const CHAR_EDIT_FORMAT_BLOCK = `\`\`\`character-changes
-<replace char="char_name" field="FIELD_NAME">
-<<<<<<< ANCHOR
-first || last
-=======
-replacement text
->>>>>>> REPLACE
-</replace>
-<overwrite char="char_name" field="FIELD_NAME">Complete replacement content for this field</overwrite>
-<prepend char="char_name" field="FIELD_NAME">Text to insert at the very beginning of the field</prepend>
-<append_text char="char_name" field="FIELD_NAME">Text to append at the very end of the field</append_text>
-
-<!-- ALTERNATE GREETINGS OPERATIONS -->
-<append char="char_name" field="alternate_greetings">New alternate greeting to add as a NEW entry</append>
-<overwrite char="char_name" field="alternate_greetings" index="1">Complete rewrite of the EXISTING greeting with id="1"</overwrite>
-<replace char="char_name" field="alternate_greetings" index="2">
-<<<<<<< ANCHOR
-first || last
-=======
-replacement text
->>>>>>> REPLACE
-</replace>
-\`\`\``;
-
-export const CHAR_CREATE_FORMAT_BLOCK = `\`\`\`character-create
-{
-  "name_suggestion": "Character Name",
-  "tags": "tag1, tag2",
-  "description": "Full character description",
-  "personality": "Personality summary",
-  "scenario": "Scenario / setting",
-  "first_mes": "Opening message",
-  "mes_example": "<START>\\n{{user}}: Hi\\n{{char}}: Hello!"
-}
-\`\`\``;
-
-export const CHAT_EDIT_FORMAT_BLOCK = `\`\`\`chat-changes
-{"changes":[
-  {"action":"rename_chat","name":"New Chat Display Name"},
-  {"action":"prepend","msg_index":6,"content":"Text to add at the start. "},
-  {"action":"append","msg_index":6,"content":" Text to add at the end."},
-  {"action":"add","msg_index":7,"role":"assistant","content":"Brand new message text"},
-  {"action":"delete","msg_index":12},
-  {"action":"hide","msg_range":[8,10]},
-  {"action":"unhide","msg_index":11},
-  {"action":"bulk_replace","msg_range":[0,10],"replacements":[{"anchor":"old","replace":"new"}]},
-  {"action":"regex","msg_index":13,"regex":"/(hello)/gi","replace":"hi $1"},
-  {"action":"overwrite","msg_index":6,"content":"New text"},
-  {"action":"replace","msg_index":5,"patches":[{"anchor":"first || last","replace":"new"}]},
-]}
-\`\`\``;
-
 export const DEFAULT_MEMORY_PROMPT = `<memory_logic>
-Purpose: ADMINISTRATIVE META-MEMORY. This is a non-diegetic (OOC) database for ST-Copilot to track the Human operator's technical requirements, cognitive patterns, and workflow constraints. 
+Purpose: ADMINISTRATIVE META-MEMORY. This is a non-diegetic (OOC) database for Inner Voice to track the Human operator's technical requirements, cognitive patterns, and workflow constraints. 
 
 CRITICAL ARCHITECTURAL BOUNDARY: 
 - DISCARD all diegetic narrative data (plot, lore, world-building, character actions).
@@ -264,7 +43,7 @@ Routing Scopes (Choose based on instruction longevity/reach):
 - \`global\`: Persists EVERYWHERE. Use for core, permanent Human traits (e.g., IRL profession, absolute formatting rules, universal hard limits).
 - \`character\`: Persists ONLY for current {{char}}. Use for technical OOC instructions tailored to this specific bot (e.g., "Human requires verbose prose for this bot", "Human wants to avoid romance with this bot").
 - \`chat\`: Persists ONLY in this specific roleplay thread. Use for current storyline structural goals (e.g., "Human wants to shift genre to horror here", "Focus on pacing in this scene").
-- \`session\`: Persists ONLY in this current Copilot brainstorm. Use for immediate, temporary directives (e.g., "Human is testing a prompt", "Keep next answers very short").
+- \`session\`: Persists ONLY in this current Inner Voice conversation. Use for immediate, temporary directives (e.g., "Human is testing a prompt", "Keep next answers very short").
 </memory_logic>
 
 <output_requirement>
@@ -296,206 +75,11 @@ export const TOOL_CALL_FORMAT_BLOCK = `\`\`\`tool_call\n{"name": "tool_name","in
     // ─── Changelog Data ──────────────────────────────────────────────────────────
 export const CHANGELOG = [
     {
-        version: '2.9.0-image-dev',
-        date: '8/31/2026',
+        version: '0.1.0',
+        date: '9/4/2026',
         announce: false,
         notes: [
-            '<strong>Experimental image tool</strong> — Natural and manual image requests return an Apply / Reject proposal. Persistence happens only on Apply through a private server bridge. STD-only; not an upstream release.'
-        ],
-    },
-    {
-        version: '2.9.0',
-        date: '7/2/2026',
-        announce: true,
-        notes: [
-            '<strong>Character Manager</strong> — New interface to edit character fields and configure per-character context inclusion rules.',
-            '<strong>Group Chat Editing</strong> — Enabled the ability for Copilot to identify and edit individual characters within group sessions.',
-            '<strong>New Tools Menu</strong> — Replaced the tools panel with a burger menu for streamlined access to Lorebook and Character managers.',
-            '<strong>Local Layouts</strong> — Window dimensions and positions are now stored in the browser instead of the server.',
-            '<strong>UI Fixes</strong> — Resolved Z-index issues with the "New Session" window and fixed chat auto-scrolling jumping upwards.',
-            '<strong>Bug Fixes</strong> — Patched various issues in Proposed Changes, along with general API and interface stability improvements.'
-        ],
-    },
-    {
-        version: '2.8.3',
-        date: '6/20/2026',
-        announce: false,
-        notes: [
-            '<strong>Search Enhancements</strong> — Search tools now support multiple queries simultaneously for better information retrieval.',
-            '<strong>Session Reliability</strong> — Resolved critical bugs affecting the deletion and management of Copilot sessions.',
-            '<strong>Lorebook UI</strong> — Restored lorebook source icons and fixed a bug where "Proposed Changes" would reappear after application.',
-            '<strong>World Info Drawer</strong> — Fixed various extension bugs (Special thanks to @Haruny for the debugging and fixes).',
-            '<strong>UI/UX Polishing</strong> — Addressed several layout inconsistencies and minor interface bugs.'
-        ],
-    },
-    {
-        version: '2.8.2',
-        date: '6/16/2026',
-        announce: false,
-        notes: [
-            '<strong>Character Management</strong> — Copilot can now access and modify Name, Main Prompt Override, and Post-History Instructions.',
-            '<strong>Lorebook API</strong> — Added <code>get_lorebooks</code> tool and upgraded <code>search_lorebook_entries</code> with <code>is_constant</code> and <code>is_outlet</code> parameters.',
-            '<strong>Dynamic Outlets</strong> — Enabled AI autonomy for creating and modifying Lorebook Outlets (requires Lorebook Prompt reset to default).',
-            '<strong>Chat Management</strong> — Added support for renaming the current chat via Proposed Chat Changes.',
-            '<strong>Stability & Tokens</strong> — Fixed critical session deletion bugs, improved token counting accuracy, and optimized save-lock logic.'
-        ],
-    },
-    {
-        version: '2.8.1',
-        date: '6/15/2026',
-        announce: false,
-        notes: [
-            '<strong>World Info Outlets</strong> — Added full support for the <code>{{outlet::name}}</code> macro syntax for dynamic content injection.',
-            '<strong>UI Navigation</strong> — Repositioned tab buttons in the settings panel for improved accessibility and user flow.',
-            '<strong>Stability</strong> — Fixed various minor regressions and internal logic bugs.'
-        ],
-    },
-    {
-        version: '2.8.0',
-        date: '6/11/2026',
-        announce: false,
-        notes: [
-            '<strong>Tools & Agency</strong> — Copilot can now independently gather information using the new Tools system.',
-            '<strong>Persistent Memory</strong> — Introduced cross-session memory with Global, Character, Chat, and Session scoping.',
-            '<strong>Smart Anchor Detection</strong> — New Tokenized Sliding Window Levenshtein algorithm for flawless "Proposed Changes" application.',
-            '<strong>UI & Customization</strong> — Redesigned Stats window, refreshed Settings interface, and added font size controls.',
-            '<strong>Extensions & Context</strong> — Added support for all swipes in context. Also for Summaryception, and Aspect:Evolutia extensions.',
-            '<strong>Optimization</strong> — All internal prompts are now more token-efficient; fixed DevTools UI bugs and connection profile issues.'
-        ],
-    },
-    {
-        version: '2.7.2',
-        date: '5/29/2026',
-        announce: false,
-        notes: [
-            '<strong>Shortcuts Overlay</strong> — Introduced a dedicated "Shortcuts" configuration window in the settings panel.',
-            '<strong>Context-Aware Search</strong> — Refined the search shortcut to trigger exclusively when the Copilot window is active.',
-            '<strong>Character Factory Fixes</strong> — Resolved several bugs affecting character creation and metadata initialization.',
-            '<strong>Asset Optimization</strong> — Overhauled background storage logic for better performance and reduced storage overhead.'
-        ],
-    },
-    {
-        version: '2.7.1',
-        date: '5/28/2026',
-        announce: false,
-        notes: [
-            '<strong>Character Tagging</strong> — Added the ability to modify the "tags" field for already existing characters.',
-            '<strong>Low Performance Mode</strong> — Introduced a new toggle to optimize resource usage on lower-end hardware.',
-            '<strong>Session Stability</strong> — Completely overhauled the session saving system to prevent spontaneous session loss and data corruption.',
-            '<strong>General Optimization</strong> — Improved core logic for better performance and overall stability of ST-Copilot. Fixed AI Generation errors.'
-        ],
-    },
-    {
-        version: '2.7.0',
-        date: '5/27/2026',
-        announce: false,
-        notes: [
-            '<strong>Proposed Chat Edits</strong> — Bulk-modify, delete, or hide message ranges using natural language instructions.',
-            '<strong>File Attachments & Vision</strong> — Support for text/image uploads with vision model integration and an internal previewer.',
-            '<strong>Message Swiping</strong> — Regenerate Copilot responses and navigate through multiple swipe iterations.',
-            '<strong>Multimedia Backgrounds</strong> — Custom image/video backgrounds (local or URL) with adjustable dimming.',
-            '<strong>Character Creator</strong> — Added "tags" field support and optimized generation prompts for AI-assisted creation.',
-            '<strong>Configuration Sync</strong> — AI settings are now linked to Configuration Profiles and Session Overrides.',
-            '<strong>UX Enhancements</strong> — Added "Always Off" Lorebook state, sender-based group selection in context picker, and focus-aware notification sounds.',
-            '<strong>UI & Maintenance</strong> — Improved "Save" button feedback, better theme support for lists, and optimized generation logic.'
-        ],
-    },
-    {
-        version: '2.5.1',
-        date: '5/22/2026',
-        announce: false,
-        notes: [
-            '<strong>Continue Message</strong> — Added a "Continue" button to extend the last Copilot generation.',
-            '<strong>Debug Export</strong> — Introduced a downloadable debug log in settings for easier troubleshooting (refreshes on page load).',
-            '<strong>Smooth Streaming</strong> — Fixed chat scrolling behavior, allowing users to scroll up during active message streaming.',
-            '<strong>Bug Fixes</strong> — Potential fix for the "profile not found" error and minor stability improvements.'
-        ],
-    },
-    {
-        version: '2.5.0',
-        date: '5/20/2026',
-        announce: false,
-        notes: [
-            '<strong>Character Card Manager</strong> — You can now create new characters entirely from scratch or edit existing card fields directly within the extension.',
-            '<strong>Massive Token Optimization</strong> — "Proposed Changes" now uses a smart search-and-replace method, reducing token consumption by over 80% (Huge thanks to Steel-skull for the PR!).',
-            '<strong>Robust Parsing</strong> — The system now successfully finds and applies "proposed changes" blocks even if the AI makes formatting mistakes.',
-            '<strong>Session Management</strong> — Added the ability to export and import sessions. Under-the-hood session saving has also been rewritten to be much more efficient.',
-            '<strong>UI, Sounds & Polish</strong> — Added a generation-complete sound notification, soothing window wobble physics, smooth chart animations in Stats, and new Streaming modes (Auto, Force On, Force Off).',
-            '<strong>Lorebook Updates</strong> — Added a "constant" parameter for proposed changes and moved toggles to the main Settings. ⚠️ <em>Important: Please reset your Lorebook AI Edit prompt to default!</em>',
-            '<strong>Mobile & Fixes</strong> — The Enter key on mobile keyboards now correctly inserts line breaks instead of sending messages. Fixed mobile UI headers, resolved duplicate user message bugs, and redesigned system message outputs.'
-        ],
-    },    
-    {
-        version: '2.3.0',
-        date: '5/10/2026',
-        announce: false,
-        notes: [
-            '<strong>Stream Support</strong> — Added streaming support so you can see generations in real-time.',
-            '<strong>Reasoning Blocks</strong> — Added support for displaying Reasoning blocks',
-            '<strong>Regex Support</strong> — Clean up formatting and fluff from chat messages included in the context.',
-            '<strong>Preset Customization</strong> — Modify QuickPrompts and SystemPrompts presets directly (SystemPrompts handled via session override).',
-            '<strong>Favorite Messages</strong> — You can now mark specific messages as Favorites.',
-            '<strong>In-app Changelog</strong> — Added a Changelog window to easily track new updates.',
-            '<strong>Fixes & Polish</strong> — Synced chat context picker numbering with ST (0 to N), fixed Lorebook context persistence after disconnection, and improved the default Lorebook edit prompt.'
-        ],
-    },
-    {
-        version: '2.0.0',
-        date: '5/03/2026',
-        announce: false,
-        notes: [
-            '<strong>Messages Payload</strong> — Handpick specific messages from the chat history and feed them directly to the AI.',
-            '<strong>Quick Prompts</strong> — Fully customizable prompt buttons with emoji icons.',
-            '<strong>Ghost Mode</strong> — Copilot can now become semi-transparent and completely click-through.',
-            '<strong>Expanded Context Awareness</strong> — Context now includes Character Note, Example of Dialogue, and respects settings overrides.',
-            '<strong>Temporary Sessions</strong> — Create sessions that automatically delete themselves when you switch.',
-            '<strong>Usage Stats</strong> — A new interactive Statistics window to track your metrics.',
-            '<strong>UI & QoL Enhancements</strong> — Save edited messages without regenerating, mobile responsive improvements, HTML support, and clean connecting lines for lists.'
-        ],
-    },
-    {
-        version: '1.9.0',
-        date: '4/28/2026',
-        announce: false,
-        notes: [
-            '<strong>Integrated Settings Window</strong> — Dedicated settings UI for seamless adjustments.',
-            '<strong>Session-Specific Configuration</strong> — Override global settings for individual sessions.',
-            '<strong>Dynamic Context Scaling</strong> — The CTX slider dynamically adjusts its range based on chat length.',
-            '<strong>Advanced In-Chat Search</strong> — Quickly locate specific information using (Ctrl + F).',
-            '<strong>Theme Portability</strong> — Import and Export custom themes as JSON. Added the new "Dark Sky" preset.'
-        ],
-    },
-    {
-        version: '1.7.2',
-        date: '4/27/2026',
-        announce: false,
-        notes: [
-            '<strong>Comfortable Color Picker</strong> — Choose colors natively without leaving the app.',
-            '<strong>Default Colors</strong> — Individually reset specific colors to the original theme defaults.',
-            '<strong>Resizable edit window</strong> — You can now manually resize the "content" window in the Lorebook Manager.'
-        ],
-    },
-    {
-        version: '1.7.1',
-        date: '4/26/2026',
-        announce: false,
-        notes: [
-            '<strong>Expandable Entry Descriptions</strong> — Click to expand chat entry descriptions.',
-            '<strong>Lorebook Dropdowns</strong> — Individual Lorebook selection dropdowns for each entry proposal.',
-            '<strong>Data Protection</strong> — Added unsaved changes warnings when switching profiles.',
-            '<strong>New Macro</strong> — Added support for {{active_lorebooks}}.'
-        ],
-    },
-    {
-        version: '1.7.0',
-        date: '4/26/2026',
-        announce: false,
-        notes: [
-            '<strong>AI Lorebook Management</strong> — Copilot AI now actively assists in world-building (AI-Edit).',
-            '<strong>Interactive Proposals</strong> — AI generates Proposal Cards to review, edit, or reject changes via a Diff View modal.',
-            '<strong>Lorebook Manager UI</strong> — Added manual overrides, Auto-Keywords, and Active Indicators.',
-            '<strong>String Trimming</strong> — Automatically remove specific tags (like &lt;think&gt; blocks) from AI responses.',
-            '<strong>Persistent Icon</strong> — Option to keep the floating dock icon visible at all times.'
+            '<strong>Inner Voice fork landing</strong> — Forked from ST-Copilot (MIT, Quaren / QQ-Corporation) and stripped to the chat core: streaming chat window, message edit/regenerate/swipes, search, settings drawer with its own connection, and Summaryception integration.'
         ],
     }
 ];
@@ -687,15 +271,15 @@ export const THEME_VAR_DEFS = [
     ];
 
 export const THEME_CSS_MAP = {
-        bg: '--scp-bg', blur: '--scp-blur', border: '--scp-border',
-        text: '--scp-text', textMuted: '--scp-text-muted',
-        accent: '--scp-accent', accentDim: '--scp-accent-dim', accentBg: '--scp-accent-bg',
-        headerBg: '--scp-header-bg', toolbarBg: '--scp-toolbar-bg',
-        msgUserBg: '--scp-msg-user-bg', msgAiBg: '--scp-msg-ai-bg',
-        inputBg: '--scp-input-bg', codeBg: '--scp-code-bg',
-        radius: '--scp-radius', shadow: '--scp-shadow',
-        danger: '--scp-danger', success: '--scp-success', font: '--scp-font',
-        fontSize: '--scp-font-size',
+        bg: '--iv-bg', blur: '--iv-blur', border: '--iv-border',
+        text: '--iv-text', textMuted: '--iv-text-muted',
+        accent: '--iv-accent', accentDim: '--iv-accent-dim', accentBg: '--iv-accent-bg',
+        headerBg: '--iv-header-bg', toolbarBg: '--iv-toolbar-bg',
+        msgUserBg: '--iv-msg-user-bg', msgAiBg: '--iv-msg-ai-bg',
+        inputBg: '--iv-input-bg', codeBg: '--iv-code-bg',
+        radius: '--iv-radius', shadow: '--iv-shadow',
+        danger: '--iv-danger', success: '--iv-success', font: '--iv-font',
+        fontSize: '--iv-font-size',
     };
 
 export const TOOL_DEFINITIONS = [
@@ -723,45 +307,7 @@ export const TOOL_DEFINITIONS = [
                 required: ['queries'],
             },
         },
-        {
-            id: 'search_lorebook',
-            name: 'search_lorebook_entry',
-            label: 'Search Lorebook Entries',
-            icon: 'fa-book',
-            description: 'Search for entries in active lorebooks by name, keyword, or content. Supports fuzzy matching and regex. Can filter by constant or outlet type.',
-            settingKey: 'toolsEnabled_search_lorebook',
-            schema: {
-                type: 'object',
-                properties: {
-                    queries: { 
-                        type: 'array', 
-                        items: { type: 'string' }, 
-                        description: 'One or more text queries or regexes to search for in entry names, keys, and content (prefix with / for regex, e.g. ["/elf.*/i", "elve"]). Returns matches if ANY query matches.' 
-                    },
-                    book_name: { type: 'string', description: 'Specific lorebook name to search (optional)' },
-                    search_in: { type: 'string', enum: ['all', 'name', 'keys', 'content'], description: 'Where to search (default: all)' },
-                    only_constant: { type: 'boolean', description: 'If true, return only constant (always-active) entries' },
-                    only_outlet: { type: 'boolean', description: 'If true, return only outlet entries (injected via {{outlet::name}} macro)' },
-                },
-                required: ['queries'],
-            },
-        },
-        {
-            id: 'get_lorebooks',
-            name: 'get_lorebooks',
-            label: 'Get Lorebooks',
-            icon: 'fa-book-open',
-            description: 'Get all active lorebook names. Optionally list entry names and types for each book.',
-            settingKey: 'toolsEnabled_get_lorebooks',
-            schema: {
-                type: 'object',
-                properties: {
-                    include_entries: { type: 'boolean', description: 'If true, include entry names/types for each lorebook' },
-                    book_name: { type: 'string', description: 'When include_entries is true, limit to this specific lorebook (optional)' },
-                },
-            },
-        },
-        {
+                        {
             id: 'ask_user',
             name: 'ask_user',
             label: 'Ask User',
@@ -777,22 +323,7 @@ export const TOOL_DEFINITIONS = [
                 required: ['question'],
             },
         },
-        {
-            id: 'get_char_info',
-            name: 'get_char_info',
-            label: 'Get Character Info',
-            icon: 'fa-user-pen',
-            description: 'Retrieve detailed information about the current character card fields.',
-            settingKey: 'toolsEnabled_get_char_info',
-            schema: {
-                type: 'object',
-                properties: {
-                    fields: { type: 'array', items: { type: 'string' }, description: 'Which fields to retrieve: description, personality, scenario, first_mes, mes_example, tags, authors_note, alternate_greetings' },
-                },
-                required: ['fields'],
-            },
-        },
-        {
+                {
             id: 'get_chat_stats',
             name: 'get_chat_stats',
             label: 'Get Chat Statistics',
@@ -817,36 +348,7 @@ export const TOOL_DEFINITIONS = [
                 },
             },
         },
-        {
-            id: 'generate_image',
-            name: 'generate_image',
-            label: 'Generate Image',
-            icon: 'fa-image',
-            description: 'Write the complete visual content for one image, then call this tool. Call this tool only when the current user message clearly asks to create or show a generated image now. Questions about appearance and requests to write an image prompt receive text instead. Composition is the framing the current user message asked for, not scenery or pose details you add while writing the picture. A message that only asks for a picture of one person uses character_sheet. Do not put rendering-style wording in the content; the tool already applies the selected style.',
-            settingKey: 'toolsEnabled_generate_image',
-            schema: {
-                type: 'object',
-                properties: {
-                    prompt: { type: 'string', description: 'Complete visual content for the picture: who is shown, clothing, pose, and any action or place the user asked for. Do not include style-preset wording; the tool owns style.' },
-                    composition: { type: 'string', enum: ['character_sheet', 'portrait', 'single_character_scene', 'multi_character_scene', 'environment', 'object', 'other'], description: 'The framing the current user message asked for. Use character_sheet when they only asked for a picture of one person. Use portrait only if they asked for a close view. Use a scene only if they asked for an action or a place. Do not change this because you added setting details to the visual content.' },
-                    subjects: {
-                        type: 'array',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                name: { type: 'string' },
-                                kind: { type: 'string' },
-                                cardId: { type: 'string' },
-                            },
-                        },
-                        description: 'Depicted names used to match card or persona reference images.',
-                    },
-                    style_override: { type: 'string', description: 'Optional style named in this request only. Does not change the saved style.' },
-                },
-                required: ['prompt', 'composition'],
-            },
-        },
-    ];
+            ];
 
 export const I = {
         diff: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>`,
@@ -865,7 +367,7 @@ export const I = {
         book: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`,
         opacity: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 0 20z" fill="currentColor"/></svg>`,
         check: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
-        chevron: `<svg class="scp-sess-chevron" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`,
+        chevron: `<svg class="iv-sess-chevron" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`,
         gear: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
         ghost: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 10h.01M15 10h.01M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/></svg>`,
         lightning: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,

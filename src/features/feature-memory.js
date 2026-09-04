@@ -84,7 +84,7 @@ export function clearAllMemories() {
 
 export function updateMemoryDot() {
     const has = Object.keys(getMemories()).length > 0;
-    document.getElementById('scp-sp-memory-dot')?.style.setProperty('display', has ? '' : 'none');
+    document.getElementById('iv-sp-memory-dot')?.style.setProperty('display', has ? '' : 'none');
 }
 
 export function buildMemoryContextBlock(settings) {
@@ -176,19 +176,19 @@ export function processMemoryUpdates(text, msgId) {
     }
     if (applied.length) {
         if (s.memoryNotify) showMemoryToast(applied);
-        if (document.getElementById('scp-sp-pane-memory')?.style.display !== 'none') renderMemoryList();
+        if (document.getElementById('iv-sp-pane-memory')?.style.display !== 'none') renderMemoryList();
     }
 }
 
 export function showMemoryToast(applied) {
-    const existing = document.querySelector('.scp-memory-toast');
+    const existing = document.querySelector('.iv-memory-toast');
     if (existing) existing.remove();
     const toast = document.createElement('div');
-    toast.className = 'scp-memory-toast';
+    toast.className = 'iv-memory-toast';
     const icons = { add: '✦', update: '✎', delete: '✕' };
     const lines = applied.slice(0, 3).map(a => `${icons[a.action] || '·'} ${escHtml(a.key)}: ${escHtml((a.value || '(deleted)').slice(0, 60))}`).join("\n");
     const linesHtml = lines.split("\n").join("<br>");
-    toast.innerHTML = `<span class="scp-memory-toast-icon"><i class="fa-solid fa-brain"></i></span><div class="scp-memory-toast-body"><div class="scp-memory-toast-title">Memory Updated (${applied.length})</div><div class="scp-memory-toast-text">${linesHtml}</div></div>`;
+    toast.innerHTML = `<span class="iv-memory-toast-icon"><i class="fa-solid fa-brain"></i></span><div class="iv-memory-toast-body"><div class="iv-memory-toast-title">Memory Updated (${applied.length})</div><div class="iv-memory-toast-text">${linesHtml}</div></div>`;
     document.body.appendChild(toast);
     toast.style.cursor = 'pointer';
     toast.addEventListener('click', () => {
@@ -196,7 +196,7 @@ export function showMemoryToast(applied) {
         toast.remove();
     });
     setTimeout(() => {
-        toast.style.animation = 'scp-toast-out 0.25s ease forwards';
+        toast.style.animation = 'iv-toast-out 0.25s ease forwards';
         setTimeout(() => {
             _dbgAdd('MEM_TOAST_DISMISS', { reason: 'timeout' });
             toast.remove();
@@ -205,8 +205,8 @@ export function showMemoryToast(applied) {
 }
 
 export function renderMemoryList() {
-    const listEl = document.getElementById('scp-sp-memory-list');
-    const emptyEl = document.getElementById('scp-sp-memory-empty');
+    const listEl = document.getElementById('iv-sp-memory-list');
+    const emptyEl = document.getElementById('iv-sp-memory-empty');
     if (!listEl) return;
     
     const allMems = Object.values(getMemories()).sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
@@ -254,14 +254,14 @@ export function renderMemoryList() {
 
     const createMemEl = (mem) => {
         const item = document.createElement('div');
-        item.className = 'scp-memory-item';
+        item.className = 'iv-memory-item';
         if (mem.disabled) item.style.opacity = '0.5';
         item.dataset.id = mem.id;
         
         const isNew = (Date.now() - (mem.createdAt || 0)) < 5000;
         if (isNew) {
             const dot = document.createElement('div');
-            dot.className = 'scp-memory-new-badge';
+            dot.className = 'iv-memory-new-badge';
             item.appendChild(dot);
         }
 
@@ -270,21 +270,21 @@ export function renderMemoryList() {
             : `Added ${new Date(mem.createdAt || 0).toLocaleString()}`;
 
         item.innerHTML += `
-            <div class="scp-memory-item-body">
-                <div class="scp-memory-item-key">${escHtml(mem.key)}</div>
-                <div class="scp-memory-item-val-ph"></div>
-                <div class="scp-memory-item-meta">${escHtml(timeStr)}</div>
+            <div class="iv-memory-item-body">
+                <div class="iv-memory-item-key">${escHtml(mem.key)}</div>
+                <div class="iv-memory-item-val-ph"></div>
+                <div class="iv-memory-item-meta">${escHtml(timeStr)}</div>
             </div>
-            <div class="scp-memory-item-actions">
-                <button class="scp-memory-item-toggle" title="${mem.disabled ? 'Enable Memory' : 'Disable Memory'}">
+            <div class="iv-memory-item-actions">
+                <button class="iv-memory-item-toggle" title="${mem.disabled ? 'Enable Memory' : 'Disable Memory'}">
                     <i class="fa-solid ${mem.disabled ? 'fa-toggle-off' : 'fa-toggle-on'}"></i>
                 </button>
-                <button class="scp-memory-item-edit" title="Edit"><i class="fa-solid fa-pen"></i></button>
-                <button class="scp-memory-item-del" title="Delete"><i class="fa-solid fa-trash"></i></button>
+                <button class="iv-memory-item-edit" title="Edit"><i class="fa-solid fa-pen"></i></button>
+                <button class="iv-memory-item-del" title="Delete"><i class="fa-solid fa-trash"></i></button>
             </div>
         `;
         const valEl = document.createElement('div');
-        valEl.className = 'scp-memory-item-val';
+        valEl.className = 'iv-memory-item-val';
         const isLong = mem.value.length > 120;
         valEl.textContent = isLong ? mem.value.slice(0, 120) + '…' : mem.value;
         if (isLong) {
@@ -298,9 +298,9 @@ export function renderMemoryList() {
                 valEl.title = expanded ? 'Click to collapse' : 'Click to expand';
             });
         }
-        item.querySelector('.scp-memory-item-val-ph').replaceWith(valEl);
+        item.querySelector('.iv-memory-item-val-ph').replaceWith(valEl);
         
-        item.querySelector('.scp-memory-item-toggle').addEventListener('click', e => {
+        item.querySelector('.iv-memory-item-toggle').addEventListener('click', e => {
             e.stopPropagation();
             mem.disabled = !mem.disabled;
             _dbgAdd('MEM_TOGGLE_DISABLE', { id: mem.id, disabled: mem.disabled });
@@ -308,12 +308,12 @@ export function renderMemoryList() {
             renderMemoryList();
         });
 
-        item.querySelector('.scp-memory-item-edit').addEventListener('click', async e => {
+        item.querySelector('.iv-memory-item-edit').addEventListener('click', async e => {
             e.stopPropagation();
             await editMemoryDialog(mem.id);
         });
         
-        item.querySelector('.scp-memory-item-del').addEventListener('click', async e => {
+        item.querySelector('.iv-memory-item-del').addEventListener('click', async e => {
             e.stopPropagation();
             const ok = await showCustomDialog({ type: 'confirm', title: 'Delete Memory', message: `Delete memory "${mem.key}"?` });
             if (!ok) return;
@@ -326,13 +326,13 @@ export function renderMemoryList() {
     const buildDetails = (title, icon, contentEls, open = false) => {
         if (!contentEls || contentEls.length === 0) return null;
         const det = document.createElement('details');
-        det.className = 'scp-mem-tree-details';
+        det.className = 'iv-mem-tree-details';
         if (open) det.open = true;
         const sum = document.createElement('summary');
-        sum.className = 'scp-mem-tree-summary';
+        sum.className = 'iv-mem-tree-summary';
         sum.innerHTML = `<i class="fa-solid fa-${icon}"></i> ${escHtml(title)}`;
         const content = document.createElement('div');
-        content.className = 'scp-mem-tree-content';
+        content.className = 'iv-mem-tree-content';
         contentEls.forEach(el => content.appendChild(el));
         det.appendChild(sum);
         det.appendChild(content);
@@ -401,38 +401,38 @@ export async function editMemoryDialog(id) {
     const isNew = !id;
     const result = await new Promise(resolve => {
         const overlay = document.createElement('div');
-        overlay.className = 'scp-dialog-overlay';
+        overlay.className = 'iv-dialog-overlay';
         
         const scopeOptions = [
             {val: 'global', text: 'Global (All chats)'},
             {val: 'character', text: 'Character (All chats with this character)'},
             {val: 'chat', text: 'Chat (Only this specific chat)'},
-            {val: 'session', text: 'Session (Only this Copilot session)'}
+            {val: 'session', text: 'Session (Only this conversation)'}
         ];
         const currentScope = mem?.scope || 'character';
 
         const scopeHtml = scopeOptions.map(o => `<option value="${o.val}" ${currentScope === o.val ? 'selected' : ''}>${o.text}</option>`).join('');
 
-        overlay.innerHTML = `<div class="scp-dialog-box">
-<div class="scp-dialog-title">${isNew ? 'Add Memory' : 'Edit Memory'}</div>
-<div class="scp-dialog-msg">Category / Key:</div>
-<input type="text" class="scp-dialog-input" id="scp-mem-key-inp" placeholder="e.g. Preferences, About Me, Profession..." value="${escHtml(mem?.key || '')}">
-<div class="scp-dialog-msg" style="margin-top:4px">Value:</div>
-<textarea class="scp-dialog-input" id="scp-mem-val-inp" rows="3" placeholder="What to remember..." style="height:auto;resize:vertical;margin-bottom:10px;">${escHtml(mem?.value || '')}</textarea>
-<div class="scp-dialog-msg" style="margin-top:4px">Scope:</div>
-<select class="scp-dialog-input" id="scp-mem-scope-inp" style="margin-bottom:20px;">
+        overlay.innerHTML = `<div class="iv-dialog-box">
+<div class="iv-dialog-title">${isNew ? 'Add Memory' : 'Edit Memory'}</div>
+<div class="iv-dialog-msg">Category / Key:</div>
+<input type="text" class="iv-dialog-input" id="iv-mem-key-inp" placeholder="e.g. Preferences, About Me, Profession..." value="${escHtml(mem?.key || '')}">
+<div class="iv-dialog-msg" style="margin-top:4px">Value:</div>
+<textarea class="iv-dialog-input" id="iv-mem-val-inp" rows="3" placeholder="What to remember..." style="height:auto;resize:vertical;margin-bottom:10px;">${escHtml(mem?.value || '')}</textarea>
+<div class="iv-dialog-msg" style="margin-top:4px">Scope:</div>
+<select class="iv-dialog-input" id="iv-mem-scope-inp" style="margin-bottom:20px;">
 ${scopeHtml}
 </select>
-<div class="scp-dialog-btns">
-<button class="scp-dialog-btn scp-dialog-cancel">Cancel</button>
-<button class="scp-dialog-btn scp-dialog-ok">${isNew ? 'Add' : 'Save'}</button>
+<div class="iv-dialog-btns">
+<button class="iv-dialog-btn iv-dialog-cancel">Cancel</button>
+<button class="iv-dialog-btn iv-dialog-ok">${isNew ? 'Add' : 'Save'}</button>
 </div></div>`;
         document.body.appendChild(overlay);
-        const keyInp = overlay.querySelector('#scp-mem-key-inp');
-        const valInp = overlay.querySelector('#scp-mem-val-inp');
-        const scopeInp = overlay.querySelector('#scp-mem-scope-inp');
-        const okBtn = overlay.querySelector('.scp-dialog-ok');
-        const cancelBtn = overlay.querySelector('.scp-dialog-cancel');
+        const keyInp = overlay.querySelector('#iv-mem-key-inp');
+        const valInp = overlay.querySelector('#iv-mem-val-inp');
+        const scopeInp = overlay.querySelector('#iv-mem-scope-inp');
+        const okBtn = overlay.querySelector('.iv-dialog-ok');
+        const cancelBtn = overlay.querySelector('.iv-dialog-cancel');
         const close = val => { overlay.classList.remove('visible'); setTimeout(() => overlay.remove(), 150); resolve(val); };
         keyInp.focus();
         okBtn.addEventListener('click', () => close({ key: keyInp.value, value: valInp.value, scope: scopeInp.value }));
@@ -477,8 +477,8 @@ export function setupMemorySettingsUI() {
             saveSettings();
             
             const stMap = {
-                'memoryEnabled': 'scp-memory-enabled',
-                'memoryInject': 'scp-memory-inject'
+                'memoryEnabled': 'iv-memory-enabled',
+                'memoryInject': 'iv-memory-inject'
             };
             if (stMap[key]) {
                 const stEl = document.getElementById(stMap[key]);
@@ -487,11 +487,11 @@ export function setupMemorySettingsUI() {
         });
     };
     
-    bindCheck('scp-sp-memory-enabled', 'memoryEnabled');
-    bindCheck('scp-sp-memory-inject', 'memoryInject');
-    bindCheck('scp-sp-memory-notify', 'memoryNotify');
+    bindCheck('iv-sp-memory-enabled', 'memoryEnabled');
+    bindCheck('iv-sp-memory-inject', 'memoryInject');
+    bindCheck('iv-sp-memory-notify', 'memoryNotify');
 
-    const promptEl = document.getElementById('scp-sp-memory-prompt');
+    const promptEl = document.getElementById('iv-sp-memory-prompt');
     if (promptEl) {
         promptEl.value = s.memoryManagePrompt || DEFAULT_MEMORY_PROMPT;
         const newPromptEl = promptEl.cloneNode(true);
@@ -499,12 +499,12 @@ export function setupMemorySettingsUI() {
         newPromptEl.addEventListener('input', () => {
             getSettings().memoryManagePrompt = newPromptEl.value;
             saveSettings();
-            const stEl = document.getElementById('scp-memory-prompt');
+            const stEl = document.getElementById('iv-memory-prompt');
             if (stEl) stEl.value = newPromptEl.value;
         });
     }
 
-    const resetBtn = document.getElementById('scp-sp-reset-memory-prompt');
+    const resetBtn = document.getElementById('iv-sp-reset-memory-prompt');
     if (resetBtn) {
         const newResetBtn = resetBtn.cloneNode(true);
         resetBtn.parentNode.replaceChild(newResetBtn, resetBtn);
@@ -513,13 +513,13 @@ export function setupMemorySettingsUI() {
             if (!ok) return;
             getSettings().memoryManagePrompt = DEFAULT_MEMORY_PROMPT;
             saveSettings();
-            const el = document.getElementById('scp-sp-memory-prompt'); if (el) el.value = DEFAULT_MEMORY_PROMPT;
-            const stEl = document.getElementById('scp-memory-prompt'); if (stEl) stEl.value = DEFAULT_MEMORY_PROMPT;
+            const el = document.getElementById('iv-sp-memory-prompt'); if (el) el.value = DEFAULT_MEMORY_PROMPT;
+            const stEl = document.getElementById('iv-memory-prompt'); if (stEl) stEl.value = DEFAULT_MEMORY_PROMPT;
             toastr.success('Prompt reset.', EXT_DISPLAY);
         });
     }
 
-    const addBtn = document.getElementById('scp-sp-memory-add-btn');
+    const addBtn = document.getElementById('iv-sp-memory-add-btn');
     if (addBtn) {
         const newAddBtn = addBtn.cloneNode(true);
         addBtn.parentNode.replaceChild(newAddBtn, addBtn);
@@ -528,7 +528,7 @@ export function setupMemorySettingsUI() {
         });
     }
     
-    const clearBtn = document.getElementById('scp-sp-memory-clear-all');
+    const clearBtn = document.getElementById('iv-sp-memory-clear-all');
     if (clearBtn) {
         const newClearBtn = clearBtn.cloneNode(true);
         clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);

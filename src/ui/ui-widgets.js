@@ -1,17 +1,13 @@
-import { CHANGELOG, EXT_DISPLAY, I, DEFAULT_CHAR_EDIT_DIRECTIVE, DEFAULT_LB_MANAGE_PROMPT, DEFAULT_CHAT_EDIT_DIRECTIVE, QP_ICON_POOL } from '../constants.js';
-import { getSettings, saveSettings, getCurrentSession, getBindingKey, isMessageStarred, toggleStarMessage, getStarredMessages } from '../session.js';
-import { escHtml, showCustomDialog, copyText, autoResize } from '../utils/util-dom.js';
-import { _dbgAdd } from '../utils/util-debug.js';
-import { recordStat, SM } from '../features/feature-stats.js';
-import { _processAttachmentsBeforeSend } from '../features/feature-attachments.js';
+import { CHANGELOG, EXT_DISPLAY, I, QP_ICON_POOL } from '../constants.js';
+import { getSettings, saveSettings, getCurrentSession } from '../session.js';
+import { escHtml, showCustomDialog, autoResize } from '../utils/util-dom.js';
 import { assembleMessages } from '../api.js';
-import { state } from '../state.js';
 
 // ─── Quick Prompts ───────────────────────────────────────────────────────────
 
 export function renderQuickPromptsBar() {
-    const bar = document.getElementById('scp-qp-bar');
-    const toggleBtn = document.getElementById('scp-qp-toggle-btn');
+    const bar = document.getElementById('iv-qp-bar');
+    const toggleBtn = document.getElementById('iv-qp-toggle-btn');
     if (!bar) return;
     const s = getSettings();
     const prompts = s.quickPrompts || [];
@@ -20,25 +16,24 @@ export function renderQuickPromptsBar() {
     bar.innerHTML = '';
     for (const qp of prompts) {
         const btn = document.createElement('button');
-        btn.className = 'scp-qp-chip';
+        btn.className = 'iv-qp-chip';
         const truncTitle = qp.text.length > 100 ? qp.text.slice(0, 100) + '…' : qp.text;
         btn.title = truncTitle;
-        btn.innerHTML = `<span class="scp-qp-icon">${escHtml(qp.icon || '⚡')}</span><span class="scp-qp-label">${escHtml(qp.label || '')}</span>`;
+        btn.innerHTML = `<span class="iv-qp-icon">${escHtml(qp.icon || '⚡')}</span><span class="iv-qp-label">${escHtml(qp.label || '')}</span>`;
         btn.addEventListener('click', () => {
-            const input = document.getElementById('scp-input');
+            const input = document.getElementById('iv-input');
             if (!input) return;
             input.value = qp.text;
             autoResize(input);
             input.focus();
-            recordStat(SM.qp);
         });
         bar.appendChild(btn);
     }
 
     if (visible) {
-        bar.classList.add('scp-qp-bar--open');
+        bar.classList.add('iv-qp-bar--open');
     } else {
-        bar.classList.remove('scp-qp-bar--open');
+        bar.classList.remove('iv-qp-bar--open');
     }
     if (toggleBtn) toggleBtn.classList.toggle('active', s.quickPromptsVisible);
 }
@@ -54,12 +49,12 @@ export function showQPIconPicker(anchorEl, currentIcon, onSelect) {
     if (_qpIconPickerEl) { _qpIconPickerEl.remove(); _qpIconPickerEl = null; }
     
     const pop = document.createElement('div');
-    pop.className = 'scp-qp-icon-picker';
+    pop.className = 'iv-qp-icon-picker';
     pop.__anchor = anchorEl;
 
     for (const emoji of QP_ICON_POOL) {
         const btn = document.createElement('button');
-        btn.className = `scp-qp-icon-option${emoji === currentIcon ? ' active' : ''}`;
+        btn.className = `iv-qp-icon-option${emoji === currentIcon ? ' active' : ''}`;
         btn.textContent = emoji;
         btn.addEventListener('click', () => { onSelect(emoji); pop.remove(); _qpIconPickerEl = null; });
         pop.appendChild(btn);
@@ -99,7 +94,7 @@ export function openPresetDropdown(triggerEl, groups, onSelect, opts = {}) {
     triggerEl.classList.add('open');
 
     const panel = document.createElement('div');
-    panel.className = 'scp-pdd-panel';
+    panel.className = 'iv-pdd-panel';
     panel.style.width = `${width}px`;
     _activePresetPanel = panel;
 
@@ -107,10 +102,10 @@ export function openPresetDropdown(triggerEl, groups, onSelect, opts = {}) {
 
     if (allItems.length > 6) {
         const sw = document.createElement('div');
-        sw.className = 'scp-pdd-search-wrap';
+        sw.className = 'iv-pdd-search-wrap';
         const si = document.createElement('input');
         si.type = 'text'; si.placeholder = placeholder;
-        si.className = 'scp-pdd-search';
+        si.className = 'iv-pdd-search';
         si.addEventListener('input', () => renderContent(si.value.trim().toLowerCase()));
         sw.appendChild(si);
         panel.appendChild(sw);
@@ -118,7 +113,7 @@ export function openPresetDropdown(triggerEl, groups, onSelect, opts = {}) {
     }
 
     const listEl = document.createElement('div');
-    listEl.className = 'scp-pdd-list';
+    listEl.className = 'iv-pdd-list';
     panel.appendChild(listEl);
 
     const renderContent = (q = '') => {
@@ -132,29 +127,29 @@ export function openPresetDropdown(triggerEl, groups, onSelect, opts = {}) {
             totalShown += filtered.length;
             if (group.label) {
                 const hdr = document.createElement('div');
-                hdr.className = 'scp-pdd-group-label';
+                hdr.className = 'iv-pdd-group-label';
                 hdr.textContent = group.label;
                 listEl.appendChild(hdr);
             }
             filtered.forEach(item => {
                 const row = document.createElement('div');
-                row.className = 'scp-pdd-item';
+                row.className = 'iv-pdd-item';
                 const top = document.createElement('div');
-                top.className = 'scp-pdd-item-top';
+                top.className = 'iv-pdd-item-top';
                 const name = document.createElement('span');
-                name.className = 'scp-pdd-item-name';
+                name.className = 'iv-pdd-item-name';
                 name.textContent = item.name;
                 top.appendChild(name);
                 if (item.badge) {
                     const b = document.createElement('span');
-                    b.className = `scp-pdd-badge scp-pdd-badge--${item.badge}`;
+                    b.className = `iv-pdd-badge iv-pdd-badge--${item.badge}`;
                     b.textContent = item.badge;
                     top.appendChild(b);
                 }
                 row.appendChild(top);
                 if (item.preview) {
                     const prev = document.createElement('div');
-                    prev.className = 'scp-pdd-item-preview';
+                    prev.className = 'iv-pdd-item-preview';
                     prev.textContent = item.preview;
                     row.appendChild(prev);
                 }
@@ -167,7 +162,7 @@ export function openPresetDropdown(triggerEl, groups, onSelect, opts = {}) {
         });
         if (!totalShown) {
             const empty = document.createElement('div');
-            empty.className = 'scp-pdd-empty';
+            empty.className = 'iv-pdd-empty';
             empty.textContent = q ? 'No results' : emptyText;
             listEl.appendChild(empty);
         }
@@ -197,7 +192,7 @@ export function openPresetDropdown(triggerEl, groups, onSelect, opts = {}) {
 
 export function closePresetPanel() {
     if (_activePresetPanel) { _activePresetPanel.remove(); _activePresetPanel = null; }
-    document.querySelectorAll('.scp-pdd-trigger.open, .scp-preset-mgr-trigger.open')
+    document.querySelectorAll('.iv-pdd-trigger.open, .iv-preset-mgr-trigger.open')
         .forEach(el => el.classList.remove('open'));
 }
 
@@ -211,20 +206,20 @@ export function buildPromptPresetManager(containerEl, getTextFn, setTextFn, dict
     let _activeSource = '';
 
     const bar = document.createElement('div');
-    bar.className = 'scp-preset-mgr-bar';
+    bar.className = 'iv-preset-mgr-bar';
 
     const trigger = document.createElement('button');
     trigger.type = 'button';
-    trigger.className = 'scp-preset-mgr-trigger';
-    trigger.innerHTML = `<span class="scp-pmt-label">Select a preset…</span><svg class="scp-pmt-chevron" xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    trigger.className = 'iv-preset-mgr-trigger';
+    trigger.innerHTML = `<span class="iv-pmt-label">Select a preset…</span><svg class="iv-pmt-chevron" xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`;
 
-    const labelEl = trigger.querySelector('.scp-pmt-label');
+    const labelEl = trigger.querySelector('.iv-pmt-label');
 
     const setActive = (name, source) => {
         _activeName = name;
         _activeSource = source;
         labelEl.textContent = name || 'Select a preset…';
-        trigger.classList.toggle('scp-pmt--has-value', !!name);
+        trigger.classList.toggle('iv-pmt--has-value', !!name);
         updateBtnStates();
     };
 
@@ -264,7 +259,7 @@ export function buildPromptPresetManager(containerEl, getTextFn, setTextFn, dict
     const mkBtn = (icon, title, cls, cb) => {
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = `scp-preset-mgr-btn${cls ? ' ' + cls : ''}`;
+        b.className = `iv-preset-mgr-btn${cls ? ' ' + cls : ''}`;
         b.title = title;
         b.innerHTML = `<i class="fa-solid fa-${icon}"></i>`;
         b.addEventListener('click', cb);
@@ -330,24 +325,24 @@ export function buildQPSetManager(containerEl, onSetLoaded) {
     let _activeName = s.activeQuickPromptSet || '';
 
     const bar = document.createElement('div');
-    bar.className = 'scp-preset-mgr-bar';
+    bar.className = 'iv-preset-mgr-bar';
 
     const trigger = document.createElement('button');
     trigger.type = 'button';
-    trigger.className = 'scp-preset-mgr-trigger';
+    trigger.className = 'iv-preset-mgr-trigger';
     const getLabel = name => {
         if (!name) return 'Select a set…';
         const count = (s.quickPromptSets[name] || []).length;
         return `${name}  (${count})`;
     };
-    trigger.innerHTML = `<span class="scp-pmt-label">${escHtml(getLabel(_activeName))}</span><svg class="scp-pmt-chevron" xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+    trigger.innerHTML = `<span class="iv-pmt-label">${escHtml(getLabel(_activeName))}</span><svg class="iv-pmt-chevron" xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`;
 
-    const labelEl = trigger.querySelector('.scp-pmt-label');
+    const labelEl = trigger.querySelector('.iv-pmt-label');
 
     const setActive = name => {
         _activeName = name;
         labelEl.textContent = getLabel(name);
-        trigger.classList.toggle('scp-pmt--has-value', !!name);
+        trigger.classList.toggle('iv-pmt--has-value', !!name);
         updateBtnStates();
     };
 
@@ -378,7 +373,7 @@ export function buildQPSetManager(containerEl, onSetLoaded) {
     const mkBtn = (icon, title, cls, cb) => {
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = `scp-preset-mgr-btn${cls ? ' ' + cls : ''}`;
+        b.className = `iv-preset-mgr-btn${cls ? ' ' + cls : ''}`;
         b.title = title;
         b.innerHTML = `<i class="fa-solid fa-${icon}"></i>`;
         b.addEventListener('click', cb);
@@ -556,37 +551,37 @@ export function buildChangelogHTML() {
 
     let historyHTML = '';
     if (past.length) {
-        historyHTML = `<div class="scp-cl-history">` +
+        historyHTML = `<div class="iv-cl-history">` +
             past.map(entry => {
                 const li = (entry.notes || []).map(n => `<li>${n}</li>`).join('');
-                return `<details class="scp-cl-entry">
-                    <summary class="scp-cl-entry-summary">
-                        <span class="scp-cl-entry-ver">v${escHtml(entry.version)}</span>
+                return `<details class="iv-cl-entry">
+                    <summary class="iv-cl-entry-summary">
+                        <span class="iv-cl-entry-ver">v${escHtml(entry.version)}</span>
                         <span style="flex:1;opacity:.5">${escHtml(entry.date || '')}</span>
                     </summary>
-                    <div class="scp-cl-entry-body"><ul>${li}</ul></div>
+                    <div class="iv-cl-entry-body"><ul>${li}</ul></div>
                 </details>`;
             }).join('') +
             `</div>`;
     }
 
-    return `<div class="scp-cl-current">
-        <div class="scp-cl-version-badge">✦ Version ${escHtml(current.version)} ${current.date ? '· ' + escHtml(current.date) : ''}</div>
-        <div class="scp-cl-notes"><ul>${notesHTML}</ul></div>
+    return `<div class="iv-cl-current">
+        <div class="iv-cl-version-badge">✦ Version ${escHtml(current.version)} ${current.date ? '· ' + escHtml(current.date) : ''}</div>
+        <div class="iv-cl-notes"><ul>${notesHTML}</ul></div>
     </div>${historyHTML}`;
 }
 
 export function openChangelog() {
-    const modal = document.getElementById('scp-changelog-modal');
+    const modal = document.getElementById('iv-changelog-modal');
     if (!modal) return;
-    const body = document.getElementById('scp-changelog-body');
+    const body = document.getElementById('iv-changelog-body');
     if (body) body.innerHTML = buildChangelogHTML();
     modal.style.display = 'flex';
     import('./ui-window.js').then(m => m.bringWindowToFront());
 }
 
 export function closeChangelog() {
-    const modal = document.getElementById('scp-changelog-modal');
+    const modal = document.getElementById('iv-changelog-modal');
     if (modal) modal.style.display = 'none';
 }
 
@@ -605,98 +600,12 @@ export function checkChangelogAutoShow() {
 }
 
 export function setupChangelogListeners() {
-    const modal = document.getElementById('scp-changelog-modal');
+    const modal = document.getElementById('iv-changelog-modal');
     if (!modal) return;
-    document.getElementById('scp-changelog-close')?.addEventListener('click', closeChangelog);
+    document.getElementById('iv-changelog-close')?.addEventListener('click', closeChangelog);
     let _mdTarget = null;
     modal.addEventListener('mousedown', e => { _mdTarget = e.target; });
     modal.addEventListener('click', e => { if (e.target === modal && _mdTarget === modal) closeChangelog(); });
-}
-
-export function renderFavoritesPanel() {
-    const listEl = document.getElementById('scp-fav-list');
-    const emptyEl = document.getElementById('scp-fav-empty');
-    if (!listEl) return;
-
-    const starredIds = getStarredMessages();
-    const session = getCurrentSession();
-    const starred = session.messages.filter(m => starredIds.includes(m.id));
-
-    listEl.querySelectorAll('.scp-fav-item').forEach(el => el.remove());
-
-    if (!starred.length) {
-        if (emptyEl) emptyEl.style.display = '';
-        return;
-    }
-    if (emptyEl) emptyEl.style.display = 'none';
-
-    const frag = document.createDocumentFragment();
-    starred.forEach(msg => {
-        const item = document.createElement('div');
-        item.className = 'scp-fav-item';
-        item.dataset.msgId = msg.id;
-
-        const raw = msg.content.replace(/```[\s\S]*?```/g, '[code]').replace(/<[^>]+>/g, '').trim();
-        const preview = raw.length > 140 ? raw.slice(0, 140) + '…' : raw;
-        const roleLabel = msg.role === 'user' ? 'User' : 'Copilot';
-        const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-        item.innerHTML = `
-            <span class="scp-fav-item-icon">${I.starFill}</span>
-            <div class="scp-fav-item-body">
-                <div class="scp-fav-item-meta">
-                    <span class="scp-fav-item-role">${escHtml(roleLabel)}</span>
-                    <span>${escHtml(time)}</span>
-                </div>
-                <div class="scp-fav-item-text">${escHtml(preview)}</div>
-            </div>
-            <button class="scp-fav-item-remove" title="Remove from starred">✕</button>`;
-
-        item.addEventListener('click', e => {
-            if (e.target.classList.contains('scp-fav-item-remove')) return;
-            closeFavoritesPanel();
-            const msgEl = document.querySelector(`.scp-msg[data-id="${msg.id}"]`);
-            if (!msgEl) return;
-            msgEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            requestAnimationFrame(() => {
-                msgEl.classList.remove('scp-msg-flash');
-                void msgEl.offsetWidth;
-                msgEl.classList.add('scp-msg-flash');
-                msgEl.addEventListener('animationend', () => msgEl.classList.remove('scp-msg-flash'), { once: true });
-            });
-        });
-
-        item.querySelector('.scp-fav-item-remove').addEventListener('click', e => {
-            e.stopPropagation();
-            toggleStarMessage(msg.id);
-            const msgEl = document.querySelector(`.scp-msg[data-id="${msg.id}"]`);
-            if (msgEl) {
-                msgEl.classList.remove('scp-msg-starred');
-                const btn = msgEl.querySelector('.scp-msg-btn-star');
-                if (btn) { btn.classList.remove('starred'); btn.title = 'Star message'; }
-            }
-            renderFavoritesPanel();
-        });
-
-        frag.appendChild(item);
-    });
-    listEl.appendChild(frag);
-}
-
-export function openFavoritesPanel() {
-    const panel = document.getElementById('scp-fav-panel');
-    const btn = document.getElementById('scp-fav-btn');
-    if (!panel) return;
-    renderFavoritesPanel();
-    panel.style.display = 'flex';
-    btn?.classList.add('active');
-}
-
-export function closeFavoritesPanel() {
-    const panel = document.getElementById('scp-fav-panel');
-    const btn = document.getElementById('scp-fav-btn');
-    if (panel) panel.style.display = 'none';
-    btn?.classList.remove('active');
 }
 
 // ─── Context Inspector ──────────────────────────────────────────────────────
@@ -749,7 +658,7 @@ export function _highlightContextText(raw) {
     }
 
     let html = '', last = 0;
-    const KNOWN = new Set(['system_prompt','character_information','characters','character','lorebook_context','st_system_prompt','persistent_memory','summary_context','lorebook_management','character_management','chat_messages_editing','roleplay_context','entity_definitions','persona_configuration','operational_guidelines','{{user}}_persona', 'tool_calls_system', 'memory_system']);
+    const KNOWN = new Set(['system_prompt','character_information','characters','character','st_system_prompt','persistent_memory','summary_context','roleplay_context','entity_definitions','persona_configuration','operational_guidelines','{{user}}_persona', 'tool_calls_system', 'memory_system']);
     let currentDepth = 0;
     let emittedAnchors = new Set();
 
@@ -777,15 +686,15 @@ export function _highlightContextText(raw) {
                 if (KNOWN.has(tagName) || tagName.endsWith('_persona')) {
                     if (!emittedAnchors.has(tagName)) {
                         emittedAnchors.add(tagName);
-                        html += `<span id="scp-ctx-sec-${tagName}" class="scp-ctx-anchor"></span>`;
+                        html += `<span id="iv-ctx-sec-${tagName}" class="iv-ctx-anchor"></span>`;
                     }
                 }
             }
             
             const depthClass = Math.min(applyDepth, 5);
-            html += `<span class="scp-ctx-hl-tag scp-ctx-hl-tag-d${depthClass}">${escHtml(match)}</span>`;
+            html += `<span class="iv-ctx-hl-tag iv-ctx-hl-tag-d${depthClass}">${escHtml(match)}</span>`;
         } else if (type === 'macro') {
-            html += `<span class="scp-ctx-hl-macro">${escHtml(match)}</span>`;
+            html += `<span class="iv-ctx-hl-macro">${escHtml(match)}</span>`;
         } else if (type === 'code_block' || type === 'inline_code') {
             html += escHtml(match);
         }
@@ -799,13 +708,9 @@ export function _buildContextInspectorHTML(messages) {
     const SECTION_LABELS = {
         'system_prompt': 'System Prompt', 
         'persistent_memory': 'Persistent Memory',
-        'lorebook_context': 'Lorebook', 
         'characters': 'Characters',
         '{{user}}_persona': 'User Persona',
         'memory_system': 'Memory Management',
-        'lorebook_management': 'Lorebook Management',
-        'character_management': 'Character Management',
-        'chat_messages_editing': 'Chat Management',
         'tool_calls_system': 'Tool Calls'
     };
     const KNOWN_SECS = new Set(Object.keys(SECTION_LABELS));
@@ -816,13 +721,9 @@ export function _buildContextInspectorHTML(messages) {
     const DISPLAY_ORDER = [
         'system_prompt',
         'persistent_memory',
-        'lorebook_context',
         'characters',
         '{{user}}_persona',
         'memory_system',
-        'lorebook_management',
-        'character_management',
-        'chat_messages_editing',
         'tool_calls_system'
     ];
 
@@ -841,9 +742,9 @@ export function _buildContextInspectorHTML(messages) {
 
         const LABELS = { system:'■ SYSTEM', user:'▶ USER', assistant:'◀ ASSISTANT' };
         const label = (LABELS[displayRole] || displayRole) + (idx > 0 ? ` #${idx}` : '');
-        const blockId = `scp-ctx-b${idx}`;
+        const blockId = `iv-ctx-b${idx}`;
 
-        navHtml += `<button class="scp-ctx-nav-btn scp-ctx-nav-${displayRole}" data-t="${blockId}">${escHtml(label)}</button>`;
+        navHtml += `<button class="iv-ctx-nav-btn iv-ctx-nav-${displayRole}" data-t="${blockId}">${escHtml(label)}</button>`;
 
         if (msg.role === 'system') {
             const tagRe = /<([\w:{}_-]+)[^>]*>/g;
@@ -862,9 +763,9 @@ export function _buildContextInspectorHTML(messages) {
                 if ((KNOWN_SECS.has(key) || isUserPersona) && !seenSections.has(key)) {
                     seenSections.add(key);
                     const secLabel = SECTION_LABELS[key] || (isUserPersona ? 'User Persona' : key);
-                    const secId = `scp-ctx-sec-${rawTag}`;
+                    const secId = `iv-ctx-sec-${rawTag}`;
                     
-                    if (['memory_system','lorebook_management','character_management','chat_messages_editing', 'tool_calls_system'].includes(key)) {
+                    if (['memory_system', 'tool_calls_system'].includes(key)) {
                         foundModules.push({ key, id: secId, label: secLabel });
                     } else {
                         foundMain.push({ key, id: secId, label: secLabel });
@@ -884,37 +785,37 @@ export function _buildContextInspectorHTML(messages) {
             foundModules.sort(sortFn);
 
             foundMain.forEach(item => {
-                navHtml += `<button class="scp-ctx-nav-btn scp-ctx-nav-sub" data-t="${item.id}">&nbsp;&nbsp;◦ ${escHtml(item.label)}</button>`;
+                navHtml += `<button class="iv-ctx-nav-btn iv-ctx-nav-sub" data-t="${item.id}">&nbsp;&nbsp;◦ ${escHtml(item.label)}</button>`;
             });
 
             let moduleNavs = '';
             foundModules.forEach(item => {
-                moduleNavs += `<button class="scp-ctx-nav-btn scp-ctx-nav-sub" data-t="${item.id}">&nbsp;&nbsp;◦ ${escHtml(item.label)}</button>`;
+                moduleNavs += `<button class="iv-ctx-nav-btn iv-ctx-nav-sub" data-t="${item.id}">&nbsp;&nbsp;◦ ${escHtml(item.label)}</button>`;
             });
 
             if (moduleNavs) {
-                 navHtml += `<details class="scp-ctx-nav-details" open><summary class="scp-ctx-nav-btn" style="color:var(--scp-text)">▼ Modules</summary>${moduleNavs}</details>`;
+                 navHtml += `<details class="iv-ctx-nav-details" open><summary class="iv-ctx-nav-btn" style="color:var(--iv-text)">▼ Modules</summary>${moduleNavs}</details>`;
             }
         }
 
         const highlighted = _highlightContextText(raw);
-        bodyHtml += `<div class="scp-ctx-block" id="${blockId}">`;
-        bodyHtml += `<div class="scp-ctx-block-header scp-ctx-role-${displayRole}">${escHtml(label)}</div>`;
-        bodyHtml += `<div class="scp-ctx-block-sep"></div>`;
-        bodyHtml += `<div class="scp-ctx-block-body"><pre class="scp-ctx-pre">${highlighted}</pre></div>`;
+        bodyHtml += `<div class="iv-ctx-block" id="${blockId}">`;
+        bodyHtml += `<div class="iv-ctx-block-header iv-ctx-role-${displayRole}">${escHtml(label)}</div>`;
+        bodyHtml += `<div class="iv-ctx-block-sep"></div>`;
+        bodyHtml += `<div class="iv-ctx-block-body"><pre class="iv-ctx-pre">${highlighted}</pre></div>`;
         bodyHtml += `</div>`;
     });
 
     const styleHtml = `<style>
-        .scp-ctx-hl-tag-d0 { color: #eff6ff !important; }
-        .scp-ctx-hl-tag-d1 { color: #bfdbfe !important; }
-        .scp-ctx-hl-tag-d2 { color: #93c5fd !important; }
-        .scp-ctx-hl-tag-d3 { color: rgb(106, 165, 236) !important; }
-        .scp-ctx-hl-tag-d4 { color: rgb(100, 158, 253) !important; }
-        .scp-ctx-hl-tag-d5 { color: rgb(74, 120, 221) !important; }
+        .iv-ctx-hl-tag-d0 { color: #eff6ff !important; }
+        .iv-ctx-hl-tag-d1 { color: #bfdbfe !important; }
+        .iv-ctx-hl-tag-d2 { color: #93c5fd !important; }
+        .iv-ctx-hl-tag-d3 { color: rgb(106, 165, 236) !important; }
+        .iv-ctx-hl-tag-d4 { color: rgb(100, 158, 253) !important; }
+        .iv-ctx-hl-tag-d5 { color: rgb(74, 120, 221) !important; }
     </style>`;
 
-    return `<div class="scp-ctx-inspector">${styleHtml}<nav class="scp-ctx-nav">${navHtml}</nav><div class="scp-ctx-body" id="scp-ctx-body">${bodyHtml}</div></div>`;
+    return `<div class="iv-ctx-inspector">${styleHtml}<nav class="iv-ctx-nav">${navHtml}</nav><div class="iv-ctx-body" id="iv-ctx-body">${bodyHtml}</div></div>`;
 }
 
 export let _lastInspectorMessages = [];
@@ -923,23 +824,22 @@ export async function openInspector() {
     const sess = getCurrentSession();
     const { getEffectiveSettings } = await import('../session.js');
     const settings = getEffectiveSettings();
-    const inputEl = document.getElementById('scp-input');
+    const inputEl = document.getElementById('iv-input');
     const pendingText = inputEl ? inputEl.value.trim() : '';
-    const processedAtts = await _processAttachmentsBeforeSend(state.pendingAttachments, true);
-    
-    const messages = await assembleMessages(sess, settings, pendingText, processedAtts);
+
+    const messages = await assembleMessages(sess, settings, pendingText);
     _lastInspectorMessages = messages;
 
-    const fmtEl = document.getElementById('scp-ctx-formatted');
-    const jsonEl = document.getElementById('scp-ctx-json');
-    const modalEl = document.getElementById('scp-ctx-modal');
+    const fmtEl = document.getElementById('iv-ctx-formatted');
+    const jsonEl = document.getElementById('iv-ctx-json');
+    const modalEl = document.getElementById('iv-ctx-modal');
     
-    const modal = modalEl.querySelector('.scp-modal');
+    const modal = modalEl.querySelector('.iv-modal');
     if (modal) {
         modal.style.height = '75vh';
     }
     
-    const modalBody = modalEl.querySelector('.scp-modal-body');
+    const modalBody = modalEl.querySelector('.iv-modal-body');
     if (modalBody) {
         modalBody.style.padding = '0';
         modalBody.style.overflow = 'hidden';
@@ -955,10 +855,10 @@ export async function openInspector() {
         fmtEl.style.padding = '0';
         fmtEl.innerHTML = _buildContextInspectorHTML(messages);
         
-        fmtEl.querySelectorAll('.scp-ctx-nav-btn[data-t]').forEach(btn => {
+        fmtEl.querySelectorAll('.iv-ctx-nav-btn[data-t]').forEach(btn => {
             btn.addEventListener('click', () => {
                 const t = document.getElementById(btn.dataset.t);
-                const bodyContainer = document.getElementById('scp-ctx-body');
+                const bodyContainer = document.getElementById('iv-ctx-body');
                 if (t && bodyContainer) {
                     const topPos = t.offsetTop;
                     bodyContainer.scrollTo({ top: topPos, behavior: 'smooth' });
@@ -971,8 +871,8 @@ export async function openInspector() {
     import('./ui-window.js').then(m => m.bringWindowToFront());
     
     setTimeout(() => {
-        const isJsonActive = document.querySelector('.scp-modal-tab.active')?.dataset.tab === 'json';
-        const targetEl = isJsonActive ? jsonEl : document.getElementById('scp-ctx-body');
+        const isJsonActive = document.querySelector('.iv-modal-tab.active')?.dataset.tab === 'json';
+        const targetEl = isJsonActive ? jsonEl : document.getElementById('iv-ctx-body');
         if (targetEl) {
             const prevBehavior = targetEl.style.scrollBehavior;
             targetEl.style.scrollBehavior = 'auto';
@@ -1001,14 +901,14 @@ export function buildSoundSettingsUI(container) {
         saveSettings();
     }
 
-    const isSP = container.id === 'scp-sp-sound-settings';
+    const isSP = container.id === 'iv-sp-sound-settings';
 
     const typeRow = document.createElement('div');
-    typeRow.className = isSP ? 'scp-sp-field' : '';
+    typeRow.className = isSP ? 'iv-sp-field' : '';
     if (!isSP) typeRow.style.marginTop = '10px';
     
     const typeLbl = document.createElement(isSP ? 'label' : 'b');
-    typeLbl.className = isSP ? 'scp-sp-label' : '';
+    typeLbl.className = isSP ? 'iv-sp-label' : '';
     if (!isSP) typeLbl.style.fontSize = '12px';
     typeLbl.textContent = 'Completion Sound';
     
@@ -1017,7 +917,7 @@ export function buildSoundSettingsUI(container) {
     if (!isSP) typeWrap.style.marginTop = '6px';
     
     const typeSel = document.createElement('select');
-    typeSel.className = isSP ? 'scp-sp-select text_pole' : 'text_pole';
+    typeSel.className = isSP ? 'iv-sp-select text_pole' : 'text_pole';
     typeSel.style.flex = '1';
     
     const renderDropdown = () => {
@@ -1053,7 +953,7 @@ export function buildSoundSettingsUI(container) {
     renderDropdown();
 
     const testBtn = document.createElement('button');
-    testBtn.className = isSP ? 'scp-action-btn' : 'menu_button interactable';
+    testBtn.className = isSP ? 'iv-action-btn' : 'menu_button interactable';
     testBtn.innerHTML = `<i class="fa-solid fa-play"></i><span>Test</span>`;
     if (!isSP) testBtn.style.flex = '0 0 auto';
     testBtn.addEventListener('click', () => playCompletionSound(true));
@@ -1068,7 +968,7 @@ export function buildSoundSettingsUI(container) {
     customActionsWrap.style.cssText = isSP ? 'display:flex;gap:6px;margin-top:6px' : 'display:flex;gap:6px;margin-top:6px;align-items:center';
     
     const uploadBtn = document.createElement('button');
-    uploadBtn.className = isSP ? 'scp-action-btn' : 'menu_button interactable';
+    uploadBtn.className = isSP ? 'iv-action-btn' : 'menu_button interactable';
     uploadBtn.innerHTML = `<i class="fa-solid fa-upload"></i><span>Upload Custom</span>`;
     if (!isSP) uploadBtn.style.flex = '1';
 
@@ -1089,14 +989,14 @@ export function buildSoundSettingsUI(container) {
             s2.completionSound = id;
             saveSettings();
             
-            const allContainers = [document.getElementById('scp-sound-settings'), document.getElementById('scp-sp-sound-settings')].filter(Boolean);
+            const allContainers = [document.getElementById('iv-sound-settings'), document.getElementById('iv-sp-sound-settings')].filter(Boolean);
             allContainers.forEach(c => buildSoundSettingsUI(c));
         };
         inp.click();
     });
 
     const deleteBtn = document.createElement('button');
-    deleteBtn.className = isSP ? 'scp-action-btn scp-sp-danger-btn' : 'menu_button interactable';
+    deleteBtn.className = isSP ? 'iv-action-btn iv-sp-danger-btn' : 'menu_button interactable';
     deleteBtn.innerHTML = `<i class="fa-solid fa-trash"></i><span>Delete</span>`;
     if (!isSP) deleteBtn.style.flex = '1';
 
@@ -1112,7 +1012,7 @@ export function buildSoundSettingsUI(container) {
             renderDropdown();
             updateCustomActions();
             
-            const otherContainers = [document.getElementById('scp-sound-settings'), document.getElementById('scp-sp-sound-settings')].filter(c => c && c !== container);
+            const otherContainers = [document.getElementById('iv-sound-settings'), document.getElementById('iv-sp-sound-settings')].filter(c => c && c !== container);
             otherContainers.forEach(c => buildSoundSettingsUI(c));
         }
     });
@@ -1130,21 +1030,21 @@ export function buildSoundSettingsUI(container) {
         getSettings().completionSound = typeSel.value;
         saveSettings();
         updateCustomActions();
-        const otherContainers = [document.getElementById('scp-sound-settings'), document.getElementById('scp-sp-sound-settings')].filter(c => c && c !== container);
+        const otherContainers = [document.getElementById('iv-sound-settings'), document.getElementById('iv-sp-sound-settings')].filter(c => c && c !== container);
         otherContainers.forEach(c => buildSoundSettingsUI(c));
     });
 
     const volRow = document.createElement('div');
-    volRow.className = isSP ? 'scp-sp-field' : '';
+    volRow.className = isSP ? 'iv-sp-field' : '';
     volRow.style.marginTop = isSP ? '6px' : '10px';
 
     const volLbl = document.createElement(isSP ? 'label' : 'b');
-    volLbl.className = isSP ? 'scp-sp-label' : '';
+    volLbl.className = isSP ? 'iv-sp-label' : '';
     if (!isSP) volLbl.style.fontSize = '12px';
     volLbl.textContent = 'Volume';
 
     const volWrap = document.createElement('div');
-    volWrap.className = isSP ? 'scp-sp-row' : '';
+    volWrap.className = isSP ? 'iv-sp-row' : '';
     if (!isSP) {
         volWrap.style.display = 'flex';
         volWrap.style.alignItems = 'center';
@@ -1154,14 +1054,14 @@ export function buildSoundSettingsUI(container) {
 
     const volSlider = document.createElement('input');
     volSlider.type = 'range'; 
-    volSlider.className = isSP ? 'scp-slider scp-sp-vol-slider' : 'neo-range-slider scp-sp-vol-slider';
+    volSlider.className = isSP ? 'iv-slider iv-sp-vol-slider' : 'neo-range-slider iv-sp-vol-slider';
     volSlider.style.flex = '1'; volSlider.min = '0'; volSlider.max = '100';
     volSlider.value = s.completionSoundVolume ?? 80;
 
     const volVal = document.createElement('span');
-    volVal.className = 'scp-sp-vol-val';
+    volVal.className = 'iv-sp-vol-val';
     volVal.style.cssText = isSP 
-        ? 'min-width:32px;text-align:right;font-size:11px;color:var(--scp-accent)' 
+        ? 'min-width:32px;text-align:right;font-size:11px;color:var(--iv-accent)' 
         : 'min-width:34px;text-align:right;font-size:12px;color:var(--SmartThemeQuoteColor,#a99bfb)';
     volVal.textContent = `${volSlider.value}%`;
     
@@ -1169,7 +1069,7 @@ export function buildSoundSettingsUI(container) {
     volSlider.addEventListener('change', () => { 
         getSettings().completionSoundVolume = parseInt(volSlider.value); 
         saveSettings(); 
-        const otherContainers2 = [document.getElementById('scp-sound-settings'), document.getElementById('scp-sp-sound-settings')].filter(c => c && c !== container);
+        const otherContainers2 = [document.getElementById('iv-sound-settings'), document.getElementById('iv-sp-sound-settings')].filter(c => c && c !== container);
         otherContainers2.forEach(c => buildSoundSettingsUI(c));
     });
     

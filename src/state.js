@@ -1,6 +1,6 @@
 export const state = {
     generating: false,
-    copilotActive: false,
+    windowActive: false,
     configDirty: false,
     themeDirty: false,
     activeToolCalls: [],
@@ -10,12 +10,6 @@ export const state = {
     searchOpen: false,
     searchWholeWord: false,
     searchHotkeyHandler: null,
-    pendingAttachments: [],
-    imageManualLocked: false,
-    lbActiveBook: null,
-    lbSearchQuery: '',
-    lbEntryDetailEntry: null,
-    lbEntryDetailBook: null,
     lastChatLen: -1,
     userScrolledUp: false,
     savedScrollTop: 0,
@@ -35,8 +29,8 @@ export const DBG_STATE = {
 };
 
 export const DBG_SKIP = new Set([
-    'customTheme','savedThemes','sessions','starredMessages',
-    'stats','quickPromptSets','customSounds','completionSoundData',
-    'quickPrompts','profiles','promptPresets','altGreetingIndices',
+    'customTheme','savedThemes','sessions',
+    'quickPromptSets','customSounds','completionSoundData',
+    'quickPrompts','profiles','promptPresets',
     'windowBgUrl','customBackgrounds','memories'
 ]);

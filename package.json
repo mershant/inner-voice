@@ -1,7 +1,7 @@
 {
-  "name": "st-copilot-image-dev",
-  "version": "2.9.0-image-dev",
-  "description": "Experimental ST-Copilot fork with LinkAPI image generation. Upstream ST-Copilot remains separately authored.",
+  "name": "inner-voice",
+  "version": "0.1.0",
+  "description": "A SillyTavern extension: a private chat between the Inner Voice and {{user}}. Forked from ST-Copilot (MIT, Quaren / QQ-Corporation).",
   "main": "index.js",
   "scripts": {
     "build": "rollup -c",
@@ -9,7 +9,7 @@
     "test": "node --test test/*.test.js"
   },
   "keywords": [],
-  "author": "Experimental fork for STD testing. Upstream ST-Copilot: Quaren / QQ-Corporation.",
+  "author": "mershant. Upstream ST-Copilot: Quaren / QQ-Corporation.",
   "license": "MIT",
   "type": "module",
   "devDependencies": {
