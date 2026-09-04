@@ -1218,16 +1218,39 @@ function getLiveExchange(conversation) {
 // Hide is a reversible flag on an exchange (keyed by its anchor), never
 // deletion: the turns stay in the conversation and remain readable in the UI.
 // Inner memory and the simulation view both skip hidden exchanges; hidden
-// exchanges also do not count toward exchange depth. The UI toggle and
-// anchor-hidden propagation are ticket #6.
+// exchanges also do not count toward exchange depth.
+//
+// The flag is the player's hide toggle. An exchange whose anchor message is
+// hidden in the main chat is hidden with it automatically — that host state
+// is observed, not copied onto the flag, so unhiding the message restores
+// the exchange unless the player had already hidden it themselves.
 
-function isExchangeHidden(conversation, anchorIndex) {
+function isMainChatMessageHidden(message) {
+    if (!message) return false;
+    return !!(message.is_system || message.is_hidden || message.extra?.is_hidden || message.extra?.sc_ghosted);
+}
+
+function isAnchorHiddenInMainChat(anchorIndex) {
+    if (anchorIndex === null || anchorIndex === undefined) return false;
+    try {
+        const chat = SillyTavern.getContext().chat;
+        return isMainChatMessageHidden(chat?.[anchorIndex]);
+    } catch (_) {
+        return false;
+    }
+}
+
+function isExchangeManuallyHidden(conversation, anchorIndex) {
     const anchor = anchorIndex === undefined ? null : anchorIndex;
     return conversation.hiddenAnchors.includes(anchor);
 }
 
+function isExchangeHidden(conversation, anchorIndex) {
+    return isExchangeManuallyHidden(conversation, anchorIndex) || isAnchorHiddenInMainChat(anchorIndex);
+}
+
 function setExchangeHidden(conversation, anchorIndex, hidden) {
-    const has = isExchangeHidden(conversation, anchorIndex);
+    const has = isExchangeManuallyHidden(conversation, anchorIndex);
     if (hidden && !has) conversation.hiddenAnchors.push(anchorIndex);
     if (!hidden && has) conversation.hiddenAnchors = conversation.hiddenAnchors.filter(a => a !== anchorIndex);
     saveConversation();
@@ -1236,7 +1259,6 @@ function setExchangeHidden(conversation, anchorIndex, hidden) {
 
 // The turns the Inner Voice remembers: every turn whose exchange is not hidden.
 function getVisibleTurns(conversation) {
-    if (!conversation.hiddenAnchors.length) return conversation.messages;
     return conversation.messages.filter(m => !isExchangeHidden(conversation, m.anchorIndex));
 }
 
@@ -1333,7 +1355,9 @@ var conversation = /*#__PURE__*/Object.freeze({
     getVisibleTurns: getVisibleTurns,
     hasConversationOverrides: hasConversationOverrides,
     initConversation: initConversation,
+    isAnchorHiddenInMainChat: isAnchorHiddenInMainChat,
     isExchangeHidden: isExchangeHidden,
+    isExchangeManuallyHidden: isExchangeManuallyHidden,
     loadConversationFile: loadConversationFile,
     saveConversation: saveConversation,
     saveConversationFile: saveConversationFile,
@@ -4153,6 +4177,8 @@ function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
     const wrap = document.createElement('div');
     wrap.className = `iv-msg ${isUser ? 'iv-msg-user' : 'iv-msg-assistant'}`;
     wrap.dataset.id = msg.id;
+    wrap.dataset.anchorIndex = encodeAnchor(msg.anchorIndex);
+    if (isExchangeHidden(getConversation(), msg.anchorIndex)) wrap.classList.add('iv-exchange-hidden');
 
     const avatarWrap = document.createElement('div');
     avatarWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;flex-shrink:0';
@@ -4743,6 +4769,101 @@ async function handleDelete(wrapEl, msg) {
     if (!conversation.messages.length) renderConversation(conversation);
 }
 
+function encodeAnchor(anchorIndex) {
+    return (anchorIndex === null || anchorIndex === undefined) ? 'none' : String(anchorIndex);
+}
+
+function decodeAnchor(value) {
+    if (value === 'none' || value === undefined || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+
+function paintHideToggle(bar, conversation, anchorIndex) {
+    const hidden = isExchangeHidden(conversation, anchorIndex);
+    const locked = isAnchorHiddenInMainChat(anchorIndex) && !isExchangeManuallyHidden(conversation, anchorIndex);
+    bar.classList.toggle('iv-exchange-hidden', hidden);
+    const label = bar.querySelector('.iv-exchange-hidden-label');
+    if (label) label.style.display = hidden ? '' : 'none';
+    const btn = bar.querySelector('.iv-hide-toggle');
+    if (btn) {
+        btn.textContent = hidden ? 'Show' : 'Hide';
+        btn.disabled = locked;
+        btn.title = locked
+            ? 'Hidden because its main-chat message is hidden'
+            : hidden ? 'Show this exchange' : 'Hide this exchange';
+    }
+}
+
+function lastRenderedAnchor(container) {
+    const bars = container.querySelectorAll('.iv-exchange-bar');
+    const lastBar = bars.length ? bars[bars.length - 1] : null;
+    return lastBar ? decodeAnchor(lastBar.dataset.anchorIndex) : Symbol('none');
+}
+
+function appendExchangeBarIfNew(container, conversation, anchorIndex) {
+    if (lastRenderedAnchor(container) === anchorIndex) return;
+    container.appendChild(createExchangeBar(conversation, anchorIndex));
+}
+
+function createExchangeBar(conversation, anchorIndex) {
+    const bar = document.createElement('div');
+    bar.className = 'iv-exchange-bar';
+    bar.dataset.anchorIndex = encodeAnchor(anchorIndex);
+
+    const label = document.createElement('span');
+    label.className = 'iv-exchange-hidden-label';
+    label.textContent = 'Hidden';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'iv-hide-toggle';
+    btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const conv = getConversation();
+        setExchangeHidden(conv, anchorIndex, !isExchangeManuallyHidden(conv, anchorIndex));
+        syncExchangeHiddenUi(conv);
+    });
+
+    bar.appendChild(label);
+    bar.appendChild(btn);
+    paintHideToggle(bar, conversation, anchorIndex);
+    return bar;
+}
+
+function syncExchangeHiddenUi(conversation = getConversation()) {
+    const c = document.getElementById('iv-messages');
+    if (!c) return;
+    c.querySelectorAll('.iv-exchange-bar').forEach(bar => {
+        paintHideToggle(bar, conversation, decodeAnchor(bar.dataset.anchorIndex));
+    });
+    c.querySelectorAll('.iv-msg').forEach(el => {
+        el.classList.toggle('iv-exchange-hidden', isExchangeHidden(conversation, decodeAnchor(el.dataset.anchorIndex)));
+    });
+}
+
+function pruneExchangeBars() {
+    const c = document.getElementById('iv-messages');
+    if (!c) return;
+    for (const el of [...c.children]) {
+        if (!el.classList?.contains('iv-exchange-bar')) continue;
+        const next = el.nextElementSibling;
+        if (!next || !next.classList?.contains('iv-msg')) el.remove();
+    }
+}
+
+function setupMainChatHideListener() {
+    document.addEventListener('click', e => {
+        const t = e.target;
+        if (!t || typeof t.closest !== 'function') return;
+        if (!t.closest('.mes_hide, .mes_unhide')) return;
+        setTimeout(() => {
+            Promise.resolve().then(function () { return simulationView; }).then(m => m.syncSimulationView()).catch(() => {});
+            syncExchangeHiddenUi();
+        }, 0);
+    });
+}
+
 function renderConversation(conversation) {
     clearSearchHighlights();
     state.searchMatches = [];
@@ -4764,6 +4885,8 @@ function renderConversation(conversation) {
         return;
     }
     for (const msg of conversation.messages) {
+        const anchor = msg.anchorIndex === undefined ? null : msg.anchorIndex;
+        appendExchangeBarIfNew(c, conversation, anchor);
         const el = createMsgEl(msg, handleCopy, handleEdit, handleDelete, handleMessageRegen);
         c.appendChild(el);
     }
@@ -4777,6 +4900,10 @@ function appendMsgEl(msg, isStreamInit = false) {
     const c = document.getElementById('iv-messages');
     if (!c) return;
     c.querySelector('.iv-empty-state')?.remove();
+
+    const conversation = getConversation();
+    const anchor = msg.anchorIndex === undefined ? null : msg.anchorIndex;
+    appendExchangeBarIfNew(c, conversation, anchor);
 
     const el = createMsgEl(msg, handleCopy, handleEdit, handleDelete, handleMessageRegen);
     c.appendChild(el);
@@ -4802,6 +4929,7 @@ function removeMsgEl(msgId) {
     const el = document.querySelector(`.iv-msg[data-id="${msgId}"]`);
     if (!el) return;
     el.remove();
+    pruneExchangeBars();
     _refreshContinueBtns();
     _refreshSwipeBars(getConversation());
 }
@@ -4813,6 +4941,7 @@ function removeMsgElAndBelow(msgId) {
         if (el.dataset.id === msgId) found = true;
         if (found) el.remove();
     }
+    pruneExchangeBars();
     _refreshContinueBtns();
     _refreshSwipeBars(getConversation());
 }
@@ -4824,6 +4953,7 @@ function removeMsgElAfter(msgId) {
         if (found) el.remove();
         if (el.dataset.id === msgId) found = true;
     }
+    pruneExchangeBars();
     _refreshContinueBtns();
     _refreshSwipeBars(getConversation());
 }
@@ -5574,10 +5704,12 @@ var uiChat = /*#__PURE__*/Object.freeze({
     setPickedChatIndices: setPickedChatIndices,
     setupChatPickerListeners: setupChatPickerListeners,
     setupDepthClickEdit: setupDepthClickEdit,
+    setupMainChatHideListener: setupMainChatHideListener,
     setupMessagesScrollTracking: setupMessagesScrollTracking,
     setupSearchHotkey: setupSearchHotkey,
     showGenerationError: showGenerationError,
     smartScrollToBottom: smartScrollToBottom,
+    syncExchangeHiddenUi: syncExchangeHiddenUi,
     toggleSearchWholeWord: toggleSearchWholeWord,
     updateDepthSlidersMax: updateDepthSlidersMax,
     updateMsgCount: updateMsgCount,
@@ -9045,6 +9177,7 @@ async function init() {
     setupGhostHotkey();
     setupHotkey();
     setupMessagesScrollTracking();
+    setupMainChatHideListener();
 
     const s = getSettings();
     const windowEl = document.getElementById(WIN_ID);
@@ -9107,6 +9240,7 @@ async function init() {
             if (e) es.on(e, () => {
                 updateDepthSlidersMax();
                 syncSimulationView();
+                syncExchangeHiddenUi();
             });
         });
 

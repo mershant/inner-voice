@@ -509,16 +509,39 @@ export function getLiveExchange(conversation) {
 // Hide is a reversible flag on an exchange (keyed by its anchor), never
 // deletion: the turns stay in the conversation and remain readable in the UI.
 // Inner memory and the simulation view both skip hidden exchanges; hidden
-// exchanges also do not count toward exchange depth. The UI toggle and
-// anchor-hidden propagation are ticket #6.
+// exchanges also do not count toward exchange depth.
+//
+// The flag is the player's hide toggle. An exchange whose anchor message is
+// hidden in the main chat is hidden with it automatically — that host state
+// is observed, not copied onto the flag, so unhiding the message restores
+// the exchange unless the player had already hidden it themselves.
 
-export function isExchangeHidden(conversation, anchorIndex) {
+function isMainChatMessageHidden(message) {
+    if (!message) return false;
+    return !!(message.is_system || message.is_hidden || message.extra?.is_hidden || message.extra?.sc_ghosted);
+}
+
+export function isAnchorHiddenInMainChat(anchorIndex) {
+    if (anchorIndex === null || anchorIndex === undefined) return false;
+    try {
+        const chat = SillyTavern.getContext().chat;
+        return isMainChatMessageHidden(chat?.[anchorIndex]);
+    } catch (_) {
+        return false;
+    }
+}
+
+export function isExchangeManuallyHidden(conversation, anchorIndex) {
     const anchor = anchorIndex === undefined ? null : anchorIndex;
     return conversation.hiddenAnchors.includes(anchor);
 }
 
+export function isExchangeHidden(conversation, anchorIndex) {
+    return isExchangeManuallyHidden(conversation, anchorIndex) || isAnchorHiddenInMainChat(anchorIndex);
+}
+
 export function setExchangeHidden(conversation, anchorIndex, hidden) {
-    const has = isExchangeHidden(conversation, anchorIndex);
+    const has = isExchangeManuallyHidden(conversation, anchorIndex);
     if (hidden && !has) conversation.hiddenAnchors.push(anchorIndex);
     if (!hidden && has) conversation.hiddenAnchors = conversation.hiddenAnchors.filter(a => a !== anchorIndex);
     saveConversation();
@@ -527,7 +550,6 @@ export function setExchangeHidden(conversation, anchorIndex, hidden) {
 
 // The turns the Inner Voice remembers: every turn whose exchange is not hidden.
 export function getVisibleTurns(conversation) {
-    if (!conversation.hiddenAnchors.length) return conversation.messages;
     return conversation.messages.filter(m => !isExchangeHidden(conversation, m.anchorIndex));
 }
 

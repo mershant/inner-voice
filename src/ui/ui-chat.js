@@ -1,6 +1,6 @@
 import { I, EXT_DISPLAY, THEME_PRESETS, WIN_ID } from '../constants.js';
 import { state } from '../state.js';
-import { getSettings, saveSettings, getConversation, saveConversation, deleteMsg, truncateAfter, truncateFrom, expandMacros, getEffectiveSettings, getBindingKey, initConversation, getVisibleTurns } from '../conversation.js';
+import { getSettings, saveSettings, getConversation, saveConversation, deleteMsg, truncateAfter, truncateFrom, expandMacros, getEffectiveSettings, getBindingKey, initConversation, getVisibleTurns, isExchangeHidden, isExchangeManuallyHidden, isAnchorHiddenInMainChat, setExchangeHidden } from '../conversation.js';
 import { _dbgAdd } from '../utils/util-debug.js';
 import { escHtml, autoResize, showCustomDialog, copyText } from '../utils/util-dom.js';
 import { getCharInfo } from '../utils/util-st.js';
@@ -435,6 +435,8 @@ export function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
     const wrap = document.createElement('div');
     wrap.className = `iv-msg ${isUser ? 'iv-msg-user' : 'iv-msg-assistant'}`;
     wrap.dataset.id = msg.id;
+    wrap.dataset.anchorIndex = encodeAnchor(msg.anchorIndex);
+    if (isExchangeHidden(getConversation(), msg.anchorIndex)) wrap.classList.add('iv-exchange-hidden');
 
     const avatarWrap = document.createElement('div');
     avatarWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;flex-shrink:0';
@@ -1025,6 +1027,101 @@ export async function handleDelete(wrapEl, msg) {
     if (!conversation.messages.length) renderConversation(conversation);
 }
 
+function encodeAnchor(anchorIndex) {
+    return (anchorIndex === null || anchorIndex === undefined) ? 'none' : String(anchorIndex);
+}
+
+function decodeAnchor(value) {
+    if (value === 'none' || value === undefined || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+
+function paintHideToggle(bar, conversation, anchorIndex) {
+    const hidden = isExchangeHidden(conversation, anchorIndex);
+    const locked = isAnchorHiddenInMainChat(anchorIndex) && !isExchangeManuallyHidden(conversation, anchorIndex);
+    bar.classList.toggle('iv-exchange-hidden', hidden);
+    const label = bar.querySelector('.iv-exchange-hidden-label');
+    if (label) label.style.display = hidden ? '' : 'none';
+    const btn = bar.querySelector('.iv-hide-toggle');
+    if (btn) {
+        btn.textContent = hidden ? 'Show' : 'Hide';
+        btn.disabled = locked;
+        btn.title = locked
+            ? 'Hidden because its main-chat message is hidden'
+            : hidden ? 'Show this exchange' : 'Hide this exchange';
+    }
+}
+
+function lastRenderedAnchor(container) {
+    const bars = container.querySelectorAll('.iv-exchange-bar');
+    const lastBar = bars.length ? bars[bars.length - 1] : null;
+    return lastBar ? decodeAnchor(lastBar.dataset.anchorIndex) : Symbol('none');
+}
+
+function appendExchangeBarIfNew(container, conversation, anchorIndex) {
+    if (lastRenderedAnchor(container) === anchorIndex) return;
+    container.appendChild(createExchangeBar(conversation, anchorIndex));
+}
+
+function createExchangeBar(conversation, anchorIndex) {
+    const bar = document.createElement('div');
+    bar.className = 'iv-exchange-bar';
+    bar.dataset.anchorIndex = encodeAnchor(anchorIndex);
+
+    const label = document.createElement('span');
+    label.className = 'iv-exchange-hidden-label';
+    label.textContent = 'Hidden';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'iv-hide-toggle';
+    btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const conv = getConversation();
+        setExchangeHidden(conv, anchorIndex, !isExchangeManuallyHidden(conv, anchorIndex));
+        syncExchangeHiddenUi(conv);
+    });
+
+    bar.appendChild(label);
+    bar.appendChild(btn);
+    paintHideToggle(bar, conversation, anchorIndex);
+    return bar;
+}
+
+export function syncExchangeHiddenUi(conversation = getConversation()) {
+    const c = document.getElementById('iv-messages');
+    if (!c) return;
+    c.querySelectorAll('.iv-exchange-bar').forEach(bar => {
+        paintHideToggle(bar, conversation, decodeAnchor(bar.dataset.anchorIndex));
+    });
+    c.querySelectorAll('.iv-msg').forEach(el => {
+        el.classList.toggle('iv-exchange-hidden', isExchangeHidden(conversation, decodeAnchor(el.dataset.anchorIndex)));
+    });
+}
+
+function pruneExchangeBars() {
+    const c = document.getElementById('iv-messages');
+    if (!c) return;
+    for (const el of [...c.children]) {
+        if (!el.classList?.contains('iv-exchange-bar')) continue;
+        const next = el.nextElementSibling;
+        if (!next || !next.classList?.contains('iv-msg')) el.remove();
+    }
+}
+
+export function setupMainChatHideListener() {
+    document.addEventListener('click', e => {
+        const t = e.target;
+        if (!t || typeof t.closest !== 'function') return;
+        if (!t.closest('.mes_hide, .mes_unhide')) return;
+        setTimeout(() => {
+            import('../simulation-view.js').then(m => m.syncSimulationView()).catch(() => {});
+            syncExchangeHiddenUi();
+        }, 0);
+    });
+}
+
 export function renderConversation(conversation) {
     clearSearchHighlights();
     state.searchMatches = [];
@@ -1046,6 +1143,8 @@ export function renderConversation(conversation) {
         return;
     }
     for (const msg of conversation.messages) {
+        const anchor = msg.anchorIndex === undefined ? null : msg.anchorIndex;
+        appendExchangeBarIfNew(c, conversation, anchor);
         const el = createMsgEl(msg, handleCopy, handleEdit, handleDelete, handleMessageRegen);
         c.appendChild(el);
     }
@@ -1059,6 +1158,10 @@ export function appendMsgEl(msg, isStreamInit = false) {
     const c = document.getElementById('iv-messages');
     if (!c) return;
     c.querySelector('.iv-empty-state')?.remove();
+
+    const conversation = getConversation();
+    const anchor = msg.anchorIndex === undefined ? null : msg.anchorIndex;
+    appendExchangeBarIfNew(c, conversation, anchor);
 
     const el = createMsgEl(msg, handleCopy, handleEdit, handleDelete, handleMessageRegen);
     c.appendChild(el);
@@ -1084,6 +1187,7 @@ export function removeMsgEl(msgId) {
     const el = document.querySelector(`.iv-msg[data-id="${msgId}"]`);
     if (!el) return;
     el.remove();
+    pruneExchangeBars();
     _refreshContinueBtns();
     _refreshSwipeBars(getConversation());
 }
@@ -1095,6 +1199,7 @@ export function removeMsgElAndBelow(msgId) {
         if (el.dataset.id === msgId) found = true;
         if (found) el.remove();
     }
+    pruneExchangeBars();
     _refreshContinueBtns();
     _refreshSwipeBars(getConversation());
 }
@@ -1106,6 +1211,7 @@ export function removeMsgElAfter(msgId) {
         if (found) el.remove();
         if (el.dataset.id === msgId) found = true;
     }
+    pruneExchangeBars();
     _refreshContinueBtns();
     _refreshSwipeBars(getConversation());
 }

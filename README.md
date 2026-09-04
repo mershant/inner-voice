@@ -14,10 +14,10 @@ from this repository's history.
 
 ## Status
 
-Exchange spine (issue #3), inner memory (issue #4 / #12), and simulation view (issue #5)
-are in. Inner memory places each in-slice non-hidden exchange as an `<inner-exchange>`
-block directly below its anchor, the same form as the outgoing prompt. Remaining product
-behavior — hide UI, portray, and the drawer cleanup — lands in later issues.
+Exchange spine (issue #3), inner memory (issue #4 / #12), simulation view (issue #5),
+and hide (issue #6) are in. Inner memory places each in-slice non-hidden exchange as an
+`<inner-exchange>` block directly below its anchor, the same form as the outgoing prompt.
+Remaining product behavior — portray, and the drawer cleanup — lands in later issues.
 
 ## Development
 
