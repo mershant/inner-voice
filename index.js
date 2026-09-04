@@ -777,6 +777,7 @@ function getSettings() {
         searchHotkey: 'Ctrl+F',
         searchHotkeyEnabled: true,
         contextDepth: 15,
+        exchangeDepth: 1,
         localHistoryLimit: 50,
         connectionSource: 'default',
         connectionProfileId: '',
@@ -1031,6 +1032,7 @@ async function initConversation({ forceReset = false } = {}) {
         _conversation = emptyConversation();
         await commitConversation(true);
         _dbgAdd('CONVERSATION_FORCE_RESET', { charId, chatId, prevFileId: prevMeta?.file_id || null, newFileId: freshId });
+        refreshSimulationView();
         return;
     }
 
@@ -1090,6 +1092,7 @@ async function initConversation({ forceReset = false } = {}) {
         await commitConversation(true);
 
         toastr.error('The inner conversation file was corrupted and could not be recovered. Started fresh storage for this chat; the broken file was kept on disk for manual recovery.', EXT_DISPLAY, { timeOut: 15000 });
+        refreshSimulationView();
         return;
     }
 
@@ -1105,6 +1108,7 @@ async function initConversation({ forceReset = false } = {}) {
     if (!payload || !payload.conversation || meta?.format !== 'v5' || meta?.chat_id !== chatId) {
         await commitConversation(true);
     }
+    refreshSimulationView();
 }
 
 async function commitConversation(force = false) {
@@ -1168,11 +1172,16 @@ function getLiveEdgeIndex() {
 
 // Adds a turn at the live edge. Every new turn anchors there — thinking always
 // happens in the present.
+function refreshSimulationView() {
+    Promise.resolve().then(function () { return simulationView; }).then(m => m.syncSimulationView()).catch(() => {});
+}
+
 function addTurn(conversation, role, content, extra = {}) {
     const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ...extra };
     conversation.messages.push(msg);
     if (conversation.messages.length > 400) conversation.messages = conversation.messages.slice(-400);
     saveConversation();
+    refreshSimulationView();
     return msg;
 }
 
@@ -1208,9 +1217,9 @@ function getLiveExchange(conversation) {
 // ─── Hide ───────────────────────────────────────────────────────────────────
 // Hide is a reversible flag on an exchange (keyed by its anchor), never
 // deletion: the turns stay in the conversation and remain readable in the UI.
-// Here it removes the exchange from the inner memory payload; the simulation
-// view, depth counting, anchor-hidden propagation, and the UI toggle are
-// ticket #6.
+// Inner memory and the simulation view both skip hidden exchanges; hidden
+// exchanges also do not count toward exchange depth. The UI toggle and
+// anchor-hidden propagation are ticket #6.
 
 function isExchangeHidden(conversation, anchorIndex) {
     const anchor = anchorIndex === undefined ? null : anchorIndex;
@@ -1222,6 +1231,7 @@ function setExchangeHidden(conversation, anchorIndex, hidden) {
     if (hidden && !has) conversation.hiddenAnchors.push(anchorIndex);
     if (!hidden && has) conversation.hiddenAnchors = conversation.hiddenAnchors.filter(a => a !== anchorIndex);
     saveConversation();
+    refreshSimulationView();
 }
 
 // The turns the Inner Voice remembers: every turn whose exchange is not hidden.
@@ -1234,17 +1244,17 @@ function getVisibleTurns(conversation) {
 
 function truncateAfter(conversation, msgId) {
     const idx = conversation.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { conversation.messages.splice(idx + 1); saveConversation(); }
+    if (idx !== -1) { conversation.messages.splice(idx + 1); saveConversation(); refreshSimulationView(); }
 }
 
 function deleteMsg(conversation, msgId) {
     const idx = conversation.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { conversation.messages.splice(idx, 1); saveConversation(); }
+    if (idx !== -1) { conversation.messages.splice(idx, 1); saveConversation(); refreshSimulationView(); }
 }
 
 function truncateFrom(conversation, msgId) {
     const idx = conversation.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { conversation.messages.splice(idx); saveConversation(); }
+    if (idx !== -1) { conversation.messages.splice(idx); saveConversation(); refreshSimulationView(); }
 }
 
 // ─── Macro Expansion Helper ────────────────────────────────────────────────
@@ -2415,6 +2425,9 @@ const _SETTINGS_DEF = [
     // ── Context ───────────────────────────────────────────────────────────────
     { key: 'contextDepth', stId: 'iv-depth-slider', spId: 'iv-sp-depth-slider', type: 'slider', toVal: Number,
       stValId: 'iv-depth-val', spValId: 'iv-sp-depth-val', updCtx: true, profileKey: true },
+    { key: 'exchangeDepth', stId: 'iv-exchange-depth', spId: 'iv-sp-exchange-depth', type: 'input',
+      toVal: v => { const n = parseInt(v, 10); return Number.isFinite(n) ? Math.max(0, n) : 1; },
+      onChange: () => Promise.resolve().then(function () { return simulationView; }).then(m => m.syncSimulationView()) },
     { key: 'localHistoryLimit',   stId: 'iv-history-limit',    spId: 'iv-sp-history-limit',    type: 'input',    toVal: Number, updCtx: true, profileKey: true },
     { key: 'includeSystemPrompt', stId: 'iv-include-sysprompt', spId: 'iv-sp-include-sysprompt', type: 'checkbox', updCtx: true, profileKey: true },
     { key: 'includeUserPersonality', stId: 'iv-include-persona', spId: 'iv-sp-include-persona', type: 'checkbox', updCtx: true, profileKey: true },
@@ -8656,6 +8669,79 @@ var uiWidgets = /*#__PURE__*/Object.freeze({
     showQPIconPicker: showQPIconPicker
 });
 
+// SillyTavern in-chat injection. Depth 0 is after the last message.
+const IN_CHAT = 1;
+const SYSTEM_ROLE = 0;
+const KEY_PREFIX = 'inner_voice_exchange_';
+
+const _activeKeys = new Set();
+
+function promptKey(anchorIndex) {
+    return `${KEY_PREFIX}${anchorIndex}`;
+}
+
+function exchangeDepthOf(settings) {
+    if (settings.exchangeDepth === undefined || settings.exchangeDepth === null) return 1;
+    const n = parseInt(settings.exchangeDepth, 10);
+    return Number.isFinite(n) ? Math.max(0, n) : 1;
+}
+
+function visibleAnchoredExchanges(conversation) {
+    return getExchanges(conversation).filter(e =>
+        e.anchorIndex !== null && e.anchorIndex !== undefined
+        && !isExchangeHidden(conversation, e.anchorIndex)
+    );
+}
+
+function renderExchangeBlock(turns) {
+    const body = (turns || []).map(t => {
+        const label = t.role === 'assistant' ? '{{user}}' : 'IV';
+        return `${label}: ${t.content}`;
+    }).join('\n');
+    const explanation = "This is {{user}}'s private inner exchange — one mind talking to itself. NPCs and the World cannot perceive it. IV: is the Inner Voice; {{user}}: is {{user}}.";
+    return `<inner-exchange>\n${explanation}\n\n${body}\n</inner-exchange>`;
+}
+
+function assembleSimulationView(conversation, settings, chatLength) {
+    const n = exchangeDepthOf(settings);
+    if (n === 0 || !chatLength) return [];
+    const selected = visibleAnchoredExchanges(conversation).slice(-n);
+    return selected.map(e => ({
+        anchorIndex: e.anchorIndex,
+        depth: Math.max(0, chatLength - 1 - e.anchorIndex),
+        content: renderExchangeBlock(e.turns),
+    }));
+}
+
+function syncSimulationView() {
+    const ctx = SillyTavern.getContext();
+    if (typeof ctx.setExtensionPrompt !== 'function') return;
+
+    const conv = getConversation();
+    const settings = getEffectiveSettings();
+    const chatLength = Array.isArray(ctx.chat) ? ctx.chat.length : 0;
+    const injections = assembleSimulationView(conv, settings, chatLength);
+
+    const nextKeys = new Set();
+    for (const inj of injections) {
+        const key = promptKey(inj.anchorIndex);
+        nextKeys.add(key);
+        ctx.setExtensionPrompt(key, inj.content, IN_CHAT, inj.depth, false, SYSTEM_ROLE);
+    }
+    for (const key of _activeKeys) {
+        if (!nextKeys.has(key)) ctx.setExtensionPrompt(key, '', IN_CHAT, 0, false, SYSTEM_ROLE);
+    }
+    _activeKeys.clear();
+    for (const key of nextKeys) _activeKeys.add(key);
+}
+
+var simulationView = /*#__PURE__*/Object.freeze({
+    __proto__: null,
+    assembleSimulationView: assembleSimulationView,
+    renderExchangeBlock: renderExchangeBlock,
+    syncSimulationView: syncSimulationView
+});
+
 let extVersion = '?';
 let __extPath = null;
 
@@ -8975,6 +9061,7 @@ async function init() {
     bringWindowToFront();
 
     await onChatChanged();
+    syncSimulationView();
 
     const es = ctx.eventSource || window.eventSource;
     const et = ctx.event_types || window.event_types || {};
@@ -8983,10 +9070,12 @@ async function init() {
         es.on(et.CHAT_CHANGED || 'chat_changed', async () => {
             await onChatChanged();
             renderConversation(getConversation());
+            syncSimulationView();
         });
         es.on(et.CHARACTER_SELECTED || 'character_selected', async () => {
             await onChatChanged();
             renderConversation(getConversation());
+            syncSimulationView();
         });
         es.on(et.APP_READY || 'app_ready', () => {
             updateProfilesList();
@@ -9015,7 +9104,14 @@ async function init() {
         ];
 
         dynEvents.forEach(e => {
-            if (e) es.on(e, updateDepthSlidersMax);
+            if (e) es.on(e, () => {
+                updateDepthSlidersMax();
+                syncSimulationView();
+            });
+        });
+
+        es.on(et.GENERATION_AFTER_COMMANDS || 'generation_after_commands', () => {
+            syncSimulationView();
         });
     }
 

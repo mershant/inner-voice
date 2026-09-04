@@ -11,6 +11,7 @@ import { setupChatPickerListeners, onChatChanged, updateDepthSlidersMax, renderC
 import { checkChangelogAutoShow, setupChangelogListeners, openInspector, renderQuickPromptsBar } from './ui/ui-widgets.js';
 
 import * as apiMod from './api.js';
+import { syncSimulationView } from './simulation-view.js';
 
 export let extVersion = '?';
 export let __extPath = null;
@@ -331,6 +332,7 @@ async function init() {
     bringWindowToFront();
 
     await onChatChanged();
+    syncSimulationView();
 
     const es = ctx.eventSource || window.eventSource;
     const et = ctx.event_types || window.event_types || {};
@@ -339,10 +341,12 @@ async function init() {
         es.on(et.CHAT_CHANGED || 'chat_changed', async () => {
             await onChatChanged();
             renderConversation(getConversation());
+            syncSimulationView();
         });
         es.on(et.CHARACTER_SELECTED || 'character_selected', async () => {
             await onChatChanged();
             renderConversation(getConversation());
+            syncSimulationView();
         });
         es.on(et.APP_READY || 'app_ready', () => {
             updateProfilesList();
@@ -371,7 +375,14 @@ async function init() {
         ];
 
         dynEvents.forEach(e => {
-            if (e) es.on(e, updateDepthSlidersMax);
+            if (e) es.on(e, () => {
+                updateDepthSlidersMax();
+                syncSimulationView();
+            });
+        });
+
+        es.on(et.GENERATION_AFTER_COMMANDS || 'generation_after_commands', () => {
+            syncSimulationView();
         });
     }
 

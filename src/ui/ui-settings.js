@@ -76,6 +76,9 @@ const _SETTINGS_DEF = [
     // ── Context ───────────────────────────────────────────────────────────────
     { key: 'contextDepth', stId: 'iv-depth-slider', spId: 'iv-sp-depth-slider', type: 'slider', toVal: Number,
       stValId: 'iv-depth-val', spValId: 'iv-sp-depth-val', updCtx: true, profileKey: true },
+    { key: 'exchangeDepth', stId: 'iv-exchange-depth', spId: 'iv-sp-exchange-depth', type: 'input',
+      toVal: v => { const n = parseInt(v, 10); return Number.isFinite(n) ? Math.max(0, n) : 1; },
+      onChange: () => import('../simulation-view.js').then(m => m.syncSimulationView()) },
     { key: 'localHistoryLimit',   stId: 'iv-history-limit',    spId: 'iv-sp-history-limit',    type: 'input',    toVal: Number, updCtx: true, profileKey: true },
     { key: 'includeSystemPrompt', stId: 'iv-include-sysprompt', spId: 'iv-sp-include-sysprompt', type: 'checkbox', updCtx: true, profileKey: true },
     { key: 'includeUserPersonality', stId: 'iv-include-persona', spId: 'iv-sp-include-persona', type: 'checkbox', updCtx: true, profileKey: true },

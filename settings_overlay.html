@@ -140,6 +140,15 @@
         </div>
 
         <div class="iv-sp-group">
+          <div class="iv-sp-group-title"><i class="fa-solid fa-eye"></i> Simulation view</div>
+          <div class="iv-sp-field">
+            <label class="iv-sp-label">Exchange Depth</label>
+            <div class="iv-sp-hint" style="margin-bottom:6px">How many recent inner exchanges the main chat sees. 1 is only the latest.</div>
+            <input type="number" class="iv-sp-input" id="iv-sp-exchange-depth" placeholder="1" min="0" max="50">
+          </div>
+        </div>
+
+        <div class="iv-sp-group">
           <div class="iv-sp-group-title"><i class="fa-solid fa-box-archive"></i> Context Payload</div>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-include-sysprompt"><span>Include ST System Prompt</span></label>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-include-persona"><span>Include User Persona</span></label>

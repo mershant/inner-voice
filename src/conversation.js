@@ -68,6 +68,7 @@ export function getSettings() {
         searchHotkey: 'Ctrl+F',
         searchHotkeyEnabled: true,
         contextDepth: 15,
+        exchangeDepth: 1,
         localHistoryLimit: 50,
         connectionSource: 'default',
         connectionProfileId: '',
@@ -322,6 +323,7 @@ export async function initConversation({ forceReset = false } = {}) {
         _conversation = emptyConversation();
         await commitConversation(true);
         _dbgAdd('CONVERSATION_FORCE_RESET', { charId, chatId, prevFileId: prevMeta?.file_id || null, newFileId: freshId });
+        refreshSimulationView();
         return;
     }
 
@@ -381,6 +383,7 @@ export async function initConversation({ forceReset = false } = {}) {
         await commitConversation(true);
 
         toastr.error('The inner conversation file was corrupted and could not be recovered. Started fresh storage for this chat; the broken file was kept on disk for manual recovery.', EXT_DISPLAY, { timeOut: 15000 });
+        refreshSimulationView();
         return;
     }
 
@@ -396,6 +399,7 @@ export async function initConversation({ forceReset = false } = {}) {
     if (!payload || !payload.conversation || meta?.format !== 'v5' || meta?.chat_id !== chatId) {
         await commitConversation(true);
     }
+    refreshSimulationView();
 }
 
 export async function commitConversation(force = false) {
@@ -459,11 +463,16 @@ export function getLiveEdgeIndex() {
 
 // Adds a turn at the live edge. Every new turn anchors there — thinking always
 // happens in the present.
+function refreshSimulationView() {
+    import('./simulation-view.js').then(m => m.syncSimulationView()).catch(() => {});
+}
+
 export function addTurn(conversation, role, content, extra = {}) {
     const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ...extra };
     conversation.messages.push(msg);
     if (conversation.messages.length > 400) conversation.messages = conversation.messages.slice(-400);
     saveConversation();
+    refreshSimulationView();
     return msg;
 }
 
@@ -499,9 +508,9 @@ export function getLiveExchange(conversation) {
 // ─── Hide ───────────────────────────────────────────────────────────────────
 // Hide is a reversible flag on an exchange (keyed by its anchor), never
 // deletion: the turns stay in the conversation and remain readable in the UI.
-// Here it removes the exchange from the inner memory payload; the simulation
-// view, depth counting, anchor-hidden propagation, and the UI toggle are
-// ticket #6.
+// Inner memory and the simulation view both skip hidden exchanges; hidden
+// exchanges also do not count toward exchange depth. The UI toggle and
+// anchor-hidden propagation are ticket #6.
 
 export function isExchangeHidden(conversation, anchorIndex) {
     const anchor = anchorIndex === undefined ? null : anchorIndex;
@@ -513,6 +522,7 @@ export function setExchangeHidden(conversation, anchorIndex, hidden) {
     if (hidden && !has) conversation.hiddenAnchors.push(anchorIndex);
     if (!hidden && has) conversation.hiddenAnchors = conversation.hiddenAnchors.filter(a => a !== anchorIndex);
     saveConversation();
+    refreshSimulationView();
 }
 
 // The turns the Inner Voice remembers: every turn whose exchange is not hidden.
@@ -525,17 +535,17 @@ export function getVisibleTurns(conversation) {
 
 export function truncateAfter(conversation, msgId) {
     const idx = conversation.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { conversation.messages.splice(idx + 1); saveConversation(); }
+    if (idx !== -1) { conversation.messages.splice(idx + 1); saveConversation(); refreshSimulationView(); }
 }
 
 export function deleteMsg(conversation, msgId) {
     const idx = conversation.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { conversation.messages.splice(idx, 1); saveConversation(); }
+    if (idx !== -1) { conversation.messages.splice(idx, 1); saveConversation(); refreshSimulationView(); }
 }
 
 export function truncateFrom(conversation, msgId) {
     const idx = conversation.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { conversation.messages.splice(idx); saveConversation(); }
+    if (idx !== -1) { conversation.messages.splice(idx); saveConversation(); refreshSimulationView(); }
 }
 
 // ─── Macro Expansion Helper ────────────────────────────────────────────────
