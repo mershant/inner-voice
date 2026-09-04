@@ -1739,7 +1739,8 @@ export function setupChatPickerListeners() {
 
 export function setGeneratingState(on) {
     const bar = document.getElementById('iv-thinking-bar'), sendBtn = document.getElementById('iv-send-btn'),
-          input = document.getElementById('iv-input'), regenBtn = document.getElementById('iv-regen-btn');
+          input = document.getElementById('iv-input'), regenBtn = document.getElementById('iv-regen-btn'),
+          portrayBtn = document.getElementById('iv-portray-btn');
     if (bar) {
         bar.style.display = on ? 'flex' : 'none';
         if (on) {
@@ -1750,6 +1751,7 @@ export function setGeneratingState(on) {
     if (sendBtn) sendBtn.disabled = on;
     if (input) input.disabled = on;
     if (regenBtn) regenBtn.disabled = on;
+    if (portrayBtn) portrayBtn.disabled = on;
     if (!on) {
         _refreshContinueBtns();
         _refreshSwipeBars(getConversation());

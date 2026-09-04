@@ -134,6 +134,8 @@ export function getSettings() {
         useAspectEvolutia: true,
         autoExpandMacros: false,
         includeHiddenMessages: false,
+        portrayStyle: 'rp',
+        portrayPerson: 'first',
     };
     for (const [k, v] of Object.entries(defaults)) {
         if (s[k] === undefined) s[k] = v;

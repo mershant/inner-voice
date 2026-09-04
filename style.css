@@ -521,6 +521,16 @@
 .iv-action-btn:hover { color: var(--iv-accent); background: var(--iv-accent-bg); border-color: var(--iv-accent-dim); }
 .iv-action-btn:disabled { opacity: 0.3; cursor: default; pointer-events: none; }
 .iv-action-btn svg { overflow: visible; flex-shrink: 0; }
+.iv-portray-controls {
+    display: flex; align-items: center; gap: 4px; min-width: 0;
+}
+.iv-portray-select {
+    max-width: 88px; height: 22px; padding: 0 4px;
+    border-radius: 5px; font-size: 10px; font-family: var(--iv-font);
+    background: var(--iv-input-bg); color: var(--iv-text-muted);
+    border: var(--iv-border); outline: none;
+}
+.iv-portray-select:focus { color: var(--iv-text); border-color: var(--iv-accent-dim); }
 .iv-flex-grow { flex: 1; }
 .iv-msg-count { font-size: 10px; color: var(--iv-text-muted); }
 

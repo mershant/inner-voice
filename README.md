@@ -15,9 +15,10 @@ from this repository's history.
 ## Status
 
 Exchange spine (issue #3), inner memory (issue #4 / #12), simulation view (issue #5),
-and hide (issue #6) are in. Inner memory places each in-slice non-hidden exchange as an
-`<inner-exchange>` block directly below its anchor, the same form as the outgoing prompt.
-Remaining product behavior — portray, and the drawer cleanup — lands in later issues.
+hide (issue #6), and manual portray (issue #7) are in. Portray writes {{user}}'s next
+main-chat input from present inner state into the input box without sending.
+Remaining product behavior — portray auto-trigger and immediate send, and the drawer
+cleanup — lands in later issues.
 
 ## Development
 

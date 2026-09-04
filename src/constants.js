@@ -141,6 +141,12 @@ Process: Output \`tool_call\` JSON block -> Receive result -> Finalize response.
 </output_format>`,
 ];
 
+export const DEFAULT_PORTRAY_PROMPT = `Write {{user}}'s next turn in the simulation from what they presently hold.
+
+What they presently hold is already in front of you: the scene so far, who they are, and any private thinking that sits under the latest moment. When private thinking is there, the turn comes from its feelings, plans, and conclusions. When it is not, the turn comes from their standing state in the scene.
+
+This turn is only {{user}}'s own actions and spoken words. No other person acts, speaks, or is narrated here. The private thinking itself is not the turn — the turn is what {{user}} now does and says in the scene.`;
+
 export const DEFAULT_TOOLS_PROMPT = `Your tools reach the parts of your memory that are not in front of you right now. When a thought turns to a moment outside the visible slice — an old scene, an exact line, how long ago something happened — fetch it instead of assuming the visible slice is all there is. The fetching is silent; what comes back is simply you remembering.
 
 Process: Output \`tool_call\` JSON block -> Receive result -> Finalize response. You may chain tools sequentially.

@@ -149,6 +149,26 @@
         </div>
 
         <div class="iv-sp-group">
+          <div class="iv-sp-group-title"><i class="fa-solid fa-pen"></i> Portray form</div>
+          <div class="iv-sp-hint" style="margin-bottom:6px">Stored defaults for how a portray is written. The window can change them for one press without saving.</div>
+          <div class="iv-sp-field">
+            <label class="iv-sp-label">Style</label>
+            <select class="iv-sp-input" id="iv-sp-portray-style">
+              <option value="rp">RP-style</option>
+              <option value="summary">Written summary</option>
+            </select>
+          </div>
+          <div class="iv-sp-field">
+            <label class="iv-sp-label">Person</label>
+            <select class="iv-sp-input" id="iv-sp-portray-person">
+              <option value="first">First person</option>
+              <option value="second">Second person</option>
+              <option value="third">Third person</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="iv-sp-group">
           <div class="iv-sp-group-title"><i class="fa-solid fa-box-archive"></i> Context Payload</div>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-include-sysprompt"><span>Include ST System Prompt</span></label>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-include-persona"><span>Include User Persona</span></label>

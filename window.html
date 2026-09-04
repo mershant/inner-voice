@@ -51,6 +51,18 @@
     <div class="iv-actions-bar">
         <button class="iv-action-btn" id="iv-inspect-btn" title="View raw context payload">${I.search}<span>Context</span></button>
         <button class="iv-action-btn" id="iv-regen-btn" title="Regenerate last response">${I.refresh}<span>Regen</span></button>
+        <div class="iv-portray-controls">
+            <select id="iv-fire-portray-style" class="iv-portray-select" title="Portray style for this press">
+                <option value="rp">RP-style</option>
+                <option value="summary">Summary</option>
+            </select>
+            <select id="iv-fire-portray-person" class="iv-portray-select" title="Portray person for this press">
+                <option value="first">First</option>
+                <option value="second">Second</option>
+                <option value="third">Third</option>
+            </select>
+            <button class="iv-action-btn" id="iv-portray-btn" title="Write {{user}}'s next main-chat input from present inner state">${I.user}<span>Portray</span></button>
+        </div>
         <button class="iv-action-btn iv-qp-toggle-action" id="iv-qp-toggle-btn" title="Quick Prompts">${I.lightning}</button>
         <div class="iv-flex-grow"></div>
         <span class="iv-token-count" id="iv-token-count" title="Estimated payload tokens"></span>

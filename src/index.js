@@ -12,6 +12,7 @@ import { checkChangelogAutoShow, setupChangelogListeners, openInspector, renderQ
 
 import * as apiMod from './api.js';
 import { syncSimulationView } from './simulation-view.js';
+import { readFireTimePortrayForm, runPortray } from './portray.js';
 
 export let extVersion = '?';
 export let __extPath = null;
@@ -161,6 +162,9 @@ function attachWindowListeners() {
     });
 
     document.getElementById('iv-inspect-btn')?.addEventListener('click', () => openInspector());
+    document.getElementById('iv-portray-btn')?.addEventListener('click', () => {
+        runPortray(readFireTimePortrayForm()).catch(console.error);
+    });
 
     const qpBar = document.getElementById('iv-qp-bar');
     if (qpBar) {

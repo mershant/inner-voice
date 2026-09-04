@@ -79,6 +79,10 @@ const _SETTINGS_DEF = [
     { key: 'exchangeDepth', stId: 'iv-exchange-depth', spId: 'iv-sp-exchange-depth', type: 'input',
       toVal: v => { const n = parseInt(v, 10); return Number.isFinite(n) ? Math.max(0, n) : 1; },
       onChange: () => import('../simulation-view.js').then(m => m.syncSimulationView()) },
+    { key: 'portrayStyle', stId: 'iv-portray-style', spId: 'iv-sp-portray-style', type: 'select',
+      onChange: () => import('../portray.js').then(m => m.syncFireTimePortrayForm()) },
+    { key: 'portrayPerson', stId: 'iv-portray-person', spId: 'iv-sp-portray-person', type: 'select',
+      onChange: () => import('../portray.js').then(m => m.syncFireTimePortrayForm()) },
     { key: 'localHistoryLimit',   stId: 'iv-history-limit',    spId: 'iv-sp-history-limit',    type: 'input',    toVal: Number, updCtx: true, profileKey: true },
     { key: 'includeSystemPrompt', stId: 'iv-include-sysprompt', spId: 'iv-sp-include-sysprompt', type: 'checkbox', updCtx: true, profileKey: true },
     { key: 'includeUserPersonality', stId: 'iv-include-persona', spId: 'iv-sp-include-persona', type: 'checkbox', updCtx: true, profileKey: true },
@@ -609,6 +613,7 @@ export function updateSettingsUI() {
     });
     _applyConnectionSourceVisibility(s.connectionSource ?? 'default');
     refreshProfilesDropdown(); buildThemeEditor();
+    import('../portray.js').then(m => m.syncFireTimePortrayForm());
     import('./ui-window.js').then(m => m._setupBgUpload('iv-bg-upload-btn', 'iv-bg-url', () => _syncBgToOverlay()));
     import('./ui-widgets.js').then(m => m.buildSoundSettingsUI(document.getElementById('iv-sound-settings')));
 }

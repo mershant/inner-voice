@@ -141,6 +141,12 @@ Process: Output \`tool_call\` JSON block -> Receive result -> Finalize response.
 </output_format>`,
 ];
 
+const DEFAULT_PORTRAY_PROMPT = `Write {{user}}'s next turn in the simulation from what they presently hold.
+
+What they presently hold is already in front of you: the scene so far, who they are, and any private thinking that sits under the latest moment. When private thinking is there, the turn comes from its feelings, plans, and conclusions. When it is not, the turn comes from their standing state in the scene.
+
+This turn is only {{user}}'s own actions and spoken words. No other person acts, speaks, or is narrated here. The private thinking itself is not the turn — the turn is what {{user}} now does and says in the scene.`;
+
 const DEFAULT_TOOLS_PROMPT = `Your tools reach the parts of your memory that are not in front of you right now. When a thought turns to a moment outside the visible slice — an old scene, an exact line, how long ago something happened — fetch it instead of assuming the visible slice is all there is. The fetching is silent; what comes back is simply you remembering.
 
 Process: Output \`tool_call\` JSON block -> Receive result -> Finalize response. You may chain tools sequentially.
@@ -843,6 +849,8 @@ function getSettings() {
         useAspectEvolutia: true,
         autoExpandMacros: false,
         includeHiddenMessages: false,
+        portrayStyle: 'rp',
+        portrayPerson: 'first',
     };
     for (const [k, v] of Object.entries(defaults)) {
         if (s[k] === undefined) s[k] = v;
@@ -2452,6 +2460,10 @@ const _SETTINGS_DEF = [
     { key: 'exchangeDepth', stId: 'iv-exchange-depth', spId: 'iv-sp-exchange-depth', type: 'input',
       toVal: v => { const n = parseInt(v, 10); return Number.isFinite(n) ? Math.max(0, n) : 1; },
       onChange: () => Promise.resolve().then(function () { return simulationView; }).then(m => m.syncSimulationView()) },
+    { key: 'portrayStyle', stId: 'iv-portray-style', spId: 'iv-sp-portray-style', type: 'select',
+      onChange: () => Promise.resolve().then(function () { return portray; }).then(m => m.syncFireTimePortrayForm()) },
+    { key: 'portrayPerson', stId: 'iv-portray-person', spId: 'iv-sp-portray-person', type: 'select',
+      onChange: () => Promise.resolve().then(function () { return portray; }).then(m => m.syncFireTimePortrayForm()) },
     { key: 'localHistoryLimit',   stId: 'iv-history-limit',    spId: 'iv-sp-history-limit',    type: 'input',    toVal: Number, updCtx: true, profileKey: true },
     { key: 'includeSystemPrompt', stId: 'iv-include-sysprompt', spId: 'iv-sp-include-sysprompt', type: 'checkbox', updCtx: true, profileKey: true },
     { key: 'includeUserPersonality', stId: 'iv-include-persona', spId: 'iv-sp-include-persona', type: 'checkbox', updCtx: true, profileKey: true },
@@ -2982,6 +2994,7 @@ function updateSettingsUI() {
     });
     _applyConnectionSourceVisibility(s.connectionSource ?? 'default');
     refreshProfilesDropdown(); buildThemeEditor();
+    Promise.resolve().then(function () { return portray; }).then(m => m.syncFireTimePortrayForm());
     Promise.resolve().then(function () { return uiWindow; }).then(m => m._setupBgUpload('iv-bg-upload-btn', 'iv-bg-url', () => _syncBgToOverlay()));
     Promise.resolve().then(function () { return uiWidgets; }).then(m => m.buildSoundSettingsUI(document.getElementById('iv-sound-settings')));
 }
@@ -5481,7 +5494,8 @@ function setupChatPickerListeners() {
 
 function setGeneratingState(on) {
     const bar = document.getElementById('iv-thinking-bar'), sendBtn = document.getElementById('iv-send-btn'),
-          input = document.getElementById('iv-input'), regenBtn = document.getElementById('iv-regen-btn');
+          input = document.getElementById('iv-input'), regenBtn = document.getElementById('iv-regen-btn'),
+          portrayBtn = document.getElementById('iv-portray-btn');
     if (bar) {
         bar.style.display = on ? 'flex' : 'none';
         if (on) {
@@ -5492,6 +5506,7 @@ function setGeneratingState(on) {
     if (sendBtn) sendBtn.disabled = on;
     if (input) input.disabled = on;
     if (regenBtn) regenBtn.disabled = on;
+    if (portrayBtn) portrayBtn.disabled = on;
     if (!on) {
         _refreshContinueBtns();
         _refreshSwipeBars(getConversation());
@@ -6886,9 +6901,9 @@ async function estimateTokens(text) {
     }
 }
 
-async function callGenerate(conversation, settings, pendingText, onChunk) {
+async function callGenerate(conversation, settings, pendingText, onChunk, messagesOverride) {
     const ctx = SillyTavern.getContext();
-    const messages = await assembleMessages(conversation, settings, pendingText);
+    const messages = messagesOverride || await assembleMessages(conversation, settings, pendingText);
     const maxTokens = parseInt(settings.maxTokens) || 8200;
 
     const abort = new AbortController();
@@ -8874,6 +8889,130 @@ var uiWidgets = /*#__PURE__*/Object.freeze({
     showQPIconPicker: showQPIconPicker
 });
 
+const PORTRAY_STYLES = ['rp', 'summary'];
+const PORTRAY_PERSONS = ['first', 'second', 'third'];
+
+function pickAllowed(value, allowed, fallback) {
+    return allowed.includes(value) ? value : fallback;
+}
+
+function resolvePortrayForm(settings, override = {}) {
+    const storedStyle = pickAllowed(settings?.portrayStyle, PORTRAY_STYLES, 'rp');
+    const storedPerson = pickAllowed(settings?.portrayPerson, PORTRAY_PERSONS, 'first');
+    return {
+        style: pickAllowed(override.style, PORTRAY_STYLES, storedStyle),
+        person: pickAllowed(override.person, PORTRAY_PERSONS, storedPerson),
+    };
+}
+
+function buildPortrayInstruction(form) {
+    const styleLine = form.style === 'summary'
+        ? 'Write the feeling and intent as narration, without quoted speech.'
+        : 'Write it as spoken words and bodily action, the way a turn in the simulation is written.';
+    const personLine = form.person === 'second'
+        ? 'Write in second person, addressing {{user}} as you.'
+        : form.person === 'third'
+            ? 'Write in third person, {{user}} as they appear in the scene.'
+            : 'Write in first person, as {{user}} living it.';
+    return `Write {{user}}'s next turn now.\n\n${styleLine}\n\n${personLine}`;
+}
+
+function portrayRequestSettings(settings) {
+    return {
+        ...settings,
+        systemPrompt: DEFAULT_PORTRAY_PROMPT,
+        memoryEnabled: false,
+    };
+}
+
+function withoutToolModules(messages) {
+    return messages.map(m => {
+        if (m.role !== 'system' || typeof m.content !== 'string') return m;
+        return { ...m, content: m.content.replace(/\n*<modules>[\s\S]*?<\/modules>/g, '') };
+    });
+}
+
+async function assemblePortrayMessages(conversation, settings, formOverride) {
+    const form = resolvePortrayForm(settings, formOverride);
+    const messages = await assembleMessages(
+        conversation,
+        portrayRequestSettings(settings),
+        buildPortrayInstruction(form),
+    );
+    return withoutToolModules(messages);
+}
+
+function readFireTimePortrayForm() {
+    return {
+        style: document.getElementById('iv-fire-portray-style')?.value,
+        person: document.getElementById('iv-fire-portray-person')?.value,
+    };
+}
+
+function syncFireTimePortrayForm() {
+    const form = resolvePortrayForm(getSettings());
+    const styleEl = document.getElementById('iv-fire-portray-style');
+    const personEl = document.getElementById('iv-fire-portray-person');
+    if (styleEl) styleEl.value = form.style;
+    if (personEl) personEl.value = form.person;
+}
+
+function routePortrayToInput(text) {
+    const ta = document.getElementById('send_textarea');
+    if (!ta) return;
+    ta.value = text;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+async function runPortray(formOverride = {}, { generate } = {}) {
+    if (state.generating) return null;
+    const settings = getEffectiveSettings();
+    const conversation = getConversation();
+    const messages = await assemblePortrayMessages(conversation, settings, formOverride);
+    const generateFn = generate || ((conv, reqSettings, pendingText, payload) =>
+        callGenerate(conv, reqSettings, pendingText, undefined, payload));
+
+    state.generating = true;
+    try {
+        const { setGeneratingState } = await Promise.resolve().then(function () { return uiChat; });
+        setGeneratingState(true);
+        const thinking = document.getElementById('iv-thinking-text');
+        if (thinking) thinking.textContent = 'Portraying…';
+        const result = await generateFn(
+            conversation,
+            portrayRequestSettings(settings),
+            buildPortrayInstruction(resolvePortrayForm(settings, formOverride)),
+            messages,
+        );
+        const text = result && typeof result.text === 'string' ? result.text.trim() : '';
+        if (text) routePortrayToInput(text);
+        return result;
+    } catch (err) {
+        const { showGenerationError } = await Promise.resolve().then(function () { return uiChat; });
+        showGenerationError(err);
+        return null;
+    } finally {
+        state.generating = false;
+        try {
+            const { setGeneratingState } = await Promise.resolve().then(function () { return uiChat; });
+            setGeneratingState(false);
+        } catch (_) { /* UI may be absent in unit tests */ }
+    }
+}
+
+var portray = /*#__PURE__*/Object.freeze({
+    __proto__: null,
+    PORTRAY_PERSONS: PORTRAY_PERSONS,
+    PORTRAY_STYLES: PORTRAY_STYLES,
+    assemblePortrayMessages: assemblePortrayMessages,
+    buildPortrayInstruction: buildPortrayInstruction,
+    readFireTimePortrayForm: readFireTimePortrayForm,
+    resolvePortrayForm: resolvePortrayForm,
+    routePortrayToInput: routePortrayToInput,
+    runPortray: runPortray,
+    syncFireTimePortrayForm: syncFireTimePortrayForm
+});
+
 let extVersion = '?';
 let __extPath = null;
 
@@ -9022,6 +9161,9 @@ function attachWindowListeners() {
     });
 
     document.getElementById('iv-inspect-btn')?.addEventListener('click', () => openInspector());
+    document.getElementById('iv-portray-btn')?.addEventListener('click', () => {
+        runPortray(readFireTimePortrayForm()).catch(console.error);
+    });
 
     const qpBar = document.getElementById('iv-qp-bar');
     if (qpBar) {

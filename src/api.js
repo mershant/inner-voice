@@ -257,9 +257,9 @@ export async function estimateTokens(text) {
     }
 }
 
-export async function callGenerate(conversation, settings, pendingText, onChunk) {
+export async function callGenerate(conversation, settings, pendingText, onChunk, messagesOverride) {
     const ctx = SillyTavern.getContext();
-    const messages = await assembleMessages(conversation, settings, pendingText);
+    const messages = messagesOverride || await assembleMessages(conversation, settings, pendingText);
     const maxTokens = parseInt(settings.maxTokens) || 8200;
 
     const abort = new AbortController();
