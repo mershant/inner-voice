@@ -1,0 +1,12 @@
+{
+    "display_name": "Copilot (ST) Image Dev",
+    "loading_order": 60,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Experimental STD fork. Upstream: QQ-Corporation",
+    "version": "2.9.0-image-dev",
+    "homePage": "https://github.com/Supker/ST-Copilot",
+    "auto_update": false
+}

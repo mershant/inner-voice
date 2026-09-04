@@ -1,0 +1,19 @@
+{
+  "name": "st-copilot-image-dev",
+  "version": "2.9.0-image-dev",
+  "description": "Experimental ST-Copilot fork with LinkAPI image generation. Upstream ST-Copilot remains separately authored.",
+  "main": "index.js",
+  "scripts": {
+    "build": "rollup -c",
+    "dev": "rollup -c -w",
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [],
+  "author": "Experimental fork for STD testing. Upstream ST-Copilot: Quaren / QQ-Corporation.",
+  "license": "MIT",
+  "type": "module",
+  "devDependencies": {
+    "@rollup/plugin-terser": "^1.0.0",
+    "rollup": "^4.61.1"
+  }
+}
