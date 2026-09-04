@@ -9,7 +9,7 @@ The concept descends from the Self family (`/self`, `s:`, `/selfq`, `sq:`, `sr:`
 ## Language
 
 **Inner Voice**:
-The guiding second voice that speaks privately with {{user}}. {{user}} experiences the Inner Voice as their own mind — arguing with it, planning with it, or recalling with it is talking to themselves. NPCs and the World never perceive it. The extension carries the same name.
+The guiding second voice that speaks privately with {{user}}. {{user}} experiences the Inner Voice as their own mind — arguing with it, planning with it, or recalling with it is talking to themselves. NPCs and the World never perceive it. The extension carries the same name. In the extension chat, the player speaks as the Inner Voice and the model answers as {{user}} in first person — never as an assistant describing {{user}} from outside.
 
 **Simulation**:
 The living scene the main chat runs. Inner Voice work always says simulation, never roleplay.
