@@ -1,6 +1,6 @@
 import { THEME_PRESETS, THEME_VAR_DEFS, THEME_CSS_MAP, EXT_DISPLAY, DEFAULT_SYSTEM_PROMPT, DEFAULT_TOOLS_PROMPT, DEFAULT_MEMORY_PROMPT, I } from '../constants.js';
 import { state } from '../state.js';
-import { getSettings, saveSettings, getEffectiveSettings, setSessionOverride, clearAllSessionOverrides, getBindingKey, hasSessionOverrides, saveSessionsToMetadata, getCurrentSession, getSessionOverrides, getChatBucket, initChatBucket } from '../session.js';
+import { getSettings, saveSettings, getEffectiveSettings, setConversationOverride, clearAllConversationOverrides, getBindingKey, hasConversationOverrides, saveConversation, getConversation, getConversationOverrides, initConversation } from '../conversation.js';
 import { showCustomDialog, escHtml } from '../utils/util-dom.js';
 import { applyCustomTheme, bringWindowToFront } from './ui-window.js';
 import { showColorPicker } from '../utils/util-colorpicker.js';
@@ -241,7 +241,7 @@ export async function updateSPConnProfileList() {
         const isOv = sid === 'iv-sp-ov-conn-profile';
         let targetVal = isOv ? (eff.connectionProfileId || '') : (s.connectionProfileId || '');
         if (targetVal && !profiles.some(p => p.id === targetVal)) {
-            if (isOv) setSessionOverride('connectionProfileId', undefined); else { s.connectionProfileId = ''; saveSettings(); }
+            if (isOv) setConversationOverride('connectionProfileId', undefined); else { s.connectionProfileId = ''; saveSettings(); }
             targetVal = '';
         }
         sel.innerHTML = '<option value="">-- Select Profile --</option>';
@@ -468,20 +468,16 @@ function _applyConnectionSourceVisibility(val) {
 }
 
 function _pruneMatchingOverrides() {
-    const s = getSettings(); const bucket = getChatBucket(); let changed = false;
-    
-    if (bucket && bucket.sessions) {
-        bucket.sessions.forEach(sess => {
-            if (!sess.overrides) return;
-            for (const key of Object.keys(sess.overrides)) {
-                const globalVal = s[key];
-                const isEqual = typeof globalVal === 'boolean' ? sess.overrides[key] === globalVal : String(sess.overrides[key]) === String(globalVal);
-                if (isEqual) { delete sess.overrides[key]; changed = true; }
-            }
-        });
-        if (changed) { saveSessionsToMetadata(); updateSessionOverrideIndicator(); }
-    }
+    const s = getSettings(); const conv = getConversation(); let changed = false;
 
+    if (conv && conv.overrides) {
+        for (const key of Object.keys(conv.overrides)) {
+            const globalVal = s[key];
+            const isEqual = typeof globalVal === 'boolean' ? conv.overrides[key] === globalVal : String(conv.overrides[key]) === String(globalVal);
+            if (isEqual) { delete conv.overrides[key]; changed = true; }
+        }
+        if (changed) { saveConversation(); updateConversationOverrideIndicator(); }
+    }
 }
 
 function _readFromSettings(def) {
@@ -505,7 +501,7 @@ function _bindSetting(def) {
         getSettings()[def.key] = val; saveSettings();
         _markDirty('config'); _pruneMatchingOverrides();
         if (def.onChange) def.onChange(val, getSettings());
-        if (def.updCtx) import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession()));
+        if (def.updCtx) import('./ui-chat.js').then(m => m.updateMsgCount(getConversation()));
     };
 
     if (def.type === 'slider') {
@@ -536,9 +532,9 @@ function _syncOvToGlobal(key, newVal) {
     const globalVal = s[key];
     const isDefault = (newVal === undefined || newVal === null) ? true
         : (typeof globalVal === 'boolean' ? newVal === globalVal : String(newVal) === String(globalVal));
-    setSessionOverride(key, isDefault ? undefined : newVal);
+    setConversationOverride(key, isDefault ? undefined : newVal);
     updateSPOverrideIndicators();
-    import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession()));
+    import('./ui-chat.js').then(m => m.updateMsgCount(getConversation()));
 }
 
 function _resetOvElToEffective(key) {
@@ -582,12 +578,12 @@ export function syncOverlayUI(key, val) {
     if (key === 'forceStreaming') {
         const sv = val === true ? 'on' : (val === false ? 'auto' : (val || 'auto'));
         document.querySelectorAll('.iv-stream-btn:not(.iv-ov-stream-btn)').forEach(b => b.classList.toggle('active', b.dataset.stream === sv));
-        if (!('forceStreaming' in getSessionOverrides())) document.querySelectorAll('.iv-ov-stream-btn').forEach(b => b.classList.toggle('active', b.dataset.stream === sv));
+        if (!('forceStreaming' in getConversationOverrides())) document.querySelectorAll('.iv-ov-stream-btn').forEach(b => b.classList.toggle('active', b.dataset.stream === sv));
         return;
     }
     if (key === 'connectionSource') { _applyConnectionSourceVisibility(val); return; }
     if (key === 'contextDepth') { const dv = document.getElementById('iv-sp-depth-val'); if (dv) dv.textContent = val ?? 15; }
-    if (key in getSessionOverrides()) return;
+    if (key in getConversationOverrides()) return;
     if (_OV_EL_MAP[key]) _resetOvElToEffective(key);
 }
 
@@ -615,7 +611,7 @@ export function updateSettingsUI() {
 }
 
 export function syncSPFromSettings() {
-    const s = getSettings(); const ov = getSessionOverrides(); const eff = getEffectiveSettings();
+    const s = getSettings(); const ov = getConversationOverrides(); const eff = getEffectiveSettings();
     import('./ui-chat.js').then(m => { if (m.updateDepthSlidersMax) m.updateDepthSlidersMax(); });
 
     for (const def of _SETTINGS_DEF) {
@@ -630,7 +626,7 @@ export function syncSPFromSettings() {
     _applyConnectionSourceVisibility(s.connectionSource ?? 'default');
     refreshSPProfilesDropdown(); updateSPConnProfileList();
 
-    // ── Session Override UI ──
+    // ── Conversation Override UI ──
     const g  = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
     const gC = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
 
@@ -664,22 +660,22 @@ export function syncSPFromSettings() {
 }
 
 export function updateSPOverrideIndicators() {
-    const ov = getSessionOverrides();
+    const ov = getConversationOverrides();
     document.querySelectorAll('.iv-sp-ov-label[data-ovkey]').forEach(l => l.classList.toggle('has-override', l.dataset.ovkey in ov));
     document.querySelectorAll('.iv-sp-ov-clear[data-ovkey]').forEach(btn => {
         const active = btn.dataset.ovkey in ov; btn.classList.toggle('active', active); btn.disabled = !active;
     });
 }
 
-export function updateSessionOverrideIndicator() {
-    const has = hasSessionOverrides();
+export function updateConversationOverrideIndicator() {
+    const has = hasConversationOverrides();
     const dot = document.getElementById('iv-sp-override-dot'); if (dot) dot.style.display = has ? '' : 'none';
     const gearDot = document.getElementById('iv-gear-ov-dot'); if (gearDot) gearDot.style.display = has ? '' : 'none';
     document.getElementById('iv-ext-settings-btn')?.classList.toggle('iv-has-overrides', has);
     updateSPOverrideIndicators();
     const info = document.getElementById('iv-sp-footer-info');
-    if (info) { const count = Object.keys(getSessionOverrides()).length; info.textContent = count ? `${count} session override${count !== 1 ? 's' : ''} active` : ''; }
-    const ov = getSessionOverrides(); const hasDepthOv = 'contextDepth' in ov;
+    if (info) { const count = Object.keys(getConversationOverrides()).length; info.textContent = count ? `${count} conversation override${count !== 1 ? 's' : ''} active` : ''; }
+    const ov = getConversationOverrides(); const hasDepthOv = 'contextDepth' in ov;
     document.getElementById('iv-depth-slider')?.classList.toggle('iv-slider-overridden', hasDepthOv);
     document.getElementById('iv-depth-val')?.classList.toggle('iv-depth-val-overridden', hasDepthOv);
 }
@@ -702,7 +698,7 @@ export function openSettingsPanel() {
         );
         mkPresetMgr('iv-sp-prompt-preset-manager',      'iv-sp-ov-sysprompt',       undefined);
     }).catch(() => {});
-    overlay.style.display = 'flex'; updateSessionOverrideIndicator();
+    overlay.style.display = 'flex'; updateConversationOverrideIndicator();
     bringWindowToFront();
     import('../features/feature-memory.js').then(m => m.updateMemoryDot());
     overlay.querySelectorAll('.iv-sp-tab').forEach(t => t.classList.toggle('active', t.dataset.sptab === 'global'));
@@ -743,7 +739,7 @@ export function setupSettingsHandlers() {
         saveSettings(); _markDirty('config');
         const displayVal = defaultVal || (key === 'memoryManagePrompt' ? DEFAULT_MEMORY_PROMPT : DEFAULT_SYSTEM_PROMPT);
         [stId, spId].forEach(id => { const el = document.getElementById(id); if (el) el.value = displayVal; });
-        import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession()));
+        import('./ui-chat.js').then(m => m.updateMsgCount(getConversation()));
         toastr.success(`${label} reset.`, EXT_DISPLAY);
     };
     document.getElementById('iv-reset-prompt')?.addEventListener('click', () => _resetPrompt('systemPrompt', DEFAULT_SYSTEM_PROMPT, 'iv-sysprompt', 'iv-sp-sysprompt', 'System Prompt'));
@@ -751,7 +747,7 @@ export function setupSettingsHandlers() {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Prompt', message: 'Reset memory prompt to default?' }); if (!ok) return;
         getSettings().memoryManagePrompt = DEFAULT_MEMORY_PROMPT; saveSettings();
         ['iv-memory-prompt', 'iv-sp-memory-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_MEMORY_PROMPT; });
-        import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession())); toastr.success('Prompt reset.', EXT_DISPLAY);
+        import('./ui-chat.js').then(m => m.updateMsgCount(getConversation())); toastr.success('Prompt reset.', EXT_DISPLAY);
     });
 
     // ── Profile management (ST drawer) ──
@@ -820,21 +816,20 @@ export function setupSettingsHandlers() {
     document.getElementById('iv-download-debug')?.addEventListener('click', () => import('../utils/util-debug.js').then(m => m.dbgDownload()));
     document.getElementById('iv-open-memory-settings')?.addEventListener('click', () => { openSettingsPanel(); setTimeout(() => document.querySelector('[data-sptab="memory"]')?.click(), 80); });
     document.getElementById('iv-open-tools-settings')?.addEventListener('click', () => { openSettingsPanel(); setTimeout(() => document.querySelector('[data-sptab="tools"]')?.click(), 80); });
-    document.getElementById('iv-clear-sessions')?.addEventListener('click', async () => {
+    document.getElementById('iv-clear-conversation')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Clear Conversation', message: 'Delete the whole inner conversation for this chat? This cannot be undone.', delayConfirm: 3 }); if (!ok) return;
         const { charId, chatId } = getBindingKey();
-        _dbgAdd('SESSION_CLEAR_REQUESTED', { source: 'st-drawer', charId, chatId });
-        getSettings().sessions = {}; saveSettings();
+        _dbgAdd('CONVERSATION_CLEAR_REQUESTED', { source: 'st-drawer', charId, chatId });
         try {
-            await initChatBucket({ forceReset: true });
-            _dbgAdd('SESSION_CLEAR_DONE', { source: 'st-drawer', charId, chatId });
+            await initConversation({ forceReset: true });
+            _dbgAdd('CONVERSATION_CLEAR_DONE', { source: 'st-drawer', charId, chatId });
         } catch (e) {
-            _dbgAdd('SESSION_CLEAR_FAILED', { source: 'st-drawer', charId, chatId, error: e?.message || String(e), stack: e?.stack });
-            toastr.error(`Failed to clear sessions: ${e.message}`, EXT_DISPLAY);
+            _dbgAdd('CONVERSATION_CLEAR_FAILED', { source: 'st-drawer', charId, chatId, error: e?.message || String(e), stack: e?.stack });
+            toastr.error(`Failed to clear the inner conversation: ${e.message}`, EXT_DISPLAY);
             return;
         }
         import('./ui-chat.js').then(m => m.onChatChanged());
-        toastr.success('Sessions cleared.', EXT_DISPLAY);
+        toastr.success('Inner conversation cleared.', EXT_DISPLAY);
     });
 
     // ── Background (ST) ──
@@ -944,7 +939,7 @@ export function setupSettingsPanelListeners() {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset System Prompt', message: 'Reset to default?' }); if (!ok) return;
         getSettings().systemPrompt = DEFAULT_SYSTEM_PROMPT; saveSettings();
         ['iv-sp-sysprompt', 'iv-sysprompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_SYSTEM_PROMPT; });
-        import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession())); toastr.success('System prompt reset.', EXT_DISPLAY);
+        import('./ui-chat.js').then(m => m.updateMsgCount(getConversation())); toastr.success('System prompt reset.', EXT_DISPLAY);
     });
     document.getElementById('iv-sp-reset-memory-prompt')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Prompt', message: 'Reset memory prompt to default?' }); if (!ok) return;
@@ -962,29 +957,28 @@ export function setupSettingsPanelListeners() {
     // ── Misc SP ──
     document.getElementById('iv-sp-open-changelog')?.addEventListener('click', () => { closeSettingsPanel(); import('./ui-widgets.js').then(m => m.openChangelog()); });
     document.getElementById('iv-sp-download-debug')?.addEventListener('click', () => import('../utils/util-debug.js').then(m => m.dbgDownload()));
-    document.getElementById('iv-sp-clear-sessions')?.addEventListener('click', async () => {
+    document.getElementById('iv-sp-clear-conversation')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Clear Conversation', message: 'Delete the whole inner conversation for this chat? This cannot be undone.', delayConfirm: 3 }); if (!ok) return;
         const { charId, chatId } = getBindingKey();
-        _dbgAdd('SESSION_CLEAR_REQUESTED', { source: 'settings-overlay', charId, chatId });
-        getSettings().sessions = {}; saveSettings();
+        _dbgAdd('CONVERSATION_CLEAR_REQUESTED', { source: 'settings-overlay', charId, chatId });
         try {
-            await initChatBucket({ forceReset: true });
-            _dbgAdd('SESSION_CLEAR_DONE', { source: 'settings-overlay', charId, chatId });
+            await initConversation({ forceReset: true });
+            _dbgAdd('CONVERSATION_CLEAR_DONE', { source: 'settings-overlay', charId, chatId });
             import('./ui-chat.js').then(m => m.onChatChanged());
-            toastr.success('Sessions cleared.', EXT_DISPLAY);
+            toastr.success('Inner conversation cleared.', EXT_DISPLAY);
         } catch (e) {
-            _dbgAdd('SESSION_CLEAR_FAILED', { source: 'settings-overlay', charId, chatId, error: e?.message || String(e), stack: e?.stack });
-            toastr.error(`Failed to clear sessions: ${e.message}`, EXT_DISPLAY);
+            _dbgAdd('CONVERSATION_CLEAR_FAILED', { source: 'settings-overlay', charId, chatId, error: e?.message || String(e), stack: e?.stack });
+            toastr.error(`Failed to clear the inner conversation: ${e.message}`, EXT_DISPLAY);
         }
     });
     document.getElementById('iv-sp-reset-all-overrides')?.addEventListener('click', async () => {
-        if (!hasSessionOverrides()) { toastr.info('No session overrides active.', EXT_DISPLAY); return; }
-        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Session Overrides', message: 'Clear all session overrides for this session?' }); if (!ok) return;
-        clearAllSessionOverrides(); syncSPFromSettings();
-        import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession())); toastr.success('Session overrides cleared.', EXT_DISPLAY);
+        if (!hasConversationOverrides()) { toastr.info('No conversation overrides active.', EXT_DISPLAY); return; }
+        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Conversation Overrides', message: 'Clear all setting overrides for this inner conversation?' }); if (!ok) return;
+        clearAllConversationOverrides(); syncSPFromSettings();
+        import('./ui-chat.js').then(m => m.updateMsgCount(getConversation())); toastr.success('Conversation overrides cleared.', EXT_DISPLAY);
     });
 
-    // ── Session Override bindings ──
+    // ── Conversation Override bindings ──
     const bindOv = (id, key, isCheckbox = false, toVal = null) => {
         const el = document.getElementById(id); if (!el) return;
         el.addEventListener(isCheckbox ? 'change' : 'input', () => {
@@ -1028,10 +1022,10 @@ export function setupSettingsPanelListeners() {
     // Override clear buttons
     document.querySelectorAll('.iv-sp-ov-clear[data-ovkey]').forEach(btn => {
         btn.addEventListener('click', () => {
-            setSessionOverride(btn.dataset.ovkey, undefined);
+            setConversationOverride(btn.dataset.ovkey, undefined);
             _resetOvElToEffective(btn.dataset.ovkey);
             updateSPOverrideIndicators();
-            import('./ui-chat.js').then(m => m.updateMsgCount(getCurrentSession()));
+            import('./ui-chat.js').then(m => m.updateMsgCount(getConversation()));
         });
     });
 

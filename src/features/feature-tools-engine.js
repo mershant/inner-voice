@@ -1,5 +1,5 @@
 import { DEFAULT_TOOLS_PROMPT, TOOL_CALL_FORMAT_BLOCK, TOOL_DEFINITIONS } from '../constants.js';
-import { getSettings } from '../session.js';
+import { getSettings } from '../conversation.js';
 import { _ensureWrapped } from '../utils/util-text.js';
 
 export function getEnabledTools() {

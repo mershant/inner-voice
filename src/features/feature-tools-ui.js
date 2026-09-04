@@ -1,7 +1,7 @@
 import { DEFAULT_TOOLS_PROMPT, TOOL_DEFINITIONS } from '../constants.js';
 import { escHtml } from '../utils/util-dom.js';
 import { _dbgAdd } from '../utils/util-debug.js';
-import { getSettings, saveSettings } from '../session.js';
+import { getSettings, saveSettings } from '../conversation.js';
 import { openSettingsPanel } from '../ui/ui-settings.js';
 
 export function createToolCallEl(tc) {

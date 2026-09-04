@@ -23,13 +23,13 @@ export const state = {
 export const DBG_STATE = {
     log: [],
     MAX: 3000,
-    sessionStart: new Date().toISOString(),
+    startedAt: new Date().toISOString(),
     snapshot: null,
     diffTid: null
 };
 
 export const DBG_SKIP = new Set([
-    'customTheme','savedThemes','sessions',
+    'customTheme','savedThemes',
     'quickPromptSets','customSounds','completionSoundData',
     'quickPrompts','profiles','promptPresets',
     'windowBgUrl','customBackgrounds','memories'

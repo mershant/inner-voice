@@ -1,6 +1,6 @@
 import { EXT_DISPLAY } from '../constants.js';
 import { DBG_STATE, DBG_SKIP } from '../state.js';
-import { getSettings, getCurrentSession, hasSessionOverrides } from '../session.js';
+import { getSettings, getConversation, hasConversationOverrides } from '../conversation.js';
 import { extVersion } from '../index.js';
 
 export function _dbgStrip(s) {
@@ -102,8 +102,8 @@ export function dbgDownload() {
         }
     }
 
-    let sessionMsgs = 0;
-    try { sessionMsgs = getCurrentSession()?.messages?.length || 0; } catch(_) {}
+    let conversationTurns = 0;
+    try { conversationTurns = getConversation()?.messages?.length || 0; } catch(_) {}
 
     const disabledExts = ctx.extensionSettings?.disabledExtensions || [];
     const allExts = Object.keys(ctx.extensionSettings || {}).filter(k => k !== 'disabledExtensions' && typeof ctx.extensionSettings[k] === 'object');
@@ -119,8 +119,8 @@ export function dbgDownload() {
         characterId: ctx.characterId,
         chatId: ctx.chatId,
         stChatLength: ctx.chat?.length || 0,
-        sessionMsgs,
-        hasActiveSessionOverrides: hasSessionOverrides(),
+        conversationTurns,
+        hasActiveConversationOverrides: hasConversationOverrides(),
         activeConnectionProfile: activeProfileName,
         activeConnectionProfileData: activeProfileData,
         connectionProfiles: profiles.map(p => ({
@@ -132,7 +132,7 @@ export function dbgDownload() {
 
     const lines = [
         '=== Inner Voice Debug Log ===',
-        `Version: ${extVersion} | Session Start: ${DBG_STATE.sessionStart} | Downloaded: ${new Date().toISOString()}`,
+        `Version: ${extVersion} | Log Start: ${DBG_STATE.startedAt} | Downloaded: ${new Date().toISOString()}`,
         `Entries: ${DBG_STATE.log.length} / ${DBG_STATE.MAX} max`,
         '='.repeat(70),
         '=== SillyTavern Global Environment ===',

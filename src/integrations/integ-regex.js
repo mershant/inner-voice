@@ -1,4 +1,4 @@
-import { getEffectiveSettings } from '../session.js';
+import { getEffectiveSettings } from '../conversation.js';
 
 let _regexModule = false;
 

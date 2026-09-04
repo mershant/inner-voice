@@ -1,5 +1,5 @@
 import { EXT_DISPLAY, DEFAULT_MEMORY_PROMPT, MEMORY_FORMAT_BLOCK } from '../constants.js';
-import { getSettings, saveSettings, getCurrentSession, getBindingKey } from '../session.js';
+import { getSettings, saveSettings, getConversation, getBindingKey } from '../conversation.js';
 import { _dbgAdd } from '../utils/util-debug.js';
 import { escHtml, showCustomDialog } from '../utils/util-dom.js';
 import { _ensureWrapped } from '../utils/util-text.js';
@@ -16,21 +16,15 @@ export function getMemories() {
 
 export function getVisibleMemories() {
     const { charId, chatId } = getBindingKey();
-    const sessionId = getCurrentSession()?.id;
     const all = Object.values(getMemories());
-    
-    const debugDump = {
-        currentContext: { charId, chatId, sessionId },
-        totalStored: all.length,
-        itemsProcessed: []
-    };
-    
+
     return all.filter(m => {
         if (m.disabled) return false;
         if (m.scope === 'global') return true;
         if (m.scope === 'character') return m.charId === charId;
-        if (m.scope === 'chat') return m.charId === charId && m.chatId === chatId;
-        if (m.scope === 'session') return m.charId === charId && m.chatId === chatId && m.sessionId === sessionId;
+        // Legacy 'session' memories collapse into the chat scope: one main chat
+        // now has exactly one inner conversation.
+        if (m.scope === 'chat' || m.scope === 'session') return m.charId === charId && m.chatId === chatId;
         return m.charId === charId; // fallback
     });
 }
@@ -40,18 +34,14 @@ export function addMemory(key, value, scope = 'character') {
     const ctx = SillyTavern.getContext();
     const charName = ctx.characters?.[charId]?.name || charId || 'Unknown Character';
     const chatName = chatId || 'Unknown Chat';
-    const sessionObj = getCurrentSession();
-    const sessionId = sessionObj?.id;
-    const sessionName = sessionObj?.name || sessionId || 'Unknown Session';
-    
+
     const id = genMemoryId();
     getMemories()[id] = {
         id, key: key.trim(), value: value.trim(),
         createdAt: Date.now(),
-        scope: ['global', 'character', 'chat', 'session'].includes(scope) ? scope : 'character',
+        scope: ['global', 'character', 'chat'].includes(scope) ? scope : 'character',
         charId, charName,
         chatId, chatName,
-        sessionId, sessionName,
         disabled: false
     };
     saveSettings();
@@ -146,7 +136,7 @@ export function processMemoryUpdates(text, msgId) {
     const applied = [];
     for (const ch of changes) {
         if (ch.action === 'add' && ch.key && ch.value) {
-            const targetScope = ['global', 'character', 'chat', 'session'].includes(ch.scope) ? ch.scope : 'character';
+            const targetScope = ['global', 'character', 'chat'].includes(ch.scope) ? ch.scope : 'character';
             const mem = getVisibleMemories().find(m => m.scope === targetScope && m.key === ch.key);
             
             if (mem) {
@@ -169,7 +159,7 @@ export function processMemoryUpdates(text, msgId) {
         } else {
             if (ch.action && !['add', 'edit', 'update', 'delete'].includes(ch.action)) {
                 _dbgAdd('MEM_AI_ACTION_UNKNOWN', { action: ch.action });
-            } else if (ch.scope && !['global', 'character', 'chat', 'session'].includes(ch.scope)) {
+            } else if (ch.scope && !['global', 'character', 'chat'].includes(ch.scope)) {
                 _dbgAdd('MEM_SCOPE_INVALID', { scope: ch.scope });
             }
         }
@@ -235,19 +225,10 @@ export function renderMemoryList() {
             } else {
                 const chatId = m.chatId || 'unknown';
                 if (!charNode.chats[chatId]) {
-                    charNode.chats[chatId] = { name: m.chatName || chatId, memories: [], sessions: {} };
+                    charNode.chats[chatId] = { name: m.chatName || chatId, memories: [] };
                 }
-                const chatNode = charNode.chats[chatId];
-
-                if (m.scope === 'chat') {
-                    chatNode.memories.push(m);
-                } else if (m.scope === 'session') {
-                    const sessionId = m.sessionId || 'unknown';
-                    if (!chatNode.sessions[sessionId]) {
-                        chatNode.sessions[sessionId] = { name: m.sessionName || sessionId, memories: [] };
-                    }
-                    chatNode.sessions[sessionId].memories.push(m);
-                }
+                // Legacy 'session' memories render under their chat.
+                charNode.chats[chatId].memories.push(m);
             }
         }
     });
@@ -361,22 +342,7 @@ export function renderMemoryList() {
                     const chatNode = cNode.chats[chatId];
                     const chatContent = [];
                     chatNode.memories.forEach(m => chatContent.push(createMemEl(m)));
-                    
-                    const sessKeys = Object.keys(chatNode.sessions);
-                    if (sessKeys.length > 0) {
-                        const sessWrapper = [];
-                        sessKeys.forEach(sessId => {
-                            const sNode = chatNode.sessions[sessId];
-                            const sEls = sNode.memories.map(createMemEl);
-                            const sDet = buildDetails(sNode.name, 'bolt', sEls);
-                            if (sDet) sessWrapper.push(sDet);
-                        });
-                        if (sessWrapper.length > 0) {
-                            const sMainDet = buildDetails('Sessions', 'layer-group', sessWrapper);
-                            if (sMainDet) chatContent.push(sMainDet);
-                        }
-                    }
-                    
+
                     const cDet = buildDetails(chatNode.name, 'comments', chatContent);
                     if (cDet) chatsWrapper.push(cDet);
                 });
@@ -406,8 +372,7 @@ export async function editMemoryDialog(id) {
         const scopeOptions = [
             {val: 'global', text: 'Global (All chats)'},
             {val: 'character', text: 'Character (All chats with this character)'},
-            {val: 'chat', text: 'Chat (Only this specific chat)'},
-            {val: 'session', text: 'Session (Only this conversation)'}
+            {val: 'chat', text: 'Chat (This chat and its inner conversation)'}
         ];
         const currentScope = mem?.scope || 'character';
 
@@ -457,8 +422,6 @@ ${scopeHtml}
         m.charName = ctx.characters?.[charId]?.name || charId;
         m.chatId = chatId;
         m.chatName = chatId;
-        m.sessionId = getCurrentSession()?.id;
-        m.sessionName = getCurrentSession()?.name;
         saveSettings();
     }
     renderMemoryList();

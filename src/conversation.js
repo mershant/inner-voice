@@ -1,17 +1,48 @@
-import { 
-    EXT_NAME, 
-    EXT_DISPLAY, 
-    DEFAULT_SYSTEM_PROMPT, 
-    DEFAULT_MEMORY_PROMPT, 
-    THEME_PRESETS 
+import {
+    EXT_NAME,
+    EXT_DISPLAY,
+    DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_MEMORY_PROMPT,
+    THEME_PRESETS
 } from './constants.js';
 import { _dbgAdd, _dbgDiffSettings } from './utils/util-debug.js';
 import { _repairJSON } from './utils/util-text.js';
 
-function migrateBucket(bucket) {
-    const next = bucket && typeof bucket === 'object' ? bucket : { activeSessionId: null, sessions: [] };
-    if (!Array.isArray(next.sessions)) next.sessions = [];
+// ─── The exchange spine ──────────────────────────────────────────────────────
+// One continuous inner conversation per main chat. Every turn is anchored to a
+// main-chat message (its anchorIndex). The set of turns sharing one anchor is
+// an exchange; a main-chat message holds at most one exchange. New turns are
+// only ever created at the live edge — the latest main-chat message. Older
+// exchanges stay readable but never grow.
+
+function emptyConversation() {
+    return { messages: [], overrides: {}, pickedChatIndices: [] };
+}
+
+function normalizeConversation(conv) {
+    const next = conv && typeof conv === 'object' ? conv : emptyConversation();
+    if (!Array.isArray(next.messages)) next.messages = [];
+    if (!next.overrides || typeof next.overrides !== 'object') next.overrides = {};
+    if (!Array.isArray(next.pickedChatIndices)) next.pickedChatIndices = [];
+    for (const m of next.messages) {
+        if (m.anchorIndex === undefined) m.anchorIndex = null;
+    }
     return next;
+}
+
+// A legacy multi-session bucket ({ activeSessionId, sessions: [...] }) folds
+// into the single conversation: the active session's turns are kept as one
+// pre-spine segment (anchorIndex null), along with its overrides and picks.
+function migrateLegacyBucket(bucket) {
+    const conv = emptyConversation();
+    if (!bucket || !Array.isArray(bucket.sessions) || !bucket.sessions.length) return conv;
+    const active = bucket.sessions.find(s => s.id === bucket.activeSessionId)
+        || bucket.sessions[bucket.sessions.length - 1];
+    if (!active) return conv;
+    conv.messages = Array.isArray(active.messages) ? active.messages : [];
+    conv.overrides = active.overrides && typeof active.overrides === 'object' ? active.overrides : {};
+    conv.pickedChatIndices = Array.isArray(active.pickedChatIndices) ? active.pickedChatIndices : [];
+    return normalizeConversation(conv);
 }
 
 // ─── Settings ───────────────────────────────────────────────────────────────
@@ -51,7 +82,6 @@ export function getSettings() {
         customTheme: { ...THEME_PRESETS.default },
         savedThemes: {},
         activeThemeProfile: '',
-        sessions: {},
         floatingIconPersistent: false,
         reasoningTrimStrings: '',
         ghostModeOpacity: 15,
@@ -103,6 +133,7 @@ export function getSettings() {
     for (const [k, v] of Object.entries(defaults)) {
         if (s[k] === undefined) s[k] = v;
     }
+    delete s.sessions; // legacy multi-session store; the conversation file owns state now
     return s;
 }
 
@@ -128,59 +159,63 @@ export function getBindingKey() {
         } else if (typeof ctx.getCurrentChatId === 'function') {
             const r = ctx.getCurrentChatId(); if (r) chatId = String(r);
         }
-        
+
         if (chatId === 'default' || !chatId) {
             if (ctx.chatId) chatId = String(ctx.chatId);
             else if (typeof window.chat_id !== 'undefined' && window.chat_id !== null) chatId = String(window.chat_id);
         }
     } catch (_) {}
-    
+
     return { charId, chatId };
 }
 
-// ─── Session Override System ─────────────────────────────────────────────────
-export function getSessionOverrides() {
-    try { return getActiveSession(false)?.overrides || {}; } catch(_) { return {}; }
+// ─── Per-Chat Setting Overrides ─────────────────────────────────────────────
+// Overrides ride on this chat's inner conversation and persist with it.
+
+export function getConversationOverrides() {
+    try { return getConversation().overrides || {}; } catch (_) { return {}; }
 }
 
 export function getEffectiveSettings() {
-    return { ...getSettings(), ...getSessionOverrides() };
+    return { ...getSettings(), ...getConversationOverrides() };
 }
 
-export function setSessionOverride(key, value) {
+export function setConversationOverride(key, value) {
     try {
-        const sess = getCurrentSession();
-        if (!sess) return;
-        if (!sess.overrides) sess.overrides = {};
-        if (value === undefined || value === null) delete sess.overrides[key];
-        else sess.overrides[key] = value;
-        saveSessionsToMetadata();
-        import('./ui/ui-settings.js').then(m => m.updateSessionOverrideIndicator());
-    } catch(_) {}
+        const conv = getConversation();
+        if (!conv.overrides) conv.overrides = {};
+        if (value === undefined || value === null) delete conv.overrides[key];
+        else conv.overrides[key] = value;
+        saveConversation();
+        import('./ui/ui-settings.js').then(m => m.updateConversationOverrideIndicator());
+    } catch (_) {}
 }
 
-export function clearAllSessionOverrides() {
+export function clearAllConversationOverrides() {
     try {
-        const sess = getCurrentSession();
-        if (!sess) return;
-        sess.overrides = {};
-        saveSessionsToMetadata();
-        import('./ui/ui-settings.js').then(m => m.updateSessionOverrideIndicator());
-    } catch(_) {}
+        const conv = getConversation();
+        conv.overrides = {};
+        saveConversation();
+        import('./ui/ui-settings.js').then(m => m.updateConversationOverrideIndicator());
+    } catch (_) {}
 }
 
-export function hasSessionOverrides() {
-    try { const o = getActiveSession(false)?.overrides; return !!(o && Object.keys(o).length > 0); }
-    catch(_) { return false; }
+export function hasConversationOverrides() {
+    try { const o = getConversation().overrides; return !!(o && Object.keys(o).length > 0); }
+    catch (_) { return false; }
 }
 
-// ─── Storage Subsystem ─────────────────────────────
+// ─── Storage Subsystem ──────────────────────────────────────────────────────
 
-let _inMemoryBucket = { activeSessionId: null, sessions: [] };
-let _currentSessionFileId = null;
+let _conversation = emptyConversation();
+let _currentFileId = null;
 const _saveQueue = new Map();
 
-export async function saveSessionFile(file_id, payload, useKeepalive = false) {
+function freshFileId() {
+    return `inner_voice_conv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
+}
+
+export async function saveConversationFile(file_id, payload, useKeepalive = false) {
     const ctx = SillyTavern.getContext();
     try {
         const jsonStr = JSON.stringify(payload);
@@ -194,7 +229,7 @@ export async function saveSessionFile(file_id, payload, useKeepalive = false) {
         return res.ok;
     } catch (e) {
         _dbgAdd('STORAGE_WRITE_FAILED', { file_id, error: e.message });
-        console.error(`[${EXT_DISPLAY}] saveSessionFile error:`, e);
+        console.error(`[${EXT_DISPLAY}] saveConversationFile error:`, e);
         return false;
     }
 }
@@ -202,7 +237,7 @@ export async function saveSessionFile(file_id, payload, useKeepalive = false) {
 window.addEventListener('beforeunload', () => {
     for (const [fileId, item] of _saveQueue.entries()) {
         clearTimeout(item.timer);
-        saveSessionFile(fileId, item.payload, true);
+        saveConversationFile(fileId, item.payload, true);
     }
 });
 
@@ -210,7 +245,7 @@ function _decodeBase64Utf8(b64) {
     return decodeURIComponent(escape(atob(b64)));
 }
 
-function _tryParseSessionPayload(text) {
+function _tryParsePayload(text) {
     try { return JSON.parse(text); } catch (_) {}
     try { return JSON.parse(_decodeBase64Utf8(text)); } catch (_) {}
     try { return JSON.parse(_repairJSON(text)); } catch (_) {}
@@ -218,7 +253,7 @@ function _tryParseSessionPayload(text) {
     return undefined;
 }
 
-export async function loadSessionFile(file_id) {
+export async function loadConversationFile(file_id) {
     try {
         const res = await fetch(`/user/files/${file_id}`);
         if (res.status === 404) return null;
@@ -233,137 +268,133 @@ export async function loadSessionFile(file_id) {
             return null;
         }
 
-        const parsed = _tryParseSessionPayload(trimmed);
+        const parsed = _tryParsePayload(trimmed);
         if (parsed === undefined) throw new Error('Unrecoverable payload after base64/repair fallback');
         return parsed;
     } catch (e) {
         _dbgAdd('STORAGE_LOAD_ERROR', { file_id, error: e.message });
-        console.error(`[${EXT_DISPLAY}] loadSessionFile error:`, e);
-        return false; 
+        console.error(`[${EXT_DISPLAY}] loadConversationFile error:`, e);
+        return false;
     }
 }
 
-export async function initChatBucket({ forceReset = false } = {}) {
+function conversationFromPayload(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    if (payload.conversation) return normalizeConversation(payload.conversation);
+    if (payload.bucket) return migrateLegacyBucket(payload.bucket);
+    return null;
+}
+
+export async function initConversation({ forceReset = false } = {}) {
     const ctx = SillyTavern.getContext();
     if (!ctx.chatMetadata) ctx.chatMetadata = {};
     const { charId, chatId } = getBindingKey();
 
     if (forceReset) {
         const prevMeta = ctx.chatMetadata.inner_voice || null;
-        const freshId = `inner_voice_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
-        ctx.chatMetadata.inner_voice = { format: 'v4', file_id: freshId, chat_id: chatId };
+        const freshId = freshFileId();
+        ctx.chatMetadata.inner_voice = { format: 'v5', file_id: freshId, chat_id: chatId };
         if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
-        _currentSessionFileId = freshId;
-        _inMemoryBucket = migrateBucket({ activeSessionId: null, sessions: [] });
-        await commitBucketChanges(true);
-        _dbgAdd('SESSION_FORCE_RESET', { charId, chatId, prevFileId: prevMeta?.file_id || null, newFileId: freshId });
+        _currentFileId = freshId;
+        _conversation = emptyConversation();
+        await commitConversation(true);
+        _dbgAdd('CONVERSATION_FORCE_RESET', { charId, chatId, prevFileId: prevMeta?.file_id || null, newFileId: freshId });
         return;
     }
 
     for (const [fileId, item] of _saveQueue.entries()) {
         clearTimeout(item.timer);
         _saveQueue.delete(fileId);
-        saveSessionFile(fileId, item.payload);
+        saveConversationFile(fileId, item.payload);
     }
 
-    let meta = ctx.chatMetadata.inner_voice;
+    const meta = ctx.chatMetadata.inner_voice;
+    const knownFormat = meta && meta.file_id && (meta.format === 'v5' || meta.format === 'v4');
     let targetFileId = null;
     let payload = null;
 
-    if (meta && meta.file_id && meta.format === 'v4') {
+    if (knownFormat) {
         if (meta.chat_id === chatId) {
             targetFileId = meta.file_id;
-            payload = await loadSessionFile(targetFileId);
+            payload = await loadConversationFile(targetFileId);
+            if (meta.format !== 'v5') {
+                ctx.chatMetadata.inner_voice = { ...meta, format: 'v5' };
+                if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
+            }
         } else {
             _dbgAdd('STORAGE_CHAT_BRANCH_DETECTED', { oldChatId: meta.chat_id, newChatId: chatId });
-            payload = await loadSessionFile(meta.file_id);
-            targetFileId = `inner_voice_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
-            
+            payload = await loadConversationFile(meta.file_id);
+            targetFileId = freshFileId();
+
             if (payload && payload !== false) {
-                await saveSessionFile(targetFileId, payload);
+                await saveConversationFile(targetFileId, payload);
             }
-            
-            ctx.chatMetadata.inner_voice = { format: 'v4', file_id: targetFileId, chat_id: chatId };
+
+            ctx.chatMetadata.inner_voice = { format: 'v5', file_id: targetFileId, chat_id: chatId };
             if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
         }
     } else {
-        targetFileId = `inner_voice_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
-        _dbgAdd('STORAGE_MIGRATION_V4_INIT', { targetFileId });
-        
-        const safeChatId = chatId.replace(/[^a-zA-Z0-9_-]/g, '_');
-        payload = await loadSessionFile(`inner_voice_sess_${safeChatId}.json`);
+        targetFileId = freshFileId();
+        _dbgAdd('STORAGE_INIT_V5', { targetFileId });
 
-        if (!payload && meta && meta.file_id && meta.format !== 'v4') {
-            payload = await loadSessionFile(meta.file_id);
+        if (meta && meta.file_id) {
+            payload = await loadConversationFile(meta.file_id);
         }
 
-        if (!payload) {
-            const s = getSettings();
-            if (s.sessions && s.sessions[charId]) {
-                if (s.sessions[charId][chatId] && s.sessions[charId][chatId].sessions?.length > 0) {
-                    payload = { bucket: { ...s.sessions[charId][chatId] } };
-                    delete s.sessions[charId][chatId]; saveSettings();
-                } else if (s.sessions[charId]['unified'] && s.sessions[charId]['unified'].sessions?.length > 0) {
-                    payload = { bucket: { ...s.sessions[charId]['unified'] } };
-                    delete s.sessions[charId]['unified']; saveSettings();
-                }
-            }
-        }
-
-        ctx.chatMetadata.inner_voice = { format: 'v4', file_id: targetFileId, chat_id: chatId };
+        ctx.chatMetadata.inner_voice = { format: 'v5', file_id: targetFileId, chat_id: chatId };
         if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
     }
 
-    _currentSessionFileId = targetFileId;
+    _currentFileId = targetFileId;
 
     if (payload === false) {
         _dbgAdd('STORAGE_LOAD_CORRUPTED_RECOVERY', { brokenFileId: targetFileId, charId, chatId });
-        const recoveryFileId = `inner_voice_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
-        ctx.chatMetadata.inner_voice = { format: 'v4', file_id: recoveryFileId, chat_id: chatId, recoveredFrom: targetFileId };
+        const recoveryFileId = freshFileId();
+        ctx.chatMetadata.inner_voice = { format: 'v5', file_id: recoveryFileId, chat_id: chatId, recoveredFrom: targetFileId };
         if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
 
-        targetFileId = recoveryFileId;
-        _inMemoryBucket = migrateBucket({ activeSessionId: null, sessions: [] });
-        _currentSessionFileId = targetFileId;
-        await commitBucketChanges(true);
+        _currentFileId = recoveryFileId;
+        _conversation = emptyConversation();
+        await commitConversation(true);
 
         toastr.error('The inner conversation file was corrupted and could not be recovered. Started fresh storage for this chat; the broken file was kept on disk for manual recovery.', EXT_DISPLAY, { timeOut: 15000 });
         return;
     }
 
-    if (payload && payload.bucket) {
-        _inMemoryBucket = migrateBucket(payload.bucket);
-        _dbgAdd('STORAGE_BUCKET_LOADED', { charId, chatId, fileId: targetFileId, sessionCount: _inMemoryBucket.sessions?.length || 0 });
+    const loaded = conversationFromPayload(payload);
+    if (loaded) {
+        _conversation = loaded;
+        _dbgAdd('STORAGE_CONVERSATION_LOADED', { charId, chatId, fileId: targetFileId, turnCount: _conversation.messages.length, migratedFromBucket: !payload.conversation });
     } else {
-        _inMemoryBucket = migrateBucket({ activeSessionId: null, sessions: [] });
-        _dbgAdd('STORAGE_BUCKET_EMPTY_INIT', { charId, chatId, fileId: targetFileId, hadPayload: !!payload });
+        _conversation = emptyConversation();
+        _dbgAdd('STORAGE_CONVERSATION_EMPTY_INIT', { charId, chatId, fileId: targetFileId, hadPayload: !!payload });
     }
-    
-    if (!payload || meta?.format !== 'v4') {
-        await commitBucketChanges(true);
+
+    if (!payload || !payload.conversation || meta?.format !== 'v5' || meta?.chat_id !== chatId) {
+        await commitConversation(true);
     }
 }
 
-export async function commitBucketChanges(force = false) {
-    const fileName = _currentSessionFileId;
+export async function commitConversation(force = false) {
+    const fileName = _currentFileId;
     if (!fileName) return;
 
     const { chatId } = getBindingKey();
-    const snapshot = JSON.parse(JSON.stringify(_inMemoryBucket));
-    
+    const snapshot = JSON.parse(JSON.stringify(_conversation));
+
     const payloadToSave = {
-        _version: 4,
+        _version: 5,
         chat_id_reference: chatId,
         updated_at: Date.now(),
-        bucket: snapshot
+        conversation: snapshot
     };
 
     if (force) {
         const existing = _saveQueue.get(fileName);
         if (existing) clearTimeout(existing.timer);
         _saveQueue.delete(fileName);
-        
-        const success = await saveSessionFile(fileName, payloadToSave);
+
+        const success = await saveConversationFile(fileName, payloadToSave);
         if (!success) _dbgAdd('STORAGE_WRITE_FAILED', { fileName });
     } else {
         const existing = _saveQueue.get(fileName);
@@ -371,89 +402,92 @@ export async function commitBucketChanges(force = false) {
 
         const timer = setTimeout(() => {
             _saveQueue.delete(fileName);
-            saveSessionFile(fileName, payloadToSave);
+            saveConversationFile(fileName, payloadToSave);
         }, 1000);
 
         _saveQueue.set(fileName, { timer, payload: payloadToSave });
     }
 }
 
-export function saveSessionsToMetadata() {
-    commitBucketChanges();
+export function saveConversation() {
+    commitConversation();
 }
 
-export function getChatBucket() {
-    _inMemoryBucket = migrateBucket(_inMemoryBucket);
-    return _inMemoryBucket;
+export function getConversation() {
+    _conversation = normalizeConversation(_conversation);
+    return _conversation;
 }
 
-// ─── Session Helpers ─────────────────────────────────────────────────────────
+// ─── Exchange Spine Helpers ─────────────────────────────────────────────────
 
 export function genId(prefix) { return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`; }
 
-export function createSession(name) {
-    const bucket = getChatBucket();
-    const id = genId('sess');
-    const sess = { id, name: name || `Session ${bucket.sessions.length + 1}`, created: Date.now(), messages: [] };
-
-    bucket.sessions.push(sess);
-    bucket.activeSessionId = id;
-
-    saveSessionsToMetadata();
-    _dbgAdd('SESSION_CREATED', { id: sess.id, name: sess.name });
-    return sess;
-}
-
-export function getActiveSession(autoCreate = true) {
-    const bucket = getChatBucket();
-    if (!bucket.sessions.length || !bucket.activeSessionId) {
-        return autoCreate ? createSession() : null;
+// The live edge: index of the latest main-chat message, or null before the
+// story has any messages.
+export function getLiveEdgeIndex() {
+    try {
+        const chat = SillyTavern.getContext().chat;
+        if (!Array.isArray(chat) || !chat.length) return null;
+        return chat.length - 1;
+    } catch (_) {
+        return null;
     }
-    const sess = bucket.sessions.find(s => s.id === bucket.activeSessionId);
-    if (sess) return sess;
-    return autoCreate ? createSession() : null;
 }
 
-export function getCurrentSession() {
-    return getActiveSession(true);
-}
-
-export function addMessage(session, role, content, extra = {}) {
-    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), ...extra };
-    session.messages.push(msg); 
-    if (session.messages.length > 400) session.messages = session.messages.slice(-400);
-    saveSessionsToMetadata(); 
+// Adds a turn at the live edge. Every new turn anchors there — thinking always
+// happens in the present.
+export function addTurn(conversation, role, content, extra = {}) {
+    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ...extra };
+    conversation.messages.push(msg);
+    if (conversation.messages.length > 400) conversation.messages = conversation.messages.slice(-400);
+    saveConversation();
     return msg;
 }
 
-export function insertMessageAfter(session, afterMsgId, role, content, extra = {}) {
-    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), ...extra };
-    const idx = afterMsgId ? session.messages.findIndex(m => m.id === afterMsgId) : -1;
-    if (idx !== -1) session.messages.splice(idx + 1, 0, msg);
-    else session.messages.push(msg);
-    if (session.messages.length > 400) session.messages = session.messages.slice(-400);
-    saveSessionsToMetadata();
-    return msg;
+// Adds a turn only if the requested anchor is the live edge; old exchanges
+// reject new turns. Returns the turn, or null when rejected.
+export function addTurnAt(conversation, anchorIndex, role, content, extra = {}) {
+    if (anchorIndex !== getLiveEdgeIndex()) return null;
+    return addTurn(conversation, role, content, extra);
 }
 
-export function updateMessage(session, msgId, newContent) {
-    const msg = session.messages.find(m => m.id === msgId);
-    if (msg) { msg.content = newContent; saveSessionsToMetadata(); }
+// Groups the conversation's turns into exchanges — one per anchor, in order.
+export function getExchanges(conversation) {
+    const groups = new Map();
+    for (const m of conversation.messages) {
+        const anchor = m.anchorIndex === undefined ? null : m.anchorIndex;
+        if (!groups.has(anchor)) groups.set(anchor, { anchorIndex: anchor, turns: [] });
+        groups.get(anchor).turns.push(m);
+    }
+    return [...groups.values()];
 }
 
-export function truncateAfter(session, msgId) {
-    const idx = session.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { session.messages.splice(idx + 1); saveSessionsToMetadata(); }
+export function getExchangeAt(conversation, anchorIndex) {
+    return getExchanges(conversation).find(e => e.anchorIndex === anchorIndex) || null;
 }
 
-export function deleteMsg(session, msgId) {
-    const idx = session.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { session.messages.splice(idx, 1); saveSessionsToMetadata(); }
+// The exchange at the live edge — the only one that can still grow.
+export function getLiveExchange(conversation) {
+    const edge = getLiveEdgeIndex();
+    if (edge === null) return null;
+    return getExchangeAt(conversation, edge);
 }
 
-export function truncateFrom(session, msgId) {
-    const idx = session.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { session.messages.splice(idx); saveSessionsToMetadata(); }
+// ─── Turn Editing Helpers ───────────────────────────────────────────────────
+
+export function truncateAfter(conversation, msgId) {
+    const idx = conversation.messages.findIndex(m => m.id === msgId);
+    if (idx !== -1) { conversation.messages.splice(idx + 1); saveConversation(); }
+}
+
+export function deleteMsg(conversation, msgId) {
+    const idx = conversation.messages.findIndex(m => m.id === msgId);
+    if (idx !== -1) { conversation.messages.splice(idx, 1); saveConversation(); }
+}
+
+export function truncateFrom(conversation, msgId) {
+    const idx = conversation.messages.findIndex(m => m.id === msgId);
+    if (idx !== -1) { conversation.messages.splice(idx); saveConversation(); }
 }
 
 // ─── Macro Expansion Helper ────────────────────────────────────────────────

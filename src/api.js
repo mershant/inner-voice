@@ -1,6 +1,6 @@
 import { DEFAULT_SYSTEM_PROMPT, EXT_DISPLAY } from './constants.js';
 import { state } from './state.js';
-import { getEffectiveSettings, saveSessionsToMetadata, addMessage, getCurrentSession } from './session.js';
+import { getEffectiveSettings, saveConversation, addTurn, getConversation, getLiveEdgeIndex } from './conversation.js';
 import { _dbgAdd } from './utils/util-debug.js';
 import { escHtml } from './utils/util-dom.js';
 import { _ensureWrapped, normalizeCharNamesInBlock } from './utils/util-text.js';
@@ -99,8 +99,8 @@ export function getMainChatSlice(depth) {
     });
 
     try {
-        const sess = getCurrentSession();
-        const picked = sess.pickedChatIndices;
+        const conv = getConversation();
+        const picked = conv.pickedChatIndices;
         if (picked && picked.length > 0) {
             return picked
                 .filter(i => i >= 0 && i < ctx.chat.length)
@@ -113,10 +113,10 @@ export function getMainChatSlice(depth) {
     return ctx.chat.slice(-depth).map((m, i) => extractData(m, total - depth + i));
 }
 
-export async function assembleMessages(session, settings, pendingUserText) {
+export async function assembleMessages(conversation, settings, pendingUserText) {
     const messages = [{ role: 'system', content: await buildSystemContent(settings) }];
     const depth = Math.max(0, parseInt(settings.contextDepth) || 0);
-    const hasPicked = !!(session.pickedChatIndices && session.pickedChatIndices.length > 0);
+    const hasPicked = !!(conversation.pickedChatIndices && conversation.pickedChatIndices.length > 0);
     
     if (depth > 0 || hasPicked) {
         const slice = getMainChatSlice(depth);
@@ -171,7 +171,7 @@ export async function assembleMessages(session, settings, pendingUserText) {
         }
     }
     const limit = Math.max(1, parseInt(settings.localHistoryLimit) || 50);
-    for (const m of session.messages.slice(-limit)) {
+    for (const m of conversation.messages.slice(-limit)) {
         let apiRole = m.role;
         if (apiRole === 'system') apiRole = 'user';
         messages.push({ role: apiRole, content: m.content });
@@ -254,9 +254,9 @@ export async function estimateTokens(text) {
     }
 }
 
-export async function callGenerate(session, settings, pendingText, onChunk) {
+export async function callGenerate(conversation, settings, pendingText, onChunk) {
     const ctx = SillyTavern.getContext();
-    const messages = await assembleMessages(session, settings, pendingText);
+    const messages = await assembleMessages(conversation, settings, pendingText);
     const maxTokens = parseInt(settings.maxTokens) || 8200;
 
     const abort = new AbortController();
@@ -658,7 +658,7 @@ export async function callGenerate(session, settings, pendingText, onChunk) {
     return { text: text.trim(), reasoning, isMaxTokens };
 }
 
-export async function runGenerate(session, userText, addUserMsg = true) {
+export async function runGenerate(conversation, userText, addUserMsg = true) {
     if (state.generating) return;
     state.generating = true;
     state.activeToolCalls = [];
@@ -687,8 +687,8 @@ export async function runGenerate(session, userText, addUserMsg = true) {
         streamAccumReasoning = reasoning;
 
         if (!streamMsgId) {
-            const placeholder = { id: `msg_${Date.now()}`, role: 'assistant', content: '', reasoning: null, timestamp: Date.now() };
-            session.messages.push(placeholder);
+            const placeholder = { id: `msg_${Date.now()}`, role: 'assistant', content: '', reasoning: null, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex() };
+            conversation.messages.push(placeholder);
             streamMsgId = placeholder.id;
             
             appendMsgEl(placeholder, true);
@@ -758,11 +758,11 @@ export async function runGenerate(session, userText, addUserMsg = true) {
 
     try {
         if (addUserMsg && userText) {
-            const msgObj = addMessage(session, 'user', userText);
+            const msgObj = addTurn(conversation, 'user', userText);
             appendMsgEl(msgObj);
         }
 
-        const fullMessages = await assembleMessages(session, settings, null);
+        const fullMessages = await assembleMessages(conversation, settings, null);
         const fullPromptText = fullMessages.map(m => m.content).join('\n');
         const tokensIn = await estimateTokens(fullPromptText);
 
@@ -775,7 +775,7 @@ export async function runGenerate(session, userText, addUserMsg = true) {
             tokensIn
         });
 
-        let result = await callGenerate(session, settings, null, onChunk);
+        let result = await callGenerate(conversation, settings, null, onChunk);
 
         cleanupCursor();
         
@@ -878,7 +878,7 @@ export async function runGenerate(session, userText, addUserMsg = true) {
                 if (bar) bar.style.display = 'flex';
 
                 for (const eh of extraHistory) {
-                    session.messages.push({ id: `tc_hist_${Date.now()}`, role: eh.role, content: eh.content, timestamp: Date.now(), _tcTemp: true });
+                    conversation.messages.push({ id: `tc_hist_${Date.now()}`, role: eh.role, content: eh.content, timestamp: Date.now(), _tcTemp: true });
                 }
 
                 isStreaming = false;
@@ -886,17 +886,17 @@ export async function runGenerate(session, userText, addUserMsg = true) {
                 const cursor2 = document.createElement('span');
                 cursor2.className = 'iv-stream-cursor';
                 
-                const tempSession = { 
-                    ...session, 
-                    messages: session.messages.filter(m => m.id !== streamMsgId) 
+                const tempConversation = { 
+                    ...conversation, 
+                    messages: conversation.messages.filter(m => m.id !== streamMsgId) 
                 };
 
-                const nextResult = await callGenerate(tempSession, settings, null, (t, r) => {
+                const nextResult = await callGenerate(tempConversation, settings, null, (t, r) => {
                     _updateLiveUI(t, r);
                     if (streamContentEl) streamContentEl.appendChild(cursor2);
                 });
 
-                session.messages = session.messages.filter(m => !m._tcTemp);
+                conversation.messages = conversation.messages.filter(m => !m._tcTemp);
                 cursor2.remove();
 
                 if (nextResult === null) break;
@@ -915,15 +915,15 @@ export async function runGenerate(session, userText, addUserMsg = true) {
 
         if (result === null) {
             if (streamMsgId && isStreaming && streamAccumText) {
-                const msg = session.messages.find(m => m.id === streamMsgId);
-                if (msg) { msg.content = streamAccumText; msg.reasoning = streamAccumReasoning || null; saveSessionsToMetadata(); }
+                const msg = conversation.messages.find(m => m.id === streamMsgId);
+                if (msg) { msg.content = streamAccumText; msg.reasoning = streamAccumReasoning || null; saveConversation(); }
                 if (streamContentEl) { streamContentEl.innerHTML = renderMarkdown(streamAccumText); postProcessHTMLBlocks(streamContentEl); }
             } else if (streamMsgId) {
-                const idx = session.messages.findIndex(m => m.id === streamMsgId);
-                if (idx >= 0 && !session.messages[idx].content) {
-                    session.messages.splice(idx, 1);
+                const idx = conversation.messages.findIndex(m => m.id === streamMsgId);
+                if (idx >= 0 && !conversation.messages[idx].content) {
+                    conversation.messages.splice(idx, 1);
                     streamMsgEl?.remove();
-                    updateMsgCount(session);
+                    updateMsgCount(conversation);
                 }
             }
             return;
@@ -937,7 +937,7 @@ export async function runGenerate(session, userText, addUserMsg = true) {
         const savedToolCalls = state.activeToolCalls.length ? sanitizeToolCallsForSave(JSON.parse(JSON.stringify(state.activeToolCalls))) : undefined;
 
         if (streamMsgId) {
-            const msg = session.messages.find(m => m.id === streamMsgId);
+            const msg = conversation.messages.find(m => m.id === streamMsgId);
             if (msg) { 
                 msg.content = fullText; 
                 msg.reasoning = fullReasoning || null; 
@@ -945,20 +945,20 @@ export async function runGenerate(session, userText, addUserMsg = true) {
                 msg.swipes = [{ content: fullText, reasoning: fullReasoning || null }];
                 msg.swipeIndex = 0;
             }
-            saveSessionsToMetadata();
+            saveConversation();
 
             if (msg && streamMsgEl) {
                 _renderMsgBodyContent(streamMsgEl, msg);
             }
         } else {
-            const newMsg = addMessage(session, 'assistant', fullText, { reasoning: fullReasoning || null, toolCalls: savedToolCalls });
+            const newMsg = addTurn(conversation, 'assistant', fullText, { reasoning: fullReasoning || null, toolCalls: savedToolCalls });
             newMsg.swipes = [{ content: fullText, reasoning: fullReasoning || null }];
             newMsg.swipeIndex = 0;
-            saveSessionsToMetadata();
+            saveConversation();
             appendMsgEl(newMsg);
         }
 
-        _refreshSwipeBars(session);
+        _refreshSwipeBars(conversation);
         state.activeToolCalls = [];
 
         const tokensOut = await estimateTokens(fullText);
@@ -996,11 +996,11 @@ export function _joinContinuation(existing, continuation) {
     return trimmed + (needsSpace ? ' ' : '') + continuation;
 }
 
-export async function runContinue(session, targetMsgId) {
+export async function runContinue(conversation, targetMsgId) {
     _dbgAdd('CONTINUE_TRIGGERED', { targetMsgId });
     
     if (state.generating) return;
-    const targetMsg = session.messages.find(m => m.id === targetMsgId);
+    const targetMsg = conversation.messages.find(m => m.id === targetMsgId);
     if (!targetMsg || targetMsg.role !== 'assistant') return;
 
     state.generating = true;
@@ -1062,7 +1062,7 @@ export async function runContinue(session, targetMsgId) {
     };
 
     try {
-        const fullMessages = await assembleMessages(session, settings, CONTINUE_PROMPT);
+        const fullMessages = await assembleMessages(conversation, settings, CONTINUE_PROMPT);
         const fullPromptText = fullMessages.map(m => m.content).join('\n');
         
         const tokensIn = await estimateTokens(fullPromptText);
@@ -1075,7 +1075,7 @@ export async function runContinue(session, targetMsgId) {
             tokensIn
         });
 
-        const result = await callGenerate(session, settings, CONTINUE_PROMPT, onChunk);
+        const result = await callGenerate(conversation, settings, CONTINUE_PROMPT, onChunk);
         cleanupCursor();
 
         if (result === null) {
@@ -1085,7 +1085,7 @@ export async function runContinue(session, targetMsgId) {
                 if (targetMsg.swipes && targetMsg.swipeIndex !== undefined) {
                     targetMsg.swipes[targetMsg.swipeIndex] = { content: combined, reasoning: targetMsg.reasoning || null };
                 }
-                saveSessionsToMetadata();
+                saveConversation();
                 _applyFinalContinuation(combined);
             }
             return;
@@ -1105,12 +1105,12 @@ export async function runContinue(session, targetMsgId) {
         if (targetMsg.swipes && targetMsg.swipeIndex !== undefined) {
             targetMsg.swipes[targetMsg.swipeIndex] = { content: combined, reasoning: targetMsg.reasoning || null };
         }
-        saveSessionsToMetadata();
+        saveConversation();
         _applyFinalContinuation(combined);
 
         const tokensOut = await estimateTokens(continuation);
 
-        updateMsgCount(session);
+        updateMsgCount(conversation);
         playCompletionSound();
         _dbgAdd('CONTINUE_DONE', { chars: continuation?.length || 0, tokensOut });
 

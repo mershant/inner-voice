@@ -1766,17 +1766,17 @@ details.iv-reasoning-block[open] .iv-reasoning-summary::before { transform: rota
 .iv-sp-textarea:focus { border-color: var(--iv-accent-dim); }
 .iv-sp-textarea-lg { min-height: 120px; }
 
-/* ── Session override styles ─────────────────────────────────── */
+/* ── Conversation override styles ─────────────────────────────────── */
 
-.iv-sp-session-banner {
+.iv-sp-conversation-banner {
     display: flex; align-items: center; gap: 8px;
     padding: 8px 12px; border-radius: 8px;
     background: var(--iv-accent-bg); border: 1px solid var(--iv-accent-dim);
     font-size: 11px; color: var(--iv-text-muted);
 }
 
-.iv-sp-session-banner span:first-child { color: var(--iv-accent); flex-shrink: 0; }
-.iv-sp-session-banner span:nth-child(2) { flex: 1; }
+.iv-sp-conversation-banner span:first-child { color: var(--iv-accent); flex-shrink: 0; }
+.iv-sp-conversation-banner span:nth-child(2) { flex: 1; }
 
 .iv-sp-reset-all-btn {
     background: none; border: 1px solid rgba(255,92,92,0.3);
@@ -2124,7 +2124,7 @@ details.iv-reasoning-block[open] .iv-reasoning-summary::before { transform: rota
 
     .iv-sp-ov-clear { width: 28px; height: 28px; font-size: 14px; }
 
-    .iv-sp-session-banner { font-size: 12px; }
+    .iv-sp-conversation-banner { font-size: 12px; }
 }
 
 /* ═══════════════════════════════════════════════════════════════

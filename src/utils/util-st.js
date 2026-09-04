@@ -1,4 +1,4 @@
-import { expandMacros } from '../session.js';
+import { expandMacros } from '../conversation.js';
 
 export function getTagsForCharacter(char) {
     if (!char) return [];

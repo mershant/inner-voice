@@ -14,9 +14,9 @@
       <div class="iv-sp-tabs" style="justify-content: center; width: 100%;">
         <button class="iv-sp-tab active" data-sptab="global">Global</button>
         <button class="iv-sp-tab" data-sptab="prompts">Quick Prompts</button>
-        <button class="iv-sp-tab" data-sptab="session">
-          Session
-          <span class="iv-sp-override-dot" id="iv-sp-override-dot" style="display:none" title="Session overrides active"></span>
+        <button class="iv-sp-tab" data-sptab="conversation">
+          Conversation
+          <span class="iv-sp-override-dot" id="iv-sp-override-dot" style="display:none" title="Conversation overrides active"></span>
         </button>
         <button class="iv-sp-tab" data-sptab="memory">
           Memory
@@ -154,7 +154,7 @@
             </div>
           </div>
           <div class="iv-sp-field">
-            <label class="iv-sp-label">Session History Limit</label>
+            <label class="iv-sp-label">Conversation History Limit</label>
             <input type="number" class="iv-sp-input" id="iv-sp-history-limit" placeholder="50" min="1" max="500">
           </div>
           <div class="iv-sp-field">
@@ -203,7 +203,7 @@
         <div class="iv-sp-group">
           <div class="iv-sp-group-title" style="color:var(--iv-danger)"><i class="fa-solid fa-triangle-exclamation"></i> Danger Zone</div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="iv-action-btn iv-sp-danger-btn" id="iv-sp-clear-sessions" style="flex:1">${I.trash}<span>Clear All Sessions</span></button>
+            <button class="iv-action-btn iv-sp-danger-btn" id="iv-sp-clear-conversation" style="flex:1">${I.trash}<span>Clear Conversation</span></button>
             <button class="iv-action-btn" id="iv-sp-download-debug" style="flex:1" title="Download full debug log as text file"><i class="fa-solid fa-bug"></i><span>Download Debug Log</span></button>
           </div>
         </div>
@@ -223,12 +223,12 @@
         </div>
       </div>
 
-      <!-- ══ SESSION TAB ══ -->
-      <div class="iv-sp-tab-pane" id="iv-sp-pane-session" style="display:none">
+      <!-- ══ CONVERSATION TAB ══ -->
+      <div class="iv-sp-tab-pane" id="iv-sp-pane-conversation" style="display:none">
 
-        <div class="iv-sp-session-banner">
+        <div class="iv-sp-conversation-banner">
           <span>${I.edit}</span>
-          <span>Overrides global settings for the current session only.</span>
+          <span>Overrides global settings for this chat's inner conversation only.</span>
           <button class="iv-sp-reset-all-btn" id="iv-sp-reset-all-overrides">Reset All</button>
         </div>
 

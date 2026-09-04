@@ -1,6 +1,6 @@
 import { I, EXT_DISPLAY, THEME_PRESETS, WIN_ID } from '../constants.js';
 import { state } from '../state.js';
-import { getSettings, saveSettings, getCurrentSession, saveSessionsToMetadata, deleteMsg, truncateAfter, truncateFrom, expandMacros, getEffectiveSettings, getBindingKey, initChatBucket } from '../session.js';
+import { getSettings, saveSettings, getConversation, saveConversation, deleteMsg, truncateAfter, truncateFrom, expandMacros, getEffectiveSettings, getBindingKey, initConversation } from '../conversation.js';
 import { _dbgAdd } from '../utils/util-debug.js';
 import { escHtml, autoResize, showCustomDialog, copyText } from '../utils/util-dom.js';
 import { getCharInfo } from '../utils/util-st.js';
@@ -480,7 +480,7 @@ export function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
 
     if (!isUser) {
         const continueBtn = makeBtn(I.continueArrow, 'Continue response', 'iv-msg-btn-continue', () => {
-            if (apiMod) apiMod.runContinue(getCurrentSession(), msg.id);
+            if (apiMod) apiMod.runContinue(getConversation(), msg.id);
         });
         actions.appendChild(continueBtn);
     }
@@ -508,8 +508,8 @@ export function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
 
         prevBtn.addEventListener('click', async () => {
             if (prevBtn.disabled || state.generating) return;
-            const session = getCurrentSession();
-            if (!getSwipesForMsg(session, msg.id)) return;
+            const conversation = getConversation();
+            if (!getSwipesForMsg(conversation, msg.id)) return;
             
             const bdy = wrap.querySelector('.iv-msg-body');
             if (bdy) {
@@ -518,21 +518,21 @@ export function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
                 await new Promise(r => setTimeout(r, 150));
             }
             
-            if (navigateSwipe(session, msg.id, -1)) {
+            if (navigateSwipe(conversation, msg.id, -1)) {
                 if (bdy) {
                     bdy.classList.remove('iv-swipe-anim-out-right');
                     void bdy.offsetWidth;
                     bdy.classList.add('iv-swipe-anim-left'); 
                 }
-                _renderMsgBodyContent(wrap, session.messages.find(m => m.id === msg.id));
-                updateSwipeBar(wrap, session, msg.id);
+                _renderMsgBodyContent(wrap, conversation.messages.find(m => m.id === msg.id));
+                updateSwipeBar(wrap, conversation, msg.id);
             }
         });
 
         nextBtn.addEventListener('click', async () => {
             if (nextBtn.disabled || state.generating) return;
-            const session = getCurrentSession();
-            const msgData = session.messages.find(m => m.id === msg.id);
+            const conversation = getConversation();
+            const msgData = conversation.messages.find(m => m.id === msg.id);
             if (!msgData) return;
             
             if (msgData.swipeIndex !== undefined && msgData.swipeIndex < (msgData.swipes?.length || 1) - 1) {
@@ -543,18 +543,18 @@ export function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
                     await new Promise(r => setTimeout(r, 150));
                 }
 
-                if (navigateSwipe(session, msg.id, 1)) {
+                if (navigateSwipe(conversation, msg.id, 1)) {
                     if (bdy) {
                         bdy.classList.remove('iv-swipe-anim-out-left');
                         void bdy.offsetWidth;
                         bdy.classList.add('iv-swipe-anim-right'); 
                     }
-                    _renderMsgBodyContent(wrap, session.messages.find(m => m.id === msg.id));
-                    updateSwipeBar(wrap, session, msg.id);
+                    _renderMsgBodyContent(wrap, conversation.messages.find(m => m.id === msg.id));
+                    updateSwipeBar(wrap, conversation, msg.id);
                 }
             } else {
                 _dbgAdd('SWIPE_REGEN_TRIGGERED', { msgId: msg.id });
-                _runSwipeRegen(session, msg.id, wrap);
+                _runSwipeRegen(conversation, msg.id, wrap);
             }
         });
 
@@ -572,9 +572,9 @@ export function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
 
 // ─── Swipes and Generation ──────────────────────────────────────────────────────
 
-export function getLastAssistantMsgId(session) {
-    for (let i = session.messages.length - 1; i >= 0; i--) {
-        const m = session.messages[i];
+export function getLastAssistantMsgId(conversation) {
+    for (let i = conversation.messages.length - 1; i >= 0; i--) {
+        const m = conversation.messages[i];
         if (m.role === 'user') return null;
         if (m.role === 'assistant') {
             return m.id;
@@ -583,26 +583,26 @@ export function getLastAssistantMsgId(session) {
     return null;
 }
 
-export function getSwipesForMsg(session, msgId) {
-    const msg = session.messages.find(m => m.id === msgId);
+export function getSwipesForMsg(conversation, msgId) {
+    const msg = conversation.messages.find(m => m.id === msgId);
     if (!msg) return null;
     if (!msg.swipes) msg.swipes = [{ content: msg.content, reasoning: msg.reasoning || null }];
     if (msg.swipeIndex === undefined) msg.swipeIndex = 0;
     return msg;
 }
 
-export function addSwipe(session, msgId, content, reasoning = null) {
-    const msg = getSwipesForMsg(session, msgId);
+export function addSwipe(conversation, msgId, content, reasoning = null) {
+    const msg = getSwipesForMsg(conversation, msgId);
     if (!msg) return;
     msg.swipes.push({ content, reasoning: reasoning || null });
     msg.swipeIndex = msg.swipes.length - 1;
     msg.content = content;
     msg.reasoning = reasoning || null;
-    saveSessionsToMetadata();
+    saveConversation();
 }
 
-export function navigateSwipe(session, msgId, dir) {
-    const msg = getSwipesForMsg(session, msgId);
+export function navigateSwipe(conversation, msgId, dir) {
+    const msg = getSwipesForMsg(conversation, msgId);
     if (!msg || msg.swipes.length < 2) return false;
     const newIdx = msg.swipeIndex + dir;
     if (newIdx < 0 || newIdx >= msg.swipes.length) return false;
@@ -612,15 +612,15 @@ export function navigateSwipe(session, msgId, dir) {
     msg.swipeIndex = newIdx;
     msg.content = msg.swipes[newIdx].content;
     msg.reasoning = msg.swipes[newIdx].reasoning || null;
-    saveSessionsToMetadata();
-    updateMsgCount(session);
+    saveConversation();
+    updateMsgCount(conversation);
     return true;
 }
 
-export function updateSwipeBar(msgEl, session, msgId) {
+export function updateSwipeBar(msgEl, conversation, msgId) {
     const bar = msgEl.querySelector('.iv-swipe-bar');
     if (!bar) return;
-    const msg = session.messages.find(m => m.id === msgId);
+    const msg = conversation.messages.find(m => m.id === msgId);
     if (!msg) return;
     if (!msg.swipes) {
         msg.swipes = [{ content: msg.content, reasoning: msg.reasoning || null }];
@@ -637,9 +637,9 @@ export function updateSwipeBar(msgEl, session, msgId) {
     bar.style.display = '';
 }
 
-export async function _runSwipeRegen(session, msgId, wrapEl) {
+export async function _runSwipeRegen(conversation, msgId, wrapEl) {
     if (state.generating) return;
-    const msgData = session.messages.find(m => m.id === msgId);
+    const msgData = conversation.messages.find(m => m.id === msgId);
     if (!msgData) return;
 
     if (!msgData.swipes) {
@@ -664,9 +664,9 @@ export async function _runSwipeRegen(session, msgId, wrapEl) {
     msgData.swipeIndex = msgData.swipes.length - 1;
     msgData.content = placeholderContent;
     msgData.reasoning = null;
-    saveSessionsToMetadata();
+    saveConversation();
 
-    updateSwipeBar(wrapEl, session, msgId);
+    updateSwipeBar(wrapEl, conversation, msgId);
 
     let streamContentEl = wrapEl.querySelector('.iv-msg-content');
     if (streamContentEl) streamContentEl.innerHTML = '';
@@ -719,14 +719,14 @@ export async function _runSwipeRegen(session, msgId, wrapEl) {
     };
 
     try {
-        const tempSession = { ...session, messages: session.messages.filter(m => m.id !== msgId) };
+        const tempConversation = { ...conversation, messages: conversation.messages.filter(m => m.id !== msgId) };
         if (!apiMod) throw new Error("API module not loaded");
         
-        const builtMessages = await apiMod.assembleMessages(tempSession, settings, null);
+        const builtMessages = await apiMod.assembleMessages(tempConversation, settings, null);
         const fullPromptText = builtMessages.map(m => m.content).join('\n');
         const tokensIn = await apiMod.estimateTokens(fullPromptText);
 
-        const result = await apiMod.callGenerate(tempSession, settings, null, onChunk);
+        const result = await apiMod.callGenerate(tempConversation, settings, null, onChunk);
         cleanupCursor();
 
         if (result === null) {
@@ -734,9 +734,9 @@ export async function _runSwipeRegen(session, msgId, wrapEl) {
             msgData.swipeIndex = msgData.swipes.length - 1;
             msgData.content = msgData.swipes[msgData.swipeIndex]?.content || '';
             msgData.reasoning = msgData.swipes[msgData.swipeIndex]?.reasoning || null;
-            saveSessionsToMetadata();
+            saveConversation();
             _renderMsgBodyContent(wrapEl, msgData);
-            updateSwipeBar(wrapEl, session, msgId);
+            updateSwipeBar(wrapEl, conversation, msgId);
             return;
         }
 
@@ -746,12 +746,12 @@ export async function _runSwipeRegen(session, msgId, wrapEl) {
         msgData.swipes[msgData.swipeIndex] = { content: fullText, reasoning: fullReasoning || null };
         msgData.content = fullText;
         msgData.reasoning = fullReasoning || null;
-        saveSessionsToMetadata();
+        saveConversation();
 
         _renderMsgBodyContent(wrapEl, msgData);
-        updateSwipeBar(wrapEl, session, msgId);
+        updateSwipeBar(wrapEl, conversation, msgId);
 
-        updateMsgCount(session);
+        updateMsgCount(conversation);
         if (uiWdgMod) uiWdgMod.playCompletionSound();
 
     } catch(err) {
@@ -760,9 +760,9 @@ export async function _runSwipeRegen(session, msgId, wrapEl) {
         msgData.swipeIndex = msgData.swipes.length - 1;
         msgData.content = msgData.swipes[msgData.swipeIndex]?.content || '';
         msgData.reasoning = msgData.swipes[msgData.swipeIndex]?.reasoning || null;
-        saveSessionsToMetadata();
+        saveConversation();
         _renderMsgBodyContent(wrapEl, msgData);
-        updateSwipeBar(wrapEl, session, msgId);
+        updateSwipeBar(wrapEl, conversation, msgId);
 
         if (state.abortController?.signal?.aborted || err?.message === 'userStopped') {} 
         else { showGenerationError(err); }
@@ -772,18 +772,18 @@ export async function _runSwipeRegen(session, msgId, wrapEl) {
     }
 }
 
-export function _refreshSwipeBars(session) {
+export function _refreshSwipeBars(conversation) {
     const c = document.getElementById('iv-messages');
     if (!c) return;
     c.querySelectorAll('.iv-swipe-bar').forEach(bar => { bar.style.display = 'none'; });
     if (state.generating) return;
-    const lastId = getLastAssistantMsgId(session);
+    const lastId = getLastAssistantMsgId(conversation);
     if (!lastId) return;
     const lastEl = c.querySelector(`.iv-msg[data-id="${lastId}"]`);
     if (!lastEl) return;
     const swipeBar = lastEl.querySelector('.iv-swipe-bar');
     if (!swipeBar) return;
-    updateSwipeBar(lastEl, session, lastId);
+    updateSwipeBar(lastEl, conversation, lastId);
     swipeBar.style.display = '';
 }
 
@@ -862,7 +862,7 @@ export function handleEdit(wrapEl, msg) {
     if (wrapEl.classList.contains('is-editing')) return;
     wrapEl.classList.add('is-editing');
     const { charId, chatId } = getBindingKey();
-    const session = getCurrentSession();
+    const conversation = getConversation();
     const contentEl = wrapEl.querySelector('.iv-msg-content');
     const original = msg.content;
 
@@ -923,13 +923,13 @@ export function handleEdit(wrapEl, msg) {
             if (!rawText) return;
             const newText = expandMacros(rawText);
             
-            const msgObj = session.messages.find(m => m.id === msg.id);
-            if (msgObj) { msgObj.content = newText; saveSessionsToMetadata(); }
+            const msgObj = conversation.messages.find(m => m.id === msg.id);
+            if (msgObj) { msgObj.content = newText; saveConversation(); }
             
             msg.content = newText;
             if (msg.swipes && msg.swipeIndex !== undefined) {
                 msg.swipes[msg.swipeIndex] = { content: newText, reasoning: msg.reasoning || null };
-                saveSessionsToMetadata();
+                saveConversation();
             }
             restoreMessageDOM(newText);
             _updateMsgTokenCount(wrapEl, newText, true);
@@ -941,31 +941,31 @@ export function handleEdit(wrapEl, msg) {
         if (!rawText) return;
         const newText = expandMacros(rawText);
         
-        const msgObj = session.messages.find(m => m.id === msg.id);
-        if (msgObj) { msgObj.content = newText; saveSessionsToMetadata(); }
+        const msgObj = conversation.messages.find(m => m.id === msg.id);
+        if (msgObj) { msgObj.content = newText; saveConversation(); }
 
         msg.content = newText;
         if (msg.swipes && msg.swipeIndex !== undefined) {
             msg.swipes[msg.swipeIndex] = { content: newText, reasoning: msg.reasoning || null };
-            saveSessionsToMetadata();
+            saveConversation();
         }
         restoreMessageDOM(newText);
         _updateMsgTokenCount(wrapEl, newText, true);
         
-        truncateAfter(session, msg.id);
+        truncateAfter(conversation, msg.id);
         removeMsgElAfter(msg.id);
-        if (msg.role === 'user' && apiMod) await apiMod.runGenerate(session, newText, false);
+        if (msg.role === 'user' && apiMod) await apiMod.runGenerate(conversation, newText, false);
     });
 }
 
 export async function handleMessageRegen(wrapEl, msg) {
     if (state.generating) return;
-    const session = getCurrentSession();
-    const idx = session.messages.findIndex(m => m.id === msg.id);
+    const conversation = getConversation();
+    const idx = conversation.messages.findIndex(m => m.id === msg.id);
     if (idx === -1) return;
 
     const isUser = msg.role === 'user';
-    const actualMsgsAfter = session.messages.slice(idx + 1);
+    const actualMsgsAfter = conversation.messages.slice(idx + 1);
     const msgsAfterCount = actualMsgsAfter.length;
 
     let needsConfirm = false;
@@ -989,17 +989,17 @@ export async function handleMessageRegen(wrapEl, msg) {
     }
 
     if (isUser) {
-        truncateAfter(session, msg.id);
+        truncateAfter(conversation, msg.id);
         removeMsgElAfter(msg.id);
-        updateMsgCount(session);
-        if (apiMod) apiMod.runGenerate(session, null, false);
+        updateMsgCount(conversation);
+        if (apiMod) apiMod.runGenerate(conversation, null, false);
     } else {
         if (msgsAfterCount > 0) {
-            truncateAfter(session, msg.id);
+            truncateAfter(conversation, msg.id);
             removeMsgElAfter(msg.id);
-            updateMsgCount(session);
+            updateMsgCount(conversation);
         }
-        _runSwipeRegen(session, msg.id, wrapEl);
+        _runSwipeRegen(conversation, msg.id, wrapEl);
     }
 }
 
@@ -1013,19 +1013,19 @@ export async function handleDelete(wrapEl, msg) {
             : 'Delete this assistant message?',
     });
     if (!confirmed) return;
-    const session = getCurrentSession();
+    const conversation = getConversation();
     if (isUser) {
-        truncateFrom(session, msg.id);
+        truncateFrom(conversation, msg.id);
         removeMsgElAndBelow(msg.id);
     } else {
-        deleteMsg(session, msg.id);
+        deleteMsg(conversation, msg.id);
         removeMsgEl(msg.id);
     }
-    updateMsgCount(session);
-    if (!session.messages.length) renderSession(session);
+    updateMsgCount(conversation);
+    if (!conversation.messages.length) renderConversation(conversation);
 }
 
-export function renderSession(session) {
+export function renderConversation(conversation) {
     clearSearchHighlights();
     state.searchMatches = [];
     state.searchIdx = -1;
@@ -1033,7 +1033,7 @@ export function renderSession(session) {
     const c = document.getElementById('iv-messages');
     if (!c) return;
     c.innerHTML = '';
-    if (!session.messages.length) {
+    if (!conversation.messages.length) {
         c.innerHTML = `
             <div class="iv-empty-state">
                 <div class="iv-empty-icon">
@@ -1042,16 +1042,16 @@ export function renderSession(session) {
                 <div class="iv-empty-title">Inner Voice</div>
                 <div class="iv-empty-sub">A private space to think, plan, and talk with yourself. Nothing here enters the scene.</div>
             </div>`;
-        updateMsgCount(session);
+        updateMsgCount(conversation);
         return;
     }
-    for (const msg of session.messages) {
+    for (const msg of conversation.messages) {
         const el = createMsgEl(msg, handleCopy, handleEdit, handleDelete, handleMessageRegen);
         c.appendChild(el);
     }
-    updateMsgCount(session);
+    updateMsgCount(conversation);
     _refreshContinueBtns();
-    _refreshSwipeBars(session);
+    _refreshSwipeBars(conversation);
     requestAnimationFrame(() => scrollToBottom());
 }
 
@@ -1064,10 +1064,10 @@ export function appendMsgEl(msg, isStreamInit = false) {
     c.appendChild(el);
     
     if (!isStreamInit) {
-        const session = getCurrentSession();
-        updateMsgCount(session);
+        const conversation = getConversation();
+        updateMsgCount(conversation);
         _refreshContinueBtns();
-        _refreshSwipeBars(session);
+        _refreshSwipeBars(conversation);
         requestAnimationFrame(() => scrollToBottom());
 
         if (state.searchOpen && state.searchQuery.trim()) {
@@ -1085,7 +1085,7 @@ export function removeMsgEl(msgId) {
     if (!el) return;
     el.remove();
     _refreshContinueBtns();
-    _refreshSwipeBars(getCurrentSession());
+    _refreshSwipeBars(getConversation());
 }
 
 export function removeMsgElAndBelow(msgId) {
@@ -1096,7 +1096,7 @@ export function removeMsgElAndBelow(msgId) {
         if (found) el.remove();
     }
     _refreshContinueBtns();
-    _refreshSwipeBars(getCurrentSession());
+    _refreshSwipeBars(getConversation());
 }
 
 export function removeMsgElAfter(msgId) {
@@ -1107,19 +1107,19 @@ export function removeMsgElAfter(msgId) {
         if (el.dataset.id === msgId) found = true;
     }
     _refreshContinueBtns();
-    _refreshSwipeBars(getCurrentSession());
+    _refreshSwipeBars(getConversation());
 }
 
 let _tokenCalcTid = null;
 let _isTokenCalculating = false;
 let _pendingTokenCalc = false;
 
-export function updateMsgCount(session) {
+export function updateMsgCount(conversation) {
     const el = document.getElementById('iv-msg-count');
-    if (el && session) el.textContent = `${session.messages.length} msgs`;
+    if (el && conversation) el.textContent = `${conversation.messages.length} msgs`;
 
     const tel = document.getElementById('iv-token-count');
-    if (!tel || !session) return;
+    if (!tel || !conversation) return;
 
     clearTimeout(_tokenCalcTid);
     _tokenCalcTid = setTimeout(() => {
@@ -1133,16 +1133,16 @@ export function updateMsgCount(session) {
                 
                 if (apiMod && apiMod.assembleMessages && apiMod.estimateTokens) {
                     try {
-                        const tempSess = { ...session, messages: [...session.messages] };
+                        const tempConv = { ...conversation, messages: [...conversation.messages] };
                         if (currentInput.trim()) {
-                            tempSess.messages.push({ 
+                            tempConv.messages.push({ 
                                 id: 'tmp', 
                                 role: 'user', 
                                 content: currentInput, 
                                 timestamp: Date.now()
                             });
                         }
-                        const builtMsgs = await apiMod.assembleMessages(tempSess, settings, null);
+                        const builtMsgs = await apiMod.assembleMessages(tempConv, settings, null);
                         const fullText = builtMsgs.map(m => m.content).join('\n');
                         const tokens = await apiMod.estimateTokens(fullText);
                         const node = document.getElementById('iv-token-count');
@@ -1162,8 +1162,8 @@ export function updateMsgCount(session) {
                 const chat = ctx.chat || [];
                 let chatSlice = [];
                 try {
-                    const sess = getCurrentSession();
-                    const picked = sess?.pickedChatIndices;
+                    const conv = getConversation();
+                    const picked = conv?.pickedChatIndices;
                     if (picked && picked.length > 0) {
                         chatSlice = picked.filter(i => i >= 0 && i < chat.length).map(i => chat[i]);
                     } else if (depth > 0) {
@@ -1179,7 +1179,7 @@ export function updateMsgCount(session) {
                 }
 
                 const limit = Math.max(1, parseInt(settings.localHistoryLimit) || 50);
-                for (const m of session.messages.slice(-limit)) {
+                for (const m of conversation.messages.slice(-limit)) {
                     totalChars += (m.content || '').length;
                 }
 
@@ -1206,7 +1206,7 @@ export function updateDepthSlidersMax() {
     }
 
     const s = getSettings();
-    const sess = getCurrentSession();
+    const conv = getConversation();
     let settingsChanged = false;
 
     const globalDepth = parseInt(s.contextDepth) || 0;
@@ -1215,10 +1215,10 @@ export function updateDepthSlidersMax() {
         settingsChanged = true;
     }
 
-    if (sess && sess.overrides && sess.overrides.contextDepth !== undefined) {
-        const ovDepth = parseInt(sess.overrides.contextDepth) || 0;
+    if (conv && conv.overrides && conv.overrides.contextDepth !== undefined) {
+        const ovDepth = parseInt(conv.overrides.contextDepth) || 0;
         if (ovDepth >= state.lastChatLen && maxVal > state.lastChatLen) {
-            sess.overrides.contextDepth = maxVal;
+            conv.overrides.contextDepth = maxVal;
             settingsChanged = true;
         }
     }
@@ -1409,16 +1409,16 @@ export function navigateSearch(dir) {
 // ─── Chat Picker ───────────────────────────────────────────────
 
 export function getPickedChatIndices() {
-    try { return getCurrentSession().pickedChatIndices || []; } catch(_) { return []; }
+    try { return getConversation().pickedChatIndices || []; } catch(_) { return []; }
 }
 
 export function setPickedChatIndices(indices) {
     try {
-        const sess = getCurrentSession();
-        sess.pickedChatIndices = [...indices].sort((a, b) => a - b);
-        saveSessionsToMetadata();
+        const conv = getConversation();
+        conv.pickedChatIndices = [...indices].sort((a, b) => a - b);
+        saveConversation();
         updatePickBtnState();
-        updateMsgCount(sess);
+        updateMsgCount(conv);
     } catch(_) {}
 }
 
@@ -1646,7 +1646,7 @@ export function setGeneratingState(on) {
     if (regenBtn) regenBtn.disabled = on;
     if (!on) {
         _refreshContinueBtns();
-        _refreshSwipeBars(getCurrentSession());
+        _refreshSwipeBars(getConversation());
     }
 }
 
@@ -1706,11 +1706,11 @@ export async function onChatChanged() {
         else { badge.style.display = 'none'; }
     }
     
-    await initChatBucket();
+    await initConversation();
     
     if (uiSetMod) {
         uiSetMod.autoLoadBoundProfile();
-        uiSetMod.updateSessionOverrideIndicator();
+        uiSetMod.updateConversationOverrideIndicator();
     }
     if (uiWdgMod) {
         uiWdgMod.renderQuickPromptsBar();
@@ -1761,7 +1761,7 @@ export function setupDepthClickEdit() {
             
             const slider = document.getElementById('iv-depth-slider');
             if (slider) { slider.value = val; }
-            updateMsgCount(getCurrentSession());
+            updateMsgCount(getConversation());
         };
         input.addEventListener('blur', commit);
         input.addEventListener('keydown', e => { 

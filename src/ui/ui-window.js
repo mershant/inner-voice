@@ -1,4 +1,4 @@
-import { getSettings, saveSettings } from '../session.js';
+import { getSettings, saveSettings } from '../conversation.js';
 import { state } from '../state.js';
 import { THEME_CSS_MAP, THEME_PRESETS, ICON_STORAGE_KEY, WIN_ID, EXT_DISPLAY } from '../constants.js';
 import { scrollToBottom, saveScrollPosition, restoreScrollPosition } from './ui-chat.js';
@@ -121,7 +121,7 @@ export function makeDraggable(handle, target) {
     };
 
     handle.addEventListener('pointerdown', e => {
-        if (e.target.closest('.iv-hbtn,.iv-tbtn,select,input,button,.iv-opacity-wrap,.iv-rh,.iv-sess-dropdown,.iv-sess-wrap')) return;
+        if (e.target.closest('.iv-hbtn,.iv-tbtn,select,input,button,.iv-opacity-wrap,.iv-rh')) return;
         
         isWobbly = getSettings().wobbleWindow !== false && !getSettings().performanceMode;
 

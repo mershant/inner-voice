@@ -42,8 +42,7 @@ Actions: \`add\`, \`update\`, \`delete\`.
 Routing Scopes (Choose based on instruction longevity/reach):
 - \`global\`: Persists EVERYWHERE. Use for core, permanent Human traits (e.g., IRL profession, absolute formatting rules, universal hard limits).
 - \`character\`: Persists ONLY for current {{char}}. Use for technical OOC instructions tailored to this specific bot (e.g., "Human requires verbose prose for this bot", "Human wants to avoid romance with this bot").
-- \`chat\`: Persists ONLY in this specific roleplay thread. Use for current storyline structural goals (e.g., "Human wants to shift genre to horror here", "Focus on pacing in this scene").
-- \`session\`: Persists ONLY in this current Inner Voice conversation. Use for immediate, temporary directives (e.g., "Human is testing a prompt", "Keep next answers very short").
+- \`chat\`: Persists ONLY in this specific main chat and its inner conversation. Use for current storyline structural goals or immediate, temporary directives (e.g., "Human wants to shift genre to horror here", "Keep next answers very short").
 </memory_logic>
 
 <output_requirement>
@@ -57,7 +56,7 @@ Every entry MUST start with the exact word "Human".
 # Format: 
 {{memory_format}}
 </output_requirement>`;
-export const MEMORY_FORMAT_BLOCK = `\`\`\`memory-update\n[\n  {"action":"add","scope":"global|character|chat|session","key":"CategoryName","value":"Fact to remember"},\n  {"action":"edit","scope":"exact_existing_scope","key":"exact_existing_key","value":"Updated fact"},\n  {"action":"delete","scope":"exact_existing_scope","key":"exact_existing_key"}\n]\n\`\`\``;
+export const MEMORY_FORMAT_BLOCK = `\`\`\`memory-update\n[\n  {"action":"add","scope":"global|character|chat","key":"CategoryName","value":"Fact to remember"},\n  {"action":"edit","scope":"exact_existing_scope","key":"exact_existing_key","value":"Updated fact"},\n  {"action":"delete","scope":"exact_existing_scope","key":"exact_existing_key"}\n]\n\`\`\``;
 
 export const DEFAULT_TOOLS_PROMPT = `Imperative: NEVER hallucinate missing context. If chat history, specific lore, or data appears absent, DO NOT assume the chat hasn't started or the data doesn't exist. You MUST proactively use your tools to fetch, verify, and retrieve the actual state before answering.
 

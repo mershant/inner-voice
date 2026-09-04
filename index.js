@@ -42,8 +42,7 @@ Actions: \`add\`, \`update\`, \`delete\`.
 Routing Scopes (Choose based on instruction longevity/reach):
 - \`global\`: Persists EVERYWHERE. Use for core, permanent Human traits (e.g., IRL profession, absolute formatting rules, universal hard limits).
 - \`character\`: Persists ONLY for current {{char}}. Use for technical OOC instructions tailored to this specific bot (e.g., "Human requires verbose prose for this bot", "Human wants to avoid romance with this bot").
-- \`chat\`: Persists ONLY in this specific roleplay thread. Use for current storyline structural goals (e.g., "Human wants to shift genre to horror here", "Focus on pacing in this scene").
-- \`session\`: Persists ONLY in this current Inner Voice conversation. Use for immediate, temporary directives (e.g., "Human is testing a prompt", "Keep next answers very short").
+- \`chat\`: Persists ONLY in this specific main chat and its inner conversation. Use for current storyline structural goals or immediate, temporary directives (e.g., "Human wants to shift genre to horror here", "Keep next answers very short").
 </memory_logic>
 
 <output_requirement>
@@ -57,7 +56,7 @@ Every entry MUST start with the exact word "Human".
 # Format: 
 {{memory_format}}
 </output_requirement>`;
-const MEMORY_FORMAT_BLOCK = `\`\`\`memory-update\n[\n  {"action":"add","scope":"global|character|chat|session","key":"CategoryName","value":"Fact to remember"},\n  {"action":"edit","scope":"exact_existing_scope","key":"exact_existing_key","value":"Updated fact"},\n  {"action":"delete","scope":"exact_existing_scope","key":"exact_existing_key"}\n]\n\`\`\``;
+const MEMORY_FORMAT_BLOCK = `\`\`\`memory-update\n[\n  {"action":"add","scope":"global|character|chat","key":"CategoryName","value":"Fact to remember"},\n  {"action":"edit","scope":"exact_existing_scope","key":"exact_existing_key","value":"Updated fact"},\n  {"action":"delete","scope":"exact_existing_scope","key":"exact_existing_key"}\n]\n\`\`\``;
 
 const DEFAULT_TOOLS_PROMPT = `Imperative: NEVER hallucinate missing context. If chat history, specific lore, or data appears absent, DO NOT assume the chat hasn't started or the data doesn't exist. You MUST proactively use your tools to fetch, verify, and retrieve the actual state before answering.
 
@@ -410,13 +409,13 @@ const state = {
 const DBG_STATE = {
     log: [],
     MAX: 3000,
-    sessionStart: new Date().toISOString(),
+    startedAt: new Date().toISOString(),
     snapshot: null,
     diffTid: null
 };
 
 const DBG_SKIP = new Set([
-    'customTheme','savedThemes','sessions',
+    'customTheme','savedThemes',
     'quickPromptSets','customSounds','completionSoundData',
     'quickPrompts','profiles','promptPresets',
     'windowBgUrl','customBackgrounds','memories'
@@ -521,8 +520,8 @@ function dbgDownload() {
         }
     }
 
-    let sessionMsgs = 0;
-    try { sessionMsgs = getCurrentSession()?.messages?.length || 0; } catch(_) {}
+    let conversationTurns = 0;
+    try { conversationTurns = getConversation()?.messages?.length || 0; } catch(_) {}
 
     const disabledExts = ctx.extensionSettings?.disabledExtensions || [];
     const allExts = Object.keys(ctx.extensionSettings || {}).filter(k => k !== 'disabledExtensions' && typeof ctx.extensionSettings[k] === 'object');
@@ -538,8 +537,8 @@ function dbgDownload() {
         characterId: ctx.characterId,
         chatId: ctx.chatId,
         stChatLength: ctx.chat?.length || 0,
-        sessionMsgs,
-        hasActiveSessionOverrides: hasSessionOverrides(),
+        conversationTurns,
+        hasActiveConversationOverrides: hasConversationOverrides(),
         activeConnectionProfile: activeProfileName,
         activeConnectionProfileData: activeProfileData,
         connectionProfiles: profiles.map(p => ({
@@ -551,7 +550,7 @@ function dbgDownload() {
 
     const lines = [
         '=== Inner Voice Debug Log ===',
-        `Version: ${extVersion} | Session Start: ${DBG_STATE.sessionStart} | Downloaded: ${new Date().toISOString()}`,
+        `Version: ${extVersion} | Log Start: ${DBG_STATE.startedAt} | Downloaded: ${new Date().toISOString()}`,
         `Entries: ${DBG_STATE.log.length} / ${DBG_STATE.MAX} max`,
         '='.repeat(70),
         '=== SillyTavern Global Environment ===',
@@ -638,10 +637,41 @@ function _ensureWrapped(text, tag) {
     return `${open}\n${t}\n${close}`;
 }
 
-function migrateBucket(bucket) {
-    const next = bucket && typeof bucket === 'object' ? bucket : { activeSessionId: null, sessions: [] };
-    if (!Array.isArray(next.sessions)) next.sessions = [];
+// ─── The exchange spine ──────────────────────────────────────────────────────
+// One continuous inner conversation per main chat. Every turn is anchored to a
+// main-chat message (its anchorIndex). The set of turns sharing one anchor is
+// an exchange; a main-chat message holds at most one exchange. New turns are
+// only ever created at the live edge — the latest main-chat message. Older
+// exchanges stay readable but never grow.
+
+function emptyConversation() {
+    return { messages: [], overrides: {}, pickedChatIndices: [] };
+}
+
+function normalizeConversation(conv) {
+    const next = conv && typeof conv === 'object' ? conv : emptyConversation();
+    if (!Array.isArray(next.messages)) next.messages = [];
+    if (!next.overrides || typeof next.overrides !== 'object') next.overrides = {};
+    if (!Array.isArray(next.pickedChatIndices)) next.pickedChatIndices = [];
+    for (const m of next.messages) {
+        if (m.anchorIndex === undefined) m.anchorIndex = null;
+    }
     return next;
+}
+
+// A legacy multi-session bucket ({ activeSessionId, sessions: [...] }) folds
+// into the single conversation: the active session's turns are kept as one
+// pre-spine segment (anchorIndex null), along with its overrides and picks.
+function migrateLegacyBucket(bucket) {
+    const conv = emptyConversation();
+    if (!bucket || !Array.isArray(bucket.sessions) || !bucket.sessions.length) return conv;
+    const active = bucket.sessions.find(s => s.id === bucket.activeSessionId)
+        || bucket.sessions[bucket.sessions.length - 1];
+    if (!active) return conv;
+    conv.messages = Array.isArray(active.messages) ? active.messages : [];
+    conv.overrides = active.overrides && typeof active.overrides === 'object' ? active.overrides : {};
+    conv.pickedChatIndices = Array.isArray(active.pickedChatIndices) ? active.pickedChatIndices : [];
+    return normalizeConversation(conv);
 }
 
 // ─── Settings ───────────────────────────────────────────────────────────────
@@ -681,7 +711,6 @@ function getSettings() {
         customTheme: { ...THEME_PRESETS.default },
         savedThemes: {},
         activeThemeProfile: '',
-        sessions: {},
         floatingIconPersistent: false,
         reasoningTrimStrings: '',
         ghostModeOpacity: 15,
@@ -733,6 +762,7 @@ function getSettings() {
     for (const [k, v] of Object.entries(defaults)) {
         if (s[k] === undefined) s[k] = v;
     }
+    delete s.sessions; // legacy multi-session store; the conversation file owns state now
     return s;
 }
 
@@ -758,59 +788,63 @@ function getBindingKey() {
         } else if (typeof ctx.getCurrentChatId === 'function') {
             const r = ctx.getCurrentChatId(); if (r) chatId = String(r);
         }
-        
+
         if (chatId === 'default' || !chatId) {
             if (ctx.chatId) chatId = String(ctx.chatId);
             else if (typeof window.chat_id !== 'undefined' && window.chat_id !== null) chatId = String(window.chat_id);
         }
     } catch (_) {}
-    
+
     return { charId, chatId };
 }
 
-// ─── Session Override System ─────────────────────────────────────────────────
-function getSessionOverrides() {
-    try { return getActiveSession(false)?.overrides || {}; } catch(_) { return {}; }
+// ─── Per-Chat Setting Overrides ─────────────────────────────────────────────
+// Overrides ride on this chat's inner conversation and persist with it.
+
+function getConversationOverrides() {
+    try { return getConversation().overrides || {}; } catch (_) { return {}; }
 }
 
 function getEffectiveSettings() {
-    return { ...getSettings(), ...getSessionOverrides() };
+    return { ...getSettings(), ...getConversationOverrides() };
 }
 
-function setSessionOverride(key, value) {
+function setConversationOverride(key, value) {
     try {
-        const sess = getCurrentSession();
-        if (!sess) return;
-        if (!sess.overrides) sess.overrides = {};
-        if (value === undefined || value === null) delete sess.overrides[key];
-        else sess.overrides[key] = value;
-        saveSessionsToMetadata();
-        Promise.resolve().then(function () { return uiSettings; }).then(m => m.updateSessionOverrideIndicator());
-    } catch(_) {}
+        const conv = getConversation();
+        if (!conv.overrides) conv.overrides = {};
+        if (value === undefined || value === null) delete conv.overrides[key];
+        else conv.overrides[key] = value;
+        saveConversation();
+        Promise.resolve().then(function () { return uiSettings; }).then(m => m.updateConversationOverrideIndicator());
+    } catch (_) {}
 }
 
-function clearAllSessionOverrides() {
+function clearAllConversationOverrides() {
     try {
-        const sess = getCurrentSession();
-        if (!sess) return;
-        sess.overrides = {};
-        saveSessionsToMetadata();
-        Promise.resolve().then(function () { return uiSettings; }).then(m => m.updateSessionOverrideIndicator());
-    } catch(_) {}
+        const conv = getConversation();
+        conv.overrides = {};
+        saveConversation();
+        Promise.resolve().then(function () { return uiSettings; }).then(m => m.updateConversationOverrideIndicator());
+    } catch (_) {}
 }
 
-function hasSessionOverrides() {
-    try { const o = getActiveSession(false)?.overrides; return !!(o && Object.keys(o).length > 0); }
-    catch(_) { return false; }
+function hasConversationOverrides() {
+    try { const o = getConversation().overrides; return !!(o && Object.keys(o).length > 0); }
+    catch (_) { return false; }
 }
 
-// ─── Storage Subsystem ─────────────────────────────
+// ─── Storage Subsystem ──────────────────────────────────────────────────────
 
-let _inMemoryBucket = { activeSessionId: null, sessions: [] };
-let _currentSessionFileId = null;
+let _conversation = emptyConversation();
+let _currentFileId = null;
 const _saveQueue = new Map();
 
-async function saveSessionFile(file_id, payload, useKeepalive = false) {
+function freshFileId() {
+    return `inner_voice_conv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
+}
+
+async function saveConversationFile(file_id, payload, useKeepalive = false) {
     const ctx = SillyTavern.getContext();
     try {
         const jsonStr = JSON.stringify(payload);
@@ -824,7 +858,7 @@ async function saveSessionFile(file_id, payload, useKeepalive = false) {
         return res.ok;
     } catch (e) {
         _dbgAdd('STORAGE_WRITE_FAILED', { file_id, error: e.message });
-        console.error(`[${EXT_DISPLAY}] saveSessionFile error:`, e);
+        console.error(`[${EXT_DISPLAY}] saveConversationFile error:`, e);
         return false;
     }
 }
@@ -832,7 +866,7 @@ async function saveSessionFile(file_id, payload, useKeepalive = false) {
 window.addEventListener('beforeunload', () => {
     for (const [fileId, item] of _saveQueue.entries()) {
         clearTimeout(item.timer);
-        saveSessionFile(fileId, item.payload, true);
+        saveConversationFile(fileId, item.payload, true);
     }
 });
 
@@ -840,7 +874,7 @@ function _decodeBase64Utf8(b64) {
     return decodeURIComponent(escape(atob(b64)));
 }
 
-function _tryParseSessionPayload(text) {
+function _tryParsePayload(text) {
     try { return JSON.parse(text); } catch (_) {}
     try { return JSON.parse(_decodeBase64Utf8(text)); } catch (_) {}
     try { return JSON.parse(_repairJSON(text)); } catch (_) {}
@@ -848,7 +882,7 @@ function _tryParseSessionPayload(text) {
     return undefined;
 }
 
-async function loadSessionFile(file_id) {
+async function loadConversationFile(file_id) {
     try {
         const res = await fetch(`/user/files/${file_id}`);
         if (res.status === 404) return null;
@@ -863,137 +897,133 @@ async function loadSessionFile(file_id) {
             return null;
         }
 
-        const parsed = _tryParseSessionPayload(trimmed);
+        const parsed = _tryParsePayload(trimmed);
         if (parsed === undefined) throw new Error('Unrecoverable payload after base64/repair fallback');
         return parsed;
     } catch (e) {
         _dbgAdd('STORAGE_LOAD_ERROR', { file_id, error: e.message });
-        console.error(`[${EXT_DISPLAY}] loadSessionFile error:`, e);
-        return false; 
+        console.error(`[${EXT_DISPLAY}] loadConversationFile error:`, e);
+        return false;
     }
 }
 
-async function initChatBucket({ forceReset = false } = {}) {
+function conversationFromPayload(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    if (payload.conversation) return normalizeConversation(payload.conversation);
+    if (payload.bucket) return migrateLegacyBucket(payload.bucket);
+    return null;
+}
+
+async function initConversation({ forceReset = false } = {}) {
     const ctx = SillyTavern.getContext();
     if (!ctx.chatMetadata) ctx.chatMetadata = {};
     const { charId, chatId } = getBindingKey();
 
     if (forceReset) {
         const prevMeta = ctx.chatMetadata.inner_voice || null;
-        const freshId = `inner_voice_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
-        ctx.chatMetadata.inner_voice = { format: 'v4', file_id: freshId, chat_id: chatId };
+        const freshId = freshFileId();
+        ctx.chatMetadata.inner_voice = { format: 'v5', file_id: freshId, chat_id: chatId };
         if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
-        _currentSessionFileId = freshId;
-        _inMemoryBucket = migrateBucket({ activeSessionId: null, sessions: [] });
-        await commitBucketChanges(true);
-        _dbgAdd('SESSION_FORCE_RESET', { charId, chatId, prevFileId: prevMeta?.file_id || null, newFileId: freshId });
+        _currentFileId = freshId;
+        _conversation = emptyConversation();
+        await commitConversation(true);
+        _dbgAdd('CONVERSATION_FORCE_RESET', { charId, chatId, prevFileId: prevMeta?.file_id || null, newFileId: freshId });
         return;
     }
 
     for (const [fileId, item] of _saveQueue.entries()) {
         clearTimeout(item.timer);
         _saveQueue.delete(fileId);
-        saveSessionFile(fileId, item.payload);
+        saveConversationFile(fileId, item.payload);
     }
 
-    let meta = ctx.chatMetadata.inner_voice;
+    const meta = ctx.chatMetadata.inner_voice;
+    const knownFormat = meta && meta.file_id && (meta.format === 'v5' || meta.format === 'v4');
     let targetFileId = null;
     let payload = null;
 
-    if (meta && meta.file_id && meta.format === 'v4') {
+    if (knownFormat) {
         if (meta.chat_id === chatId) {
             targetFileId = meta.file_id;
-            payload = await loadSessionFile(targetFileId);
+            payload = await loadConversationFile(targetFileId);
+            if (meta.format !== 'v5') {
+                ctx.chatMetadata.inner_voice = { ...meta, format: 'v5' };
+                if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
+            }
         } else {
             _dbgAdd('STORAGE_CHAT_BRANCH_DETECTED', { oldChatId: meta.chat_id, newChatId: chatId });
-            payload = await loadSessionFile(meta.file_id);
-            targetFileId = `inner_voice_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
-            
+            payload = await loadConversationFile(meta.file_id);
+            targetFileId = freshFileId();
+
             if (payload && payload !== false) {
-                await saveSessionFile(targetFileId, payload);
+                await saveConversationFile(targetFileId, payload);
             }
-            
-            ctx.chatMetadata.inner_voice = { format: 'v4', file_id: targetFileId, chat_id: chatId };
+
+            ctx.chatMetadata.inner_voice = { format: 'v5', file_id: targetFileId, chat_id: chatId };
             if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
         }
     } else {
-        targetFileId = `inner_voice_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
-        _dbgAdd('STORAGE_MIGRATION_V4_INIT', { targetFileId });
-        
-        const safeChatId = chatId.replace(/[^a-zA-Z0-9_-]/g, '_');
-        payload = await loadSessionFile(`inner_voice_sess_${safeChatId}.json`);
+        targetFileId = freshFileId();
+        _dbgAdd('STORAGE_INIT_V5', { targetFileId });
 
-        if (!payload && meta && meta.file_id && meta.format !== 'v4') {
-            payload = await loadSessionFile(meta.file_id);
+        if (meta && meta.file_id) {
+            payload = await loadConversationFile(meta.file_id);
         }
 
-        if (!payload) {
-            const s = getSettings();
-            if (s.sessions && s.sessions[charId]) {
-                if (s.sessions[charId][chatId] && s.sessions[charId][chatId].sessions?.length > 0) {
-                    payload = { bucket: { ...s.sessions[charId][chatId] } };
-                    delete s.sessions[charId][chatId]; saveSettings();
-                } else if (s.sessions[charId]['unified'] && s.sessions[charId]['unified'].sessions?.length > 0) {
-                    payload = { bucket: { ...s.sessions[charId]['unified'] } };
-                    delete s.sessions[charId]['unified']; saveSettings();
-                }
-            }
-        }
-
-        ctx.chatMetadata.inner_voice = { format: 'v4', file_id: targetFileId, chat_id: chatId };
+        ctx.chatMetadata.inner_voice = { format: 'v5', file_id: targetFileId, chat_id: chatId };
         if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
     }
 
-    _currentSessionFileId = targetFileId;
+    _currentFileId = targetFileId;
 
     if (payload === false) {
         _dbgAdd('STORAGE_LOAD_CORRUPTED_RECOVERY', { brokenFileId: targetFileId, charId, chatId });
-        const recoveryFileId = `inner_voice_sess_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
-        ctx.chatMetadata.inner_voice = { format: 'v4', file_id: recoveryFileId, chat_id: chatId, recoveredFrom: targetFileId };
+        const recoveryFileId = freshFileId();
+        ctx.chatMetadata.inner_voice = { format: 'v5', file_id: recoveryFileId, chat_id: chatId, recoveredFrom: targetFileId };
         if (typeof ctx.saveMetadata === 'function') ctx.saveMetadata();
 
-        targetFileId = recoveryFileId;
-        _inMemoryBucket = migrateBucket({ activeSessionId: null, sessions: [] });
-        _currentSessionFileId = targetFileId;
-        await commitBucketChanges(true);
+        _currentFileId = recoveryFileId;
+        _conversation = emptyConversation();
+        await commitConversation(true);
 
         toastr.error('The inner conversation file was corrupted and could not be recovered. Started fresh storage for this chat; the broken file was kept on disk for manual recovery.', EXT_DISPLAY, { timeOut: 15000 });
         return;
     }
 
-    if (payload && payload.bucket) {
-        _inMemoryBucket = migrateBucket(payload.bucket);
-        _dbgAdd('STORAGE_BUCKET_LOADED', { charId, chatId, fileId: targetFileId, sessionCount: _inMemoryBucket.sessions?.length || 0 });
+    const loaded = conversationFromPayload(payload);
+    if (loaded) {
+        _conversation = loaded;
+        _dbgAdd('STORAGE_CONVERSATION_LOADED', { charId, chatId, fileId: targetFileId, turnCount: _conversation.messages.length, migratedFromBucket: !payload.conversation });
     } else {
-        _inMemoryBucket = migrateBucket({ activeSessionId: null, sessions: [] });
-        _dbgAdd('STORAGE_BUCKET_EMPTY_INIT', { charId, chatId, fileId: targetFileId, hadPayload: !!payload });
+        _conversation = emptyConversation();
+        _dbgAdd('STORAGE_CONVERSATION_EMPTY_INIT', { charId, chatId, fileId: targetFileId, hadPayload: !!payload });
     }
-    
-    if (!payload || meta?.format !== 'v4') {
-        await commitBucketChanges(true);
+
+    if (!payload || !payload.conversation || meta?.format !== 'v5' || meta?.chat_id !== chatId) {
+        await commitConversation(true);
     }
 }
 
-async function commitBucketChanges(force = false) {
-    const fileName = _currentSessionFileId;
+async function commitConversation(force = false) {
+    const fileName = _currentFileId;
     if (!fileName) return;
 
     const { chatId } = getBindingKey();
-    const snapshot = JSON.parse(JSON.stringify(_inMemoryBucket));
-    
+    const snapshot = JSON.parse(JSON.stringify(_conversation));
+
     const payloadToSave = {
-        _version: 4,
+        _version: 5,
         chat_id_reference: chatId,
         updated_at: Date.now(),
-        bucket: snapshot
+        conversation: snapshot
     };
 
     if (force) {
         const existing = _saveQueue.get(fileName);
         if (existing) clearTimeout(existing.timer);
         _saveQueue.delete(fileName);
-        
-        const success = await saveSessionFile(fileName, payloadToSave);
+
+        const success = await saveConversationFile(fileName, payloadToSave);
         if (!success) _dbgAdd('STORAGE_WRITE_FAILED', { fileName });
     } else {
         const existing = _saveQueue.get(fileName);
@@ -1001,89 +1031,92 @@ async function commitBucketChanges(force = false) {
 
         const timer = setTimeout(() => {
             _saveQueue.delete(fileName);
-            saveSessionFile(fileName, payloadToSave);
+            saveConversationFile(fileName, payloadToSave);
         }, 1000);
 
         _saveQueue.set(fileName, { timer, payload: payloadToSave });
     }
 }
 
-function saveSessionsToMetadata() {
-    commitBucketChanges();
+function saveConversation() {
+    commitConversation();
 }
 
-function getChatBucket() {
-    _inMemoryBucket = migrateBucket(_inMemoryBucket);
-    return _inMemoryBucket;
+function getConversation() {
+    _conversation = normalizeConversation(_conversation);
+    return _conversation;
 }
 
-// ─── Session Helpers ─────────────────────────────────────────────────────────
+// ─── Exchange Spine Helpers ─────────────────────────────────────────────────
 
 function genId(prefix) { return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`; }
 
-function createSession(name) {
-    const bucket = getChatBucket();
-    const id = genId('sess');
-    const sess = { id, name: name || `Session ${bucket.sessions.length + 1}`, created: Date.now(), messages: [] };
-
-    bucket.sessions.push(sess);
-    bucket.activeSessionId = id;
-
-    saveSessionsToMetadata();
-    _dbgAdd('SESSION_CREATED', { id: sess.id, name: sess.name });
-    return sess;
-}
-
-function getActiveSession(autoCreate = true) {
-    const bucket = getChatBucket();
-    if (!bucket.sessions.length || !bucket.activeSessionId) {
-        return autoCreate ? createSession() : null;
+// The live edge: index of the latest main-chat message, or null before the
+// story has any messages.
+function getLiveEdgeIndex() {
+    try {
+        const chat = SillyTavern.getContext().chat;
+        if (!Array.isArray(chat) || !chat.length) return null;
+        return chat.length - 1;
+    } catch (_) {
+        return null;
     }
-    const sess = bucket.sessions.find(s => s.id === bucket.activeSessionId);
-    if (sess) return sess;
-    return autoCreate ? createSession() : null;
 }
 
-function getCurrentSession() {
-    return getActiveSession(true);
-}
-
-function addMessage(session, role, content, extra = {}) {
-    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), ...extra };
-    session.messages.push(msg); 
-    if (session.messages.length > 400) session.messages = session.messages.slice(-400);
-    saveSessionsToMetadata(); 
+// Adds a turn at the live edge. Every new turn anchors there — thinking always
+// happens in the present.
+function addTurn(conversation, role, content, extra = {}) {
+    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ...extra };
+    conversation.messages.push(msg);
+    if (conversation.messages.length > 400) conversation.messages = conversation.messages.slice(-400);
+    saveConversation();
     return msg;
 }
 
-function insertMessageAfter(session, afterMsgId, role, content, extra = {}) {
-    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), ...extra };
-    const idx = afterMsgId ? session.messages.findIndex(m => m.id === afterMsgId) : -1;
-    if (idx !== -1) session.messages.splice(idx + 1, 0, msg);
-    else session.messages.push(msg);
-    if (session.messages.length > 400) session.messages = session.messages.slice(-400);
-    saveSessionsToMetadata();
-    return msg;
+// Adds a turn only if the requested anchor is the live edge; old exchanges
+// reject new turns. Returns the turn, or null when rejected.
+function addTurnAt(conversation, anchorIndex, role, content, extra = {}) {
+    if (anchorIndex !== getLiveEdgeIndex()) return null;
+    return addTurn(conversation, role, content, extra);
 }
 
-function updateMessage(session, msgId, newContent) {
-    const msg = session.messages.find(m => m.id === msgId);
-    if (msg) { msg.content = newContent; saveSessionsToMetadata(); }
+// Groups the conversation's turns into exchanges — one per anchor, in order.
+function getExchanges(conversation) {
+    const groups = new Map();
+    for (const m of conversation.messages) {
+        const anchor = m.anchorIndex === undefined ? null : m.anchorIndex;
+        if (!groups.has(anchor)) groups.set(anchor, { anchorIndex: anchor, turns: [] });
+        groups.get(anchor).turns.push(m);
+    }
+    return [...groups.values()];
 }
 
-function truncateAfter(session, msgId) {
-    const idx = session.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { session.messages.splice(idx + 1); saveSessionsToMetadata(); }
+function getExchangeAt(conversation, anchorIndex) {
+    return getExchanges(conversation).find(e => e.anchorIndex === anchorIndex) || null;
 }
 
-function deleteMsg(session, msgId) {
-    const idx = session.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { session.messages.splice(idx, 1); saveSessionsToMetadata(); }
+// The exchange at the live edge — the only one that can still grow.
+function getLiveExchange(conversation) {
+    const edge = getLiveEdgeIndex();
+    if (edge === null) return null;
+    return getExchangeAt(conversation, edge);
 }
 
-function truncateFrom(session, msgId) {
-    const idx = session.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { session.messages.splice(idx); saveSessionsToMetadata(); }
+// ─── Turn Editing Helpers ───────────────────────────────────────────────────
+
+function truncateAfter(conversation, msgId) {
+    const idx = conversation.messages.findIndex(m => m.id === msgId);
+    if (idx !== -1) { conversation.messages.splice(idx + 1); saveConversation(); }
+}
+
+function deleteMsg(conversation, msgId) {
+    const idx = conversation.messages.findIndex(m => m.id === msgId);
+    if (idx !== -1) { conversation.messages.splice(idx, 1); saveConversation(); }
+}
+
+function truncateFrom(conversation, msgId) {
+    const idx = conversation.messages.findIndex(m => m.id === msgId);
+    if (idx !== -1) { conversation.messages.splice(idx); saveConversation(); }
 }
 
 // ─── Macro Expansion Helper ────────────────────────────────────────────────
@@ -1141,33 +1174,33 @@ function expandMacros(text) {
     }
 }
 
-var session = /*#__PURE__*/Object.freeze({
+var conversation = /*#__PURE__*/Object.freeze({
     __proto__: null,
-    addMessage: addMessage,
-    clearAllSessionOverrides: clearAllSessionOverrides,
-    commitBucketChanges: commitBucketChanges,
-    createSession: createSession,
+    addTurn: addTurn,
+    addTurnAt: addTurnAt,
+    clearAllConversationOverrides: clearAllConversationOverrides,
+    commitConversation: commitConversation,
     deleteMsg: deleteMsg,
     expandMacros: expandMacros,
     genId: genId,
-    getActiveSession: getActiveSession,
     getBindingKey: getBindingKey,
-    getChatBucket: getChatBucket,
-    getCurrentSession: getCurrentSession,
+    getConversation: getConversation,
+    getConversationOverrides: getConversationOverrides,
     getEffectiveSettings: getEffectiveSettings,
-    getSessionOverrides: getSessionOverrides,
+    getExchangeAt: getExchangeAt,
+    getExchanges: getExchanges,
+    getLiveEdgeIndex: getLiveEdgeIndex,
+    getLiveExchange: getLiveExchange,
     getSettings: getSettings,
-    hasSessionOverrides: hasSessionOverrides,
-    initChatBucket: initChatBucket,
-    insertMessageAfter: insertMessageAfter,
-    loadSessionFile: loadSessionFile,
-    saveSessionFile: saveSessionFile,
-    saveSessionsToMetadata: saveSessionsToMetadata,
+    hasConversationOverrides: hasConversationOverrides,
+    initConversation: initConversation,
+    loadConversationFile: loadConversationFile,
+    saveConversation: saveConversation,
+    saveConversationFile: saveConversationFile,
     saveSettings: saveSettings,
-    setSessionOverride: setSessionOverride,
+    setConversationOverride: setConversationOverride,
     truncateAfter: truncateAfter,
-    truncateFrom: truncateFrom,
-    updateMessage: updateMessage
+    truncateFrom: truncateFrom
 });
 
 function escHtml(str) {
@@ -1370,18 +1403,15 @@ function getMemories() {
 
 function getVisibleMemories() {
     const { charId, chatId } = getBindingKey();
-    const sessionId = getCurrentSession()?.id;
     const all = Object.values(getMemories());
-    
-    ({
-        totalStored: all.length});
-    
+
     return all.filter(m => {
         if (m.disabled) return false;
         if (m.scope === 'global') return true;
         if (m.scope === 'character') return m.charId === charId;
-        if (m.scope === 'chat') return m.charId === charId && m.chatId === chatId;
-        if (m.scope === 'session') return m.charId === charId && m.chatId === chatId && m.sessionId === sessionId;
+        // Legacy 'session' memories collapse into the chat scope: one main chat
+        // now has exactly one inner conversation.
+        if (m.scope === 'chat' || m.scope === 'session') return m.charId === charId && m.chatId === chatId;
         return m.charId === charId; // fallback
     });
 }
@@ -1391,18 +1421,14 @@ function addMemory(key, value, scope = 'character') {
     const ctx = SillyTavern.getContext();
     const charName = ctx.characters?.[charId]?.name || charId || 'Unknown Character';
     const chatName = chatId || 'Unknown Chat';
-    const sessionObj = getCurrentSession();
-    const sessionId = sessionObj?.id;
-    const sessionName = sessionObj?.name || sessionId || 'Unknown Session';
-    
+
     const id = genMemoryId();
     getMemories()[id] = {
         id, key: key.trim(), value: value.trim(),
         createdAt: Date.now(),
-        scope: ['global', 'character', 'chat', 'session'].includes(scope) ? scope : 'character',
+        scope: ['global', 'character', 'chat'].includes(scope) ? scope : 'character',
         charId, charName,
         chatId, chatName,
-        sessionId, sessionName,
         disabled: false
     };
     saveSettings();
@@ -1497,7 +1523,7 @@ function processMemoryUpdates(text, msgId) {
     const applied = [];
     for (const ch of changes) {
         if (ch.action === 'add' && ch.key && ch.value) {
-            const targetScope = ['global', 'character', 'chat', 'session'].includes(ch.scope) ? ch.scope : 'character';
+            const targetScope = ['global', 'character', 'chat'].includes(ch.scope) ? ch.scope : 'character';
             const mem = getVisibleMemories().find(m => m.scope === targetScope && m.key === ch.key);
             
             if (mem) {
@@ -1520,7 +1546,7 @@ function processMemoryUpdates(text, msgId) {
         } else {
             if (ch.action && !['add', 'edit', 'update', 'delete'].includes(ch.action)) {
                 _dbgAdd('MEM_AI_ACTION_UNKNOWN', { action: ch.action });
-            } else if (ch.scope && !['global', 'character', 'chat', 'session'].includes(ch.scope)) {
+            } else if (ch.scope && !['global', 'character', 'chat'].includes(ch.scope)) {
                 _dbgAdd('MEM_SCOPE_INVALID', { scope: ch.scope });
             }
         }
@@ -1586,19 +1612,10 @@ function renderMemoryList() {
             } else {
                 const chatId = m.chatId || 'unknown';
                 if (!charNode.chats[chatId]) {
-                    charNode.chats[chatId] = { name: m.chatName || chatId, memories: [], sessions: {} };
+                    charNode.chats[chatId] = { name: m.chatName || chatId, memories: [] };
                 }
-                const chatNode = charNode.chats[chatId];
-
-                if (m.scope === 'chat') {
-                    chatNode.memories.push(m);
-                } else if (m.scope === 'session') {
-                    const sessionId = m.sessionId || 'unknown';
-                    if (!chatNode.sessions[sessionId]) {
-                        chatNode.sessions[sessionId] = { name: m.sessionName || sessionId, memories: [] };
-                    }
-                    chatNode.sessions[sessionId].memories.push(m);
-                }
+                // Legacy 'session' memories render under their chat.
+                charNode.chats[chatId].memories.push(m);
             }
         }
     });
@@ -1712,22 +1729,7 @@ function renderMemoryList() {
                     const chatNode = cNode.chats[chatId];
                     const chatContent = [];
                     chatNode.memories.forEach(m => chatContent.push(createMemEl(m)));
-                    
-                    const sessKeys = Object.keys(chatNode.sessions);
-                    if (sessKeys.length > 0) {
-                        const sessWrapper = [];
-                        sessKeys.forEach(sessId => {
-                            const sNode = chatNode.sessions[sessId];
-                            const sEls = sNode.memories.map(createMemEl);
-                            const sDet = buildDetails(sNode.name, 'bolt', sEls);
-                            if (sDet) sessWrapper.push(sDet);
-                        });
-                        if (sessWrapper.length > 0) {
-                            const sMainDet = buildDetails('Sessions', 'layer-group', sessWrapper);
-                            if (sMainDet) chatContent.push(sMainDet);
-                        }
-                    }
-                    
+
                     const cDet = buildDetails(chatNode.name, 'comments', chatContent);
                     if (cDet) chatsWrapper.push(cDet);
                 });
@@ -1757,8 +1759,7 @@ async function editMemoryDialog(id) {
         const scopeOptions = [
             {val: 'global', text: 'Global (All chats)'},
             {val: 'character', text: 'Character (All chats with this character)'},
-            {val: 'chat', text: 'Chat (Only this specific chat)'},
-            {val: 'session', text: 'Session (Only this conversation)'}
+            {val: 'chat', text: 'Chat (This chat and its inner conversation)'}
         ];
         const currentScope = mem?.scope || 'character';
 
@@ -1808,8 +1809,6 @@ ${scopeHtml}
         m.charName = ctx.characters?.[charId]?.name || charId;
         m.chatId = chatId;
         m.chatName = chatId;
-        m.sessionId = getCurrentSession()?.id;
-        m.sessionName = getCurrentSession()?.name;
         saveSettings();
     }
     renderMemoryList();
@@ -2450,7 +2449,7 @@ async function updateSPConnProfileList() {
         const isOv = sid === 'iv-sp-ov-conn-profile';
         let targetVal = isOv ? (eff.connectionProfileId || '') : (s.connectionProfileId || '');
         if (targetVal && !profiles.some(p => p.id === targetVal)) {
-            if (isOv) setSessionOverride('connectionProfileId', undefined); else { s.connectionProfileId = ''; saveSettings(); }
+            if (isOv) setConversationOverride('connectionProfileId', undefined); else { s.connectionProfileId = ''; saveSettings(); }
             targetVal = '';
         }
         sel.innerHTML = '<option value="">-- Select Profile --</option>';
@@ -2677,20 +2676,16 @@ function _applyConnectionSourceVisibility(val) {
 }
 
 function _pruneMatchingOverrides() {
-    const s = getSettings(); const bucket = getChatBucket(); let changed = false;
-    
-    if (bucket && bucket.sessions) {
-        bucket.sessions.forEach(sess => {
-            if (!sess.overrides) return;
-            for (const key of Object.keys(sess.overrides)) {
-                const globalVal = s[key];
-                const isEqual = typeof globalVal === 'boolean' ? sess.overrides[key] === globalVal : String(sess.overrides[key]) === String(globalVal);
-                if (isEqual) { delete sess.overrides[key]; changed = true; }
-            }
-        });
-        if (changed) { saveSessionsToMetadata(); updateSessionOverrideIndicator(); }
-    }
+    const s = getSettings(); const conv = getConversation(); let changed = false;
 
+    if (conv && conv.overrides) {
+        for (const key of Object.keys(conv.overrides)) {
+            const globalVal = s[key];
+            const isEqual = typeof globalVal === 'boolean' ? conv.overrides[key] === globalVal : String(conv.overrides[key]) === String(globalVal);
+            if (isEqual) { delete conv.overrides[key]; changed = true; }
+        }
+        if (changed) { saveConversation(); updateConversationOverrideIndicator(); }
+    }
 }
 
 function _readFromSettings(def) {
@@ -2714,7 +2709,7 @@ function _bindSetting(def) {
         getSettings()[def.key] = val; saveSettings();
         _markDirty('config'); _pruneMatchingOverrides();
         if (def.onChange) def.onChange(val, getSettings());
-        if (def.updCtx) Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getCurrentSession()));
+        if (def.updCtx) Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getConversation()));
     };
 
     if (def.type === 'slider') {
@@ -2745,9 +2740,9 @@ function _syncOvToGlobal(key, newVal) {
     const globalVal = s[key];
     const isDefault = (newVal === undefined || newVal === null) ? true
         : (typeof globalVal === 'boolean' ? newVal === globalVal : String(newVal) === String(globalVal));
-    setSessionOverride(key, isDefault ? undefined : newVal);
+    setConversationOverride(key, isDefault ? undefined : newVal);
     updateSPOverrideIndicators();
-    Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getCurrentSession()));
+    Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getConversation()));
 }
 
 function _resetOvElToEffective(key) {
@@ -2791,12 +2786,12 @@ function syncOverlayUI(key, val) {
     if (key === 'forceStreaming') {
         const sv = val === true ? 'on' : (val === false ? 'auto' : (val || 'auto'));
         document.querySelectorAll('.iv-stream-btn:not(.iv-ov-stream-btn)').forEach(b => b.classList.toggle('active', b.dataset.stream === sv));
-        if (!('forceStreaming' in getSessionOverrides())) document.querySelectorAll('.iv-ov-stream-btn').forEach(b => b.classList.toggle('active', b.dataset.stream === sv));
+        if (!('forceStreaming' in getConversationOverrides())) document.querySelectorAll('.iv-ov-stream-btn').forEach(b => b.classList.toggle('active', b.dataset.stream === sv));
         return;
     }
     if (key === 'connectionSource') { _applyConnectionSourceVisibility(val); return; }
     if (key === 'contextDepth') { const dv = document.getElementById('iv-sp-depth-val'); if (dv) dv.textContent = val ?? 15; }
-    if (key in getSessionOverrides()) return;
+    if (key in getConversationOverrides()) return;
     if (_OV_EL_MAP[key]) _resetOvElToEffective(key);
 }
 
@@ -2824,7 +2819,7 @@ function updateSettingsUI() {
 }
 
 function syncSPFromSettings() {
-    const s = getSettings(); const ov = getSessionOverrides(); const eff = getEffectiveSettings();
+    const s = getSettings(); const ov = getConversationOverrides(); const eff = getEffectiveSettings();
     Promise.resolve().then(function () { return uiChat; }).then(m => { if (m.updateDepthSlidersMax) m.updateDepthSlidersMax(); });
 
     for (const def of _SETTINGS_DEF) {
@@ -2839,7 +2834,7 @@ function syncSPFromSettings() {
     _applyConnectionSourceVisibility(s.connectionSource ?? 'default');
     refreshSPProfilesDropdown(); updateSPConnProfileList();
 
-    // ── Session Override UI ──
+    // ── Conversation Override UI ──
     const g  = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
     const gC = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
 
@@ -2873,22 +2868,22 @@ function syncSPFromSettings() {
 }
 
 function updateSPOverrideIndicators() {
-    const ov = getSessionOverrides();
+    const ov = getConversationOverrides();
     document.querySelectorAll('.iv-sp-ov-label[data-ovkey]').forEach(l => l.classList.toggle('has-override', l.dataset.ovkey in ov));
     document.querySelectorAll('.iv-sp-ov-clear[data-ovkey]').forEach(btn => {
         const active = btn.dataset.ovkey in ov; btn.classList.toggle('active', active); btn.disabled = !active;
     });
 }
 
-function updateSessionOverrideIndicator() {
-    const has = hasSessionOverrides();
+function updateConversationOverrideIndicator() {
+    const has = hasConversationOverrides();
     const dot = document.getElementById('iv-sp-override-dot'); if (dot) dot.style.display = has ? '' : 'none';
     const gearDot = document.getElementById('iv-gear-ov-dot'); if (gearDot) gearDot.style.display = has ? '' : 'none';
     document.getElementById('iv-ext-settings-btn')?.classList.toggle('iv-has-overrides', has);
     updateSPOverrideIndicators();
     const info = document.getElementById('iv-sp-footer-info');
-    if (info) { const count = Object.keys(getSessionOverrides()).length; info.textContent = count ? `${count} session override${count !== 1 ? 's' : ''} active` : ''; }
-    const ov = getSessionOverrides(); const hasDepthOv = 'contextDepth' in ov;
+    if (info) { const count = Object.keys(getConversationOverrides()).length; info.textContent = count ? `${count} conversation override${count !== 1 ? 's' : ''} active` : ''; }
+    const ov = getConversationOverrides(); const hasDepthOv = 'contextDepth' in ov;
     document.getElementById('iv-depth-slider')?.classList.toggle('iv-slider-overridden', hasDepthOv);
     document.getElementById('iv-depth-val')?.classList.toggle('iv-depth-val-overridden', hasDepthOv);
 }
@@ -2911,7 +2906,7 @@ function openSettingsPanel() {
         );
         mkPresetMgr('iv-sp-prompt-preset-manager',      'iv-sp-ov-sysprompt',       undefined);
     }).catch(() => {});
-    overlay.style.display = 'flex'; updateSessionOverrideIndicator();
+    overlay.style.display = 'flex'; updateConversationOverrideIndicator();
     bringWindowToFront();
     Promise.resolve().then(function () { return featureMemory; }).then(m => m.updateMemoryDot());
     overlay.querySelectorAll('.iv-sp-tab').forEach(t => t.classList.toggle('active', t.dataset.sptab === 'global'));
@@ -2952,7 +2947,7 @@ function setupSettingsHandlers() {
         saveSettings(); _markDirty('config');
         const displayVal = defaultVal;
         [stId, spId].forEach(id => { const el = document.getElementById(id); if (el) el.value = displayVal; });
-        Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getCurrentSession()));
+        Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getConversation()));
         toastr.success(`${label} reset.`, EXT_DISPLAY);
     };
     document.getElementById('iv-reset-prompt')?.addEventListener('click', () => _resetPrompt('systemPrompt', DEFAULT_SYSTEM_PROMPT, 'iv-sysprompt', 'iv-sp-sysprompt', 'System Prompt'));
@@ -2960,7 +2955,7 @@ function setupSettingsHandlers() {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Prompt', message: 'Reset memory prompt to default?' }); if (!ok) return;
         getSettings().memoryManagePrompt = DEFAULT_MEMORY_PROMPT; saveSettings();
         ['iv-memory-prompt', 'iv-sp-memory-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_MEMORY_PROMPT; });
-        Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getCurrentSession())); toastr.success('Prompt reset.', EXT_DISPLAY);
+        Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getConversation())); toastr.success('Prompt reset.', EXT_DISPLAY);
     });
 
     // ── Profile management (ST drawer) ──
@@ -3029,21 +3024,20 @@ function setupSettingsHandlers() {
     document.getElementById('iv-download-debug')?.addEventListener('click', () => Promise.resolve().then(function () { return utilDebug; }).then(m => m.dbgDownload()));
     document.getElementById('iv-open-memory-settings')?.addEventListener('click', () => { openSettingsPanel(); setTimeout(() => document.querySelector('[data-sptab="memory"]')?.click(), 80); });
     document.getElementById('iv-open-tools-settings')?.addEventListener('click', () => { openSettingsPanel(); setTimeout(() => document.querySelector('[data-sptab="tools"]')?.click(), 80); });
-    document.getElementById('iv-clear-sessions')?.addEventListener('click', async () => {
+    document.getElementById('iv-clear-conversation')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Clear Conversation', message: 'Delete the whole inner conversation for this chat? This cannot be undone.', delayConfirm: 3 }); if (!ok) return;
         const { charId, chatId } = getBindingKey();
-        _dbgAdd('SESSION_CLEAR_REQUESTED', { source: 'st-drawer', charId, chatId });
-        getSettings().sessions = {}; saveSettings();
+        _dbgAdd('CONVERSATION_CLEAR_REQUESTED', { source: 'st-drawer', charId, chatId });
         try {
-            await initChatBucket({ forceReset: true });
-            _dbgAdd('SESSION_CLEAR_DONE', { source: 'st-drawer', charId, chatId });
+            await initConversation({ forceReset: true });
+            _dbgAdd('CONVERSATION_CLEAR_DONE', { source: 'st-drawer', charId, chatId });
         } catch (e) {
-            _dbgAdd('SESSION_CLEAR_FAILED', { source: 'st-drawer', charId, chatId, error: e?.message || String(e), stack: e?.stack });
-            toastr.error(`Failed to clear sessions: ${e.message}`, EXT_DISPLAY);
+            _dbgAdd('CONVERSATION_CLEAR_FAILED', { source: 'st-drawer', charId, chatId, error: e?.message || String(e), stack: e?.stack });
+            toastr.error(`Failed to clear the inner conversation: ${e.message}`, EXT_DISPLAY);
             return;
         }
         Promise.resolve().then(function () { return uiChat; }).then(m => m.onChatChanged());
-        toastr.success('Sessions cleared.', EXT_DISPLAY);
+        toastr.success('Inner conversation cleared.', EXT_DISPLAY);
     });
 
     // ── Background (ST) ──
@@ -3153,7 +3147,7 @@ function setupSettingsPanelListeners() {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset System Prompt', message: 'Reset to default?' }); if (!ok) return;
         getSettings().systemPrompt = DEFAULT_SYSTEM_PROMPT; saveSettings();
         ['iv-sp-sysprompt', 'iv-sysprompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_SYSTEM_PROMPT; });
-        Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getCurrentSession())); toastr.success('System prompt reset.', EXT_DISPLAY);
+        Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getConversation())); toastr.success('System prompt reset.', EXT_DISPLAY);
     });
     document.getElementById('iv-sp-reset-memory-prompt')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Prompt', message: 'Reset memory prompt to default?' }); if (!ok) return;
@@ -3171,29 +3165,28 @@ function setupSettingsPanelListeners() {
     // ── Misc SP ──
     document.getElementById('iv-sp-open-changelog')?.addEventListener('click', () => { closeSettingsPanel(); Promise.resolve().then(function () { return uiWidgets; }).then(m => m.openChangelog()); });
     document.getElementById('iv-sp-download-debug')?.addEventListener('click', () => Promise.resolve().then(function () { return utilDebug; }).then(m => m.dbgDownload()));
-    document.getElementById('iv-sp-clear-sessions')?.addEventListener('click', async () => {
+    document.getElementById('iv-sp-clear-conversation')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Clear Conversation', message: 'Delete the whole inner conversation for this chat? This cannot be undone.', delayConfirm: 3 }); if (!ok) return;
         const { charId, chatId } = getBindingKey();
-        _dbgAdd('SESSION_CLEAR_REQUESTED', { source: 'settings-overlay', charId, chatId });
-        getSettings().sessions = {}; saveSettings();
+        _dbgAdd('CONVERSATION_CLEAR_REQUESTED', { source: 'settings-overlay', charId, chatId });
         try {
-            await initChatBucket({ forceReset: true });
-            _dbgAdd('SESSION_CLEAR_DONE', { source: 'settings-overlay', charId, chatId });
+            await initConversation({ forceReset: true });
+            _dbgAdd('CONVERSATION_CLEAR_DONE', { source: 'settings-overlay', charId, chatId });
             Promise.resolve().then(function () { return uiChat; }).then(m => m.onChatChanged());
-            toastr.success('Sessions cleared.', EXT_DISPLAY);
+            toastr.success('Inner conversation cleared.', EXT_DISPLAY);
         } catch (e) {
-            _dbgAdd('SESSION_CLEAR_FAILED', { source: 'settings-overlay', charId, chatId, error: e?.message || String(e), stack: e?.stack });
-            toastr.error(`Failed to clear sessions: ${e.message}`, EXT_DISPLAY);
+            _dbgAdd('CONVERSATION_CLEAR_FAILED', { source: 'settings-overlay', charId, chatId, error: e?.message || String(e), stack: e?.stack });
+            toastr.error(`Failed to clear the inner conversation: ${e.message}`, EXT_DISPLAY);
         }
     });
     document.getElementById('iv-sp-reset-all-overrides')?.addEventListener('click', async () => {
-        if (!hasSessionOverrides()) { toastr.info('No session overrides active.', EXT_DISPLAY); return; }
-        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Session Overrides', message: 'Clear all session overrides for this session?' }); if (!ok) return;
-        clearAllSessionOverrides(); syncSPFromSettings();
-        Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getCurrentSession())); toastr.success('Session overrides cleared.', EXT_DISPLAY);
+        if (!hasConversationOverrides()) { toastr.info('No conversation overrides active.', EXT_DISPLAY); return; }
+        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Conversation Overrides', message: 'Clear all setting overrides for this inner conversation?' }); if (!ok) return;
+        clearAllConversationOverrides(); syncSPFromSettings();
+        Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getConversation())); toastr.success('Conversation overrides cleared.', EXT_DISPLAY);
     });
 
-    // ── Session Override bindings ──
+    // ── Conversation Override bindings ──
     const bindOv = (id, key, isCheckbox = false, toVal = null) => {
         const el = document.getElementById(id); if (!el) return;
         el.addEventListener(isCheckbox ? 'change' : 'input', () => {
@@ -3237,10 +3230,10 @@ function setupSettingsPanelListeners() {
     // Override clear buttons
     document.querySelectorAll('.iv-sp-ov-clear[data-ovkey]').forEach(btn => {
         btn.addEventListener('click', () => {
-            setSessionOverride(btn.dataset.ovkey, undefined);
+            setConversationOverride(btn.dataset.ovkey, undefined);
             _resetOvElToEffective(btn.dataset.ovkey);
             updateSPOverrideIndicators();
-            Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getCurrentSession()));
+            Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getConversation()));
         });
     });
 
@@ -3399,11 +3392,11 @@ var uiSettings = /*#__PURE__*/Object.freeze({
     syncOverlayUI: syncOverlayUI,
     syncSPFromSettings: syncSPFromSettings,
     updateBindingSection: updateBindingSection,
+    updateConversationOverrideIndicator: updateConversationOverrideIndicator,
     updateProfilesList: updateProfilesList,
     updateSPBindingSection: updateSPBindingSection,
     updateSPConnProfileList: updateSPConnProfileList,
     updateSPOverrideIndicators: updateSPOverrideIndicators,
-    updateSessionOverrideIndicator: updateSessionOverrideIndicator,
     updateSettingsUI: updateSettingsUI
 });
 
@@ -4061,7 +4054,7 @@ function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
 
     if (!isUser) {
         const continueBtn = makeBtn(I.continueArrow, 'Continue response', 'iv-msg-btn-continue', () => {
-            if (apiMod) apiMod.runContinue(getCurrentSession(), msg.id);
+            if (apiMod) apiMod.runContinue(getConversation(), msg.id);
         });
         actions.appendChild(continueBtn);
     }
@@ -4089,8 +4082,8 @@ function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
 
         prevBtn.addEventListener('click', async () => {
             if (prevBtn.disabled || state.generating) return;
-            const session = getCurrentSession();
-            if (!getSwipesForMsg(session, msg.id)) return;
+            const conversation = getConversation();
+            if (!getSwipesForMsg(conversation, msg.id)) return;
             
             const bdy = wrap.querySelector('.iv-msg-body');
             if (bdy) {
@@ -4099,21 +4092,21 @@ function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
                 await new Promise(r => setTimeout(r, 150));
             }
             
-            if (navigateSwipe(session, msg.id, -1)) {
+            if (navigateSwipe(conversation, msg.id, -1)) {
                 if (bdy) {
                     bdy.classList.remove('iv-swipe-anim-out-right');
                     void bdy.offsetWidth;
                     bdy.classList.add('iv-swipe-anim-left'); 
                 }
-                _renderMsgBodyContent(wrap, session.messages.find(m => m.id === msg.id));
-                updateSwipeBar(wrap, session, msg.id);
+                _renderMsgBodyContent(wrap, conversation.messages.find(m => m.id === msg.id));
+                updateSwipeBar(wrap, conversation, msg.id);
             }
         });
 
         nextBtn.addEventListener('click', async () => {
             if (nextBtn.disabled || state.generating) return;
-            const session = getCurrentSession();
-            const msgData = session.messages.find(m => m.id === msg.id);
+            const conversation = getConversation();
+            const msgData = conversation.messages.find(m => m.id === msg.id);
             if (!msgData) return;
             
             if (msgData.swipeIndex !== undefined && msgData.swipeIndex < (msgData.swipes?.length || 1) - 1) {
@@ -4124,18 +4117,18 @@ function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
                     await new Promise(r => setTimeout(r, 150));
                 }
 
-                if (navigateSwipe(session, msg.id, 1)) {
+                if (navigateSwipe(conversation, msg.id, 1)) {
                     if (bdy) {
                         bdy.classList.remove('iv-swipe-anim-out-left');
                         void bdy.offsetWidth;
                         bdy.classList.add('iv-swipe-anim-right'); 
                     }
-                    _renderMsgBodyContent(wrap, session.messages.find(m => m.id === msg.id));
-                    updateSwipeBar(wrap, session, msg.id);
+                    _renderMsgBodyContent(wrap, conversation.messages.find(m => m.id === msg.id));
+                    updateSwipeBar(wrap, conversation, msg.id);
                 }
             } else {
                 _dbgAdd('SWIPE_REGEN_TRIGGERED', { msgId: msg.id });
-                _runSwipeRegen(session, msg.id, wrap);
+                _runSwipeRegen(conversation, msg.id, wrap);
             }
         });
 
@@ -4153,9 +4146,9 @@ function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
 
 // ─── Swipes and Generation ──────────────────────────────────────────────────────
 
-function getLastAssistantMsgId(session) {
-    for (let i = session.messages.length - 1; i >= 0; i--) {
-        const m = session.messages[i];
+function getLastAssistantMsgId(conversation) {
+    for (let i = conversation.messages.length - 1; i >= 0; i--) {
+        const m = conversation.messages[i];
         if (m.role === 'user') return null;
         if (m.role === 'assistant') {
             return m.id;
@@ -4164,26 +4157,26 @@ function getLastAssistantMsgId(session) {
     return null;
 }
 
-function getSwipesForMsg(session, msgId) {
-    const msg = session.messages.find(m => m.id === msgId);
+function getSwipesForMsg(conversation, msgId) {
+    const msg = conversation.messages.find(m => m.id === msgId);
     if (!msg) return null;
     if (!msg.swipes) msg.swipes = [{ content: msg.content, reasoning: msg.reasoning || null }];
     if (msg.swipeIndex === undefined) msg.swipeIndex = 0;
     return msg;
 }
 
-function addSwipe(session, msgId, content, reasoning = null) {
-    const msg = getSwipesForMsg(session, msgId);
+function addSwipe(conversation, msgId, content, reasoning = null) {
+    const msg = getSwipesForMsg(conversation, msgId);
     if (!msg) return;
     msg.swipes.push({ content, reasoning: reasoning || null });
     msg.swipeIndex = msg.swipes.length - 1;
     msg.content = content;
     msg.reasoning = reasoning || null;
-    saveSessionsToMetadata();
+    saveConversation();
 }
 
-function navigateSwipe(session, msgId, dir) {
-    const msg = getSwipesForMsg(session, msgId);
+function navigateSwipe(conversation, msgId, dir) {
+    const msg = getSwipesForMsg(conversation, msgId);
     if (!msg || msg.swipes.length < 2) return false;
     const newIdx = msg.swipeIndex + dir;
     if (newIdx < 0 || newIdx >= msg.swipes.length) return false;
@@ -4193,15 +4186,15 @@ function navigateSwipe(session, msgId, dir) {
     msg.swipeIndex = newIdx;
     msg.content = msg.swipes[newIdx].content;
     msg.reasoning = msg.swipes[newIdx].reasoning || null;
-    saveSessionsToMetadata();
-    updateMsgCount(session);
+    saveConversation();
+    updateMsgCount(conversation);
     return true;
 }
 
-function updateSwipeBar(msgEl, session, msgId) {
+function updateSwipeBar(msgEl, conversation, msgId) {
     const bar = msgEl.querySelector('.iv-swipe-bar');
     if (!bar) return;
-    const msg = session.messages.find(m => m.id === msgId);
+    const msg = conversation.messages.find(m => m.id === msgId);
     if (!msg) return;
     if (!msg.swipes) {
         msg.swipes = [{ content: msg.content, reasoning: msg.reasoning || null }];
@@ -4218,9 +4211,9 @@ function updateSwipeBar(msgEl, session, msgId) {
     bar.style.display = '';
 }
 
-async function _runSwipeRegen(session, msgId, wrapEl) {
+async function _runSwipeRegen(conversation, msgId, wrapEl) {
     if (state.generating) return;
-    const msgData = session.messages.find(m => m.id === msgId);
+    const msgData = conversation.messages.find(m => m.id === msgId);
     if (!msgData) return;
 
     if (!msgData.swipes) {
@@ -4245,9 +4238,9 @@ async function _runSwipeRegen(session, msgId, wrapEl) {
     msgData.swipeIndex = msgData.swipes.length - 1;
     msgData.content = placeholderContent;
     msgData.reasoning = null;
-    saveSessionsToMetadata();
+    saveConversation();
 
-    updateSwipeBar(wrapEl, session, msgId);
+    updateSwipeBar(wrapEl, conversation, msgId);
 
     let streamContentEl = wrapEl.querySelector('.iv-msg-content');
     if (streamContentEl) streamContentEl.innerHTML = '';
@@ -4300,14 +4293,14 @@ async function _runSwipeRegen(session, msgId, wrapEl) {
     };
 
     try {
-        const tempSession = { ...session, messages: session.messages.filter(m => m.id !== msgId) };
+        const tempConversation = { ...conversation, messages: conversation.messages.filter(m => m.id !== msgId) };
         if (!apiMod) throw new Error("API module not loaded");
         
-        const builtMessages = await apiMod.assembleMessages(tempSession, settings, null);
+        const builtMessages = await apiMod.assembleMessages(tempConversation, settings, null);
         const fullPromptText = builtMessages.map(m => m.content).join('\n');
         const tokensIn = await apiMod.estimateTokens(fullPromptText);
 
-        const result = await apiMod.callGenerate(tempSession, settings, null, onChunk);
+        const result = await apiMod.callGenerate(tempConversation, settings, null, onChunk);
         cleanupCursor();
 
         if (result === null) {
@@ -4315,9 +4308,9 @@ async function _runSwipeRegen(session, msgId, wrapEl) {
             msgData.swipeIndex = msgData.swipes.length - 1;
             msgData.content = msgData.swipes[msgData.swipeIndex]?.content || '';
             msgData.reasoning = msgData.swipes[msgData.swipeIndex]?.reasoning || null;
-            saveSessionsToMetadata();
+            saveConversation();
             _renderMsgBodyContent(wrapEl, msgData);
-            updateSwipeBar(wrapEl, session, msgId);
+            updateSwipeBar(wrapEl, conversation, msgId);
             return;
         }
 
@@ -4327,12 +4320,12 @@ async function _runSwipeRegen(session, msgId, wrapEl) {
         msgData.swipes[msgData.swipeIndex] = { content: fullText, reasoning: fullReasoning || null };
         msgData.content = fullText;
         msgData.reasoning = fullReasoning || null;
-        saveSessionsToMetadata();
+        saveConversation();
 
         _renderMsgBodyContent(wrapEl, msgData);
-        updateSwipeBar(wrapEl, session, msgId);
+        updateSwipeBar(wrapEl, conversation, msgId);
 
-        updateMsgCount(session);
+        updateMsgCount(conversation);
         if (uiWdgMod) uiWdgMod.playCompletionSound();
 
     } catch(err) {
@@ -4341,9 +4334,9 @@ async function _runSwipeRegen(session, msgId, wrapEl) {
         msgData.swipeIndex = msgData.swipes.length - 1;
         msgData.content = msgData.swipes[msgData.swipeIndex]?.content || '';
         msgData.reasoning = msgData.swipes[msgData.swipeIndex]?.reasoning || null;
-        saveSessionsToMetadata();
+        saveConversation();
         _renderMsgBodyContent(wrapEl, msgData);
-        updateSwipeBar(wrapEl, session, msgId);
+        updateSwipeBar(wrapEl, conversation, msgId);
 
         if (state.abortController?.signal?.aborted || err?.message === 'userStopped') ; 
         else { showGenerationError(err); }
@@ -4353,18 +4346,18 @@ async function _runSwipeRegen(session, msgId, wrapEl) {
     }
 }
 
-function _refreshSwipeBars(session) {
+function _refreshSwipeBars(conversation) {
     const c = document.getElementById('iv-messages');
     if (!c) return;
     c.querySelectorAll('.iv-swipe-bar').forEach(bar => { bar.style.display = 'none'; });
     if (state.generating) return;
-    const lastId = getLastAssistantMsgId(session);
+    const lastId = getLastAssistantMsgId(conversation);
     if (!lastId) return;
     const lastEl = c.querySelector(`.iv-msg[data-id="${lastId}"]`);
     if (!lastEl) return;
     const swipeBar = lastEl.querySelector('.iv-swipe-bar');
     if (!swipeBar) return;
-    updateSwipeBar(lastEl, session, lastId);
+    updateSwipeBar(lastEl, conversation, lastId);
     swipeBar.style.display = '';
 }
 
@@ -4443,7 +4436,7 @@ function handleEdit(wrapEl, msg) {
     if (wrapEl.classList.contains('is-editing')) return;
     wrapEl.classList.add('is-editing');
     const { charId, chatId } = getBindingKey();
-    const session = getCurrentSession();
+    const conversation = getConversation();
     const contentEl = wrapEl.querySelector('.iv-msg-content');
     const original = msg.content;
 
@@ -4504,13 +4497,13 @@ function handleEdit(wrapEl, msg) {
             if (!rawText) return;
             const newText = expandMacros(rawText);
             
-            const msgObj = session.messages.find(m => m.id === msg.id);
-            if (msgObj) { msgObj.content = newText; saveSessionsToMetadata(); }
+            const msgObj = conversation.messages.find(m => m.id === msg.id);
+            if (msgObj) { msgObj.content = newText; saveConversation(); }
             
             msg.content = newText;
             if (msg.swipes && msg.swipeIndex !== undefined) {
                 msg.swipes[msg.swipeIndex] = { content: newText, reasoning: msg.reasoning || null };
-                saveSessionsToMetadata();
+                saveConversation();
             }
             restoreMessageDOM(newText);
             _updateMsgTokenCount(wrapEl, newText, true);
@@ -4522,31 +4515,31 @@ function handleEdit(wrapEl, msg) {
         if (!rawText) return;
         const newText = expandMacros(rawText);
         
-        const msgObj = session.messages.find(m => m.id === msg.id);
-        if (msgObj) { msgObj.content = newText; saveSessionsToMetadata(); }
+        const msgObj = conversation.messages.find(m => m.id === msg.id);
+        if (msgObj) { msgObj.content = newText; saveConversation(); }
 
         msg.content = newText;
         if (msg.swipes && msg.swipeIndex !== undefined) {
             msg.swipes[msg.swipeIndex] = { content: newText, reasoning: msg.reasoning || null };
-            saveSessionsToMetadata();
+            saveConversation();
         }
         restoreMessageDOM(newText);
         _updateMsgTokenCount(wrapEl, newText, true);
         
-        truncateAfter(session, msg.id);
+        truncateAfter(conversation, msg.id);
         removeMsgElAfter(msg.id);
-        if (msg.role === 'user' && apiMod) await apiMod.runGenerate(session, newText, false);
+        if (msg.role === 'user' && apiMod) await apiMod.runGenerate(conversation, newText, false);
     });
 }
 
 async function handleMessageRegen(wrapEl, msg) {
     if (state.generating) return;
-    const session = getCurrentSession();
-    const idx = session.messages.findIndex(m => m.id === msg.id);
+    const conversation = getConversation();
+    const idx = conversation.messages.findIndex(m => m.id === msg.id);
     if (idx === -1) return;
 
     const isUser = msg.role === 'user';
-    const actualMsgsAfter = session.messages.slice(idx + 1);
+    const actualMsgsAfter = conversation.messages.slice(idx + 1);
     const msgsAfterCount = actualMsgsAfter.length;
 
     let needsConfirm = false;
@@ -4570,17 +4563,17 @@ async function handleMessageRegen(wrapEl, msg) {
     }
 
     if (isUser) {
-        truncateAfter(session, msg.id);
+        truncateAfter(conversation, msg.id);
         removeMsgElAfter(msg.id);
-        updateMsgCount(session);
-        if (apiMod) apiMod.runGenerate(session, null, false);
+        updateMsgCount(conversation);
+        if (apiMod) apiMod.runGenerate(conversation, null, false);
     } else {
         if (msgsAfterCount > 0) {
-            truncateAfter(session, msg.id);
+            truncateAfter(conversation, msg.id);
             removeMsgElAfter(msg.id);
-            updateMsgCount(session);
+            updateMsgCount(conversation);
         }
-        _runSwipeRegen(session, msg.id, wrapEl);
+        _runSwipeRegen(conversation, msg.id, wrapEl);
     }
 }
 
@@ -4594,19 +4587,19 @@ async function handleDelete(wrapEl, msg) {
             : 'Delete this assistant message?',
     });
     if (!confirmed) return;
-    const session = getCurrentSession();
+    const conversation = getConversation();
     if (isUser) {
-        truncateFrom(session, msg.id);
+        truncateFrom(conversation, msg.id);
         removeMsgElAndBelow(msg.id);
     } else {
-        deleteMsg(session, msg.id);
+        deleteMsg(conversation, msg.id);
         removeMsgEl(msg.id);
     }
-    updateMsgCount(session);
-    if (!session.messages.length) renderSession(session);
+    updateMsgCount(conversation);
+    if (!conversation.messages.length) renderConversation(conversation);
 }
 
-function renderSession(session) {
+function renderConversation(conversation) {
     clearSearchHighlights();
     state.searchMatches = [];
     state.searchIdx = -1;
@@ -4614,7 +4607,7 @@ function renderSession(session) {
     const c = document.getElementById('iv-messages');
     if (!c) return;
     c.innerHTML = '';
-    if (!session.messages.length) {
+    if (!conversation.messages.length) {
         c.innerHTML = `
             <div class="iv-empty-state">
                 <div class="iv-empty-icon">
@@ -4623,16 +4616,16 @@ function renderSession(session) {
                 <div class="iv-empty-title">Inner Voice</div>
                 <div class="iv-empty-sub">A private space to think, plan, and talk with yourself. Nothing here enters the scene.</div>
             </div>`;
-        updateMsgCount(session);
+        updateMsgCount(conversation);
         return;
     }
-    for (const msg of session.messages) {
+    for (const msg of conversation.messages) {
         const el = createMsgEl(msg, handleCopy, handleEdit, handleDelete, handleMessageRegen);
         c.appendChild(el);
     }
-    updateMsgCount(session);
+    updateMsgCount(conversation);
     _refreshContinueBtns();
-    _refreshSwipeBars(session);
+    _refreshSwipeBars(conversation);
     requestAnimationFrame(() => scrollToBottom());
 }
 
@@ -4645,10 +4638,10 @@ function appendMsgEl(msg, isStreamInit = false) {
     c.appendChild(el);
     
     if (!isStreamInit) {
-        const session = getCurrentSession();
-        updateMsgCount(session);
+        const conversation = getConversation();
+        updateMsgCount(conversation);
         _refreshContinueBtns();
-        _refreshSwipeBars(session);
+        _refreshSwipeBars(conversation);
         requestAnimationFrame(() => scrollToBottom());
 
         if (state.searchOpen && state.searchQuery.trim()) {
@@ -4666,7 +4659,7 @@ function removeMsgEl(msgId) {
     if (!el) return;
     el.remove();
     _refreshContinueBtns();
-    _refreshSwipeBars(getCurrentSession());
+    _refreshSwipeBars(getConversation());
 }
 
 function removeMsgElAndBelow(msgId) {
@@ -4677,7 +4670,7 @@ function removeMsgElAndBelow(msgId) {
         if (found) el.remove();
     }
     _refreshContinueBtns();
-    _refreshSwipeBars(getCurrentSession());
+    _refreshSwipeBars(getConversation());
 }
 
 function removeMsgElAfter(msgId) {
@@ -4688,19 +4681,19 @@ function removeMsgElAfter(msgId) {
         if (el.dataset.id === msgId) found = true;
     }
     _refreshContinueBtns();
-    _refreshSwipeBars(getCurrentSession());
+    _refreshSwipeBars(getConversation());
 }
 
 let _tokenCalcTid = null;
 let _isTokenCalculating = false;
 let _pendingTokenCalc = false;
 
-function updateMsgCount(session) {
+function updateMsgCount(conversation) {
     const el = document.getElementById('iv-msg-count');
-    if (el && session) el.textContent = `${session.messages.length} msgs`;
+    if (el && conversation) el.textContent = `${conversation.messages.length} msgs`;
 
     const tel = document.getElementById('iv-token-count');
-    if (!tel || !session) return;
+    if (!tel || !conversation) return;
 
     clearTimeout(_tokenCalcTid);
     _tokenCalcTid = setTimeout(() => {
@@ -4714,16 +4707,16 @@ function updateMsgCount(session) {
                 
                 if (apiMod && apiMod.assembleMessages && apiMod.estimateTokens) {
                     try {
-                        const tempSess = { ...session, messages: [...session.messages] };
+                        const tempConv = { ...conversation, messages: [...conversation.messages] };
                         if (currentInput.trim()) {
-                            tempSess.messages.push({ 
+                            tempConv.messages.push({ 
                                 id: 'tmp', 
                                 role: 'user', 
                                 content: currentInput, 
                                 timestamp: Date.now()
                             });
                         }
-                        const builtMsgs = await apiMod.assembleMessages(tempSess, settings, null);
+                        const builtMsgs = await apiMod.assembleMessages(tempConv, settings, null);
                         const fullText = builtMsgs.map(m => m.content).join('\n');
                         const tokens = await apiMod.estimateTokens(fullText);
                         const node = document.getElementById('iv-token-count');
@@ -4743,8 +4736,8 @@ function updateMsgCount(session) {
                 const chat = ctx.chat || [];
                 let chatSlice = [];
                 try {
-                    const sess = getCurrentSession();
-                    const picked = sess?.pickedChatIndices;
+                    const conv = getConversation();
+                    const picked = conv?.pickedChatIndices;
                     if (picked && picked.length > 0) {
                         chatSlice = picked.filter(i => i >= 0 && i < chat.length).map(i => chat[i]);
                     } else if (depth > 0) {
@@ -4760,7 +4753,7 @@ function updateMsgCount(session) {
                 }
 
                 const limit = Math.max(1, parseInt(settings.localHistoryLimit) || 50);
-                for (const m of session.messages.slice(-limit)) {
+                for (const m of conversation.messages.slice(-limit)) {
                     totalChars += (m.content || '').length;
                 }
 
@@ -4787,7 +4780,7 @@ function updateDepthSlidersMax() {
     }
 
     const s = getSettings();
-    const sess = getCurrentSession();
+    const conv = getConversation();
     let settingsChanged = false;
 
     const globalDepth = parseInt(s.contextDepth) || 0;
@@ -4796,10 +4789,10 @@ function updateDepthSlidersMax() {
         settingsChanged = true;
     }
 
-    if (sess && sess.overrides && sess.overrides.contextDepth !== undefined) {
-        const ovDepth = parseInt(sess.overrides.contextDepth) || 0;
+    if (conv && conv.overrides && conv.overrides.contextDepth !== undefined) {
+        const ovDepth = parseInt(conv.overrides.contextDepth) || 0;
         if (ovDepth >= state.lastChatLen && maxVal > state.lastChatLen) {
-            sess.overrides.contextDepth = maxVal;
+            conv.overrides.contextDepth = maxVal;
             settingsChanged = true;
         }
     }
@@ -4990,16 +4983,16 @@ function navigateSearch(dir) {
 // ─── Chat Picker ───────────────────────────────────────────────
 
 function getPickedChatIndices() {
-    try { return getCurrentSession().pickedChatIndices || []; } catch(_) { return []; }
+    try { return getConversation().pickedChatIndices || []; } catch(_) { return []; }
 }
 
 function setPickedChatIndices(indices) {
     try {
-        const sess = getCurrentSession();
-        sess.pickedChatIndices = [...indices].sort((a, b) => a - b);
-        saveSessionsToMetadata();
+        const conv = getConversation();
+        conv.pickedChatIndices = [...indices].sort((a, b) => a - b);
+        saveConversation();
         updatePickBtnState();
-        updateMsgCount(sess);
+        updateMsgCount(conv);
     } catch(_) {}
 }
 
@@ -5227,7 +5220,7 @@ function setGeneratingState(on) {
     if (regenBtn) regenBtn.disabled = on;
     if (!on) {
         _refreshContinueBtns();
-        _refreshSwipeBars(getCurrentSession());
+        _refreshSwipeBars(getConversation());
     }
 }
 
@@ -5287,11 +5280,11 @@ async function onChatChanged() {
         else { badge.style.display = 'none'; }
     }
     
-    await initChatBucket();
+    await initConversation();
     
     if (uiSetMod) {
         uiSetMod.autoLoadBoundProfile();
-        uiSetMod.updateSessionOverrideIndicator();
+        uiSetMod.updateConversationOverrideIndicator();
     }
     if (uiWdgMod) {
         uiWdgMod.renderQuickPromptsBar();
@@ -5342,7 +5335,7 @@ function setupDepthClickEdit() {
             
             const slider = document.getElementById('iv-depth-slider');
             if (slider) { slider.value = val; }
-            updateMsgCount(getCurrentSession());
+            updateMsgCount(getConversation());
         };
         input.addEventListener('blur', commit);
         input.addEventListener('keydown', e => { 
@@ -5427,9 +5420,9 @@ var uiChat = /*#__PURE__*/Object.freeze({
     removeMsgEl: removeMsgEl,
     removeMsgElAfter: removeMsgElAfter,
     removeMsgElAndBelow: removeMsgElAndBelow,
+    renderConversation: renderConversation,
     renderMarkdown: renderMarkdown,
     renderPickerMessages: renderPickerMessages,
-    renderSession: renderSession,
     restoreScrollPosition: restoreScrollPosition,
     saveScrollPosition: saveScrollPosition,
     scrollToBottom: scrollToBottom,
@@ -5567,7 +5560,7 @@ function makeDraggable(handle, target) {
     };
 
     handle.addEventListener('pointerdown', e => {
-        if (e.target.closest('.iv-hbtn,.iv-tbtn,select,input,button,.iv-opacity-wrap,.iv-rh,.iv-sess-dropdown,.iv-sess-wrap')) return;
+        if (e.target.closest('.iv-hbtn,.iv-tbtn,select,input,button,.iv-opacity-wrap,.iv-rh')) return;
         
         isWobbly = getSettings().wobbleWindow !== false && !getSettings().performanceMode;
 
@@ -6387,8 +6380,8 @@ function getMainChatSlice(depth) {
     });
 
     try {
-        const sess = getCurrentSession();
-        const picked = sess.pickedChatIndices;
+        const conv = getConversation();
+        const picked = conv.pickedChatIndices;
         if (picked && picked.length > 0) {
             return picked
                 .filter(i => i >= 0 && i < ctx.chat.length)
@@ -6401,10 +6394,10 @@ function getMainChatSlice(depth) {
     return ctx.chat.slice(-depth).map((m, i) => extractData(m, total - depth + i));
 }
 
-async function assembleMessages(session, settings, pendingUserText) {
+async function assembleMessages(conversation, settings, pendingUserText) {
     const messages = [{ role: 'system', content: await buildSystemContent(settings) }];
     const depth = Math.max(0, parseInt(settings.contextDepth) || 0);
-    const hasPicked = !!(session.pickedChatIndices && session.pickedChatIndices.length > 0);
+    const hasPicked = !!(conversation.pickedChatIndices && conversation.pickedChatIndices.length > 0);
     
     if (depth > 0 || hasPicked) {
         const slice = getMainChatSlice(depth);
@@ -6459,7 +6452,7 @@ async function assembleMessages(session, settings, pendingUserText) {
         }
     }
     const limit = Math.max(1, parseInt(settings.localHistoryLimit) || 50);
-    for (const m of session.messages.slice(-limit)) {
+    for (const m of conversation.messages.slice(-limit)) {
         let apiRole = m.role;
         if (apiRole === 'system') apiRole = 'user';
         messages.push({ role: apiRole, content: m.content });
@@ -6542,9 +6535,9 @@ async function estimateTokens(text) {
     }
 }
 
-async function callGenerate(session, settings, pendingText, onChunk) {
+async function callGenerate(conversation, settings, pendingText, onChunk) {
     const ctx = SillyTavern.getContext();
-    const messages = await assembleMessages(session, settings, pendingText);
+    const messages = await assembleMessages(conversation, settings, pendingText);
     const maxTokens = parseInt(settings.maxTokens) || 8200;
 
     const abort = new AbortController();
@@ -6946,7 +6939,7 @@ async function callGenerate(session, settings, pendingText, onChunk) {
     return { text: text.trim(), reasoning, isMaxTokens };
 }
 
-async function runGenerate(session, userText, addUserMsg = true) {
+async function runGenerate(conversation, userText, addUserMsg = true) {
     if (state.generating) return;
     state.generating = true;
     state.activeToolCalls = [];
@@ -6975,8 +6968,8 @@ async function runGenerate(session, userText, addUserMsg = true) {
         streamAccumReasoning = reasoning;
 
         if (!streamMsgId) {
-            const placeholder = { id: `msg_${Date.now()}`, role: 'assistant', content: '', reasoning: null, timestamp: Date.now() };
-            session.messages.push(placeholder);
+            const placeholder = { id: `msg_${Date.now()}`, role: 'assistant', content: '', reasoning: null, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex() };
+            conversation.messages.push(placeholder);
             streamMsgId = placeholder.id;
             
             appendMsgEl(placeholder, true);
@@ -7046,11 +7039,11 @@ async function runGenerate(session, userText, addUserMsg = true) {
 
     try {
         if (addUserMsg && userText) {
-            const msgObj = addMessage(session, 'user', userText);
+            const msgObj = addTurn(conversation, 'user', userText);
             appendMsgEl(msgObj);
         }
 
-        const fullMessages = await assembleMessages(session, settings, null);
+        const fullMessages = await assembleMessages(conversation, settings, null);
         const fullPromptText = fullMessages.map(m => m.content).join('\n');
         const tokensIn = await estimateTokens(fullPromptText);
 
@@ -7063,7 +7056,7 @@ async function runGenerate(session, userText, addUserMsg = true) {
             tokensIn
         });
 
-        let result = await callGenerate(session, settings, null, onChunk);
+        let result = await callGenerate(conversation, settings, null, onChunk);
 
         cleanupCursor();
         
@@ -7166,7 +7159,7 @@ async function runGenerate(session, userText, addUserMsg = true) {
                 if (bar) bar.style.display = 'flex';
 
                 for (const eh of extraHistory) {
-                    session.messages.push({ id: `tc_hist_${Date.now()}`, role: eh.role, content: eh.content, timestamp: Date.now(), _tcTemp: true });
+                    conversation.messages.push({ id: `tc_hist_${Date.now()}`, role: eh.role, content: eh.content, timestamp: Date.now(), _tcTemp: true });
                 }
 
                 isStreaming = false;
@@ -7174,17 +7167,17 @@ async function runGenerate(session, userText, addUserMsg = true) {
                 const cursor2 = document.createElement('span');
                 cursor2.className = 'iv-stream-cursor';
                 
-                const tempSession = { 
-                    ...session, 
-                    messages: session.messages.filter(m => m.id !== streamMsgId) 
+                const tempConversation = { 
+                    ...conversation, 
+                    messages: conversation.messages.filter(m => m.id !== streamMsgId) 
                 };
 
-                const nextResult = await callGenerate(tempSession, settings, null, (t, r) => {
+                const nextResult = await callGenerate(tempConversation, settings, null, (t, r) => {
                     _updateLiveUI(t, r);
                     if (streamContentEl) streamContentEl.appendChild(cursor2);
                 });
 
-                session.messages = session.messages.filter(m => !m._tcTemp);
+                conversation.messages = conversation.messages.filter(m => !m._tcTemp);
                 cursor2.remove();
 
                 if (nextResult === null) break;
@@ -7203,15 +7196,15 @@ async function runGenerate(session, userText, addUserMsg = true) {
 
         if (result === null) {
             if (streamMsgId && isStreaming && streamAccumText) {
-                const msg = session.messages.find(m => m.id === streamMsgId);
-                if (msg) { msg.content = streamAccumText; msg.reasoning = streamAccumReasoning || null; saveSessionsToMetadata(); }
+                const msg = conversation.messages.find(m => m.id === streamMsgId);
+                if (msg) { msg.content = streamAccumText; msg.reasoning = streamAccumReasoning || null; saveConversation(); }
                 if (streamContentEl) { streamContentEl.innerHTML = renderMarkdown(streamAccumText); postProcessHTMLBlocks(streamContentEl); }
             } else if (streamMsgId) {
-                const idx = session.messages.findIndex(m => m.id === streamMsgId);
-                if (idx >= 0 && !session.messages[idx].content) {
-                    session.messages.splice(idx, 1);
+                const idx = conversation.messages.findIndex(m => m.id === streamMsgId);
+                if (idx >= 0 && !conversation.messages[idx].content) {
+                    conversation.messages.splice(idx, 1);
                     streamMsgEl?.remove();
-                    updateMsgCount(session);
+                    updateMsgCount(conversation);
                 }
             }
             return;
@@ -7225,7 +7218,7 @@ async function runGenerate(session, userText, addUserMsg = true) {
         const savedToolCalls = state.activeToolCalls.length ? sanitizeToolCallsForSave(JSON.parse(JSON.stringify(state.activeToolCalls))) : undefined;
 
         if (streamMsgId) {
-            const msg = session.messages.find(m => m.id === streamMsgId);
+            const msg = conversation.messages.find(m => m.id === streamMsgId);
             if (msg) { 
                 msg.content = fullText; 
                 msg.reasoning = fullReasoning || null; 
@@ -7233,20 +7226,20 @@ async function runGenerate(session, userText, addUserMsg = true) {
                 msg.swipes = [{ content: fullText, reasoning: fullReasoning || null }];
                 msg.swipeIndex = 0;
             }
-            saveSessionsToMetadata();
+            saveConversation();
 
             if (msg && streamMsgEl) {
                 _renderMsgBodyContent(streamMsgEl, msg);
             }
         } else {
-            const newMsg = addMessage(session, 'assistant', fullText, { reasoning: fullReasoning || null, toolCalls: savedToolCalls });
+            const newMsg = addTurn(conversation, 'assistant', fullText, { reasoning: fullReasoning || null, toolCalls: savedToolCalls });
             newMsg.swipes = [{ content: fullText, reasoning: fullReasoning || null }];
             newMsg.swipeIndex = 0;
-            saveSessionsToMetadata();
+            saveConversation();
             appendMsgEl(newMsg);
         }
 
-        _refreshSwipeBars(session);
+        _refreshSwipeBars(conversation);
         state.activeToolCalls = [];
 
         const tokensOut = await estimateTokens(fullText);
@@ -7284,11 +7277,11 @@ function _joinContinuation(existing, continuation) {
     return trimmed + (needsSpace ? ' ' : '') + continuation;
 }
 
-async function runContinue(session, targetMsgId) {
+async function runContinue(conversation, targetMsgId) {
     _dbgAdd('CONTINUE_TRIGGERED', { targetMsgId });
     
     if (state.generating) return;
-    const targetMsg = session.messages.find(m => m.id === targetMsgId);
+    const targetMsg = conversation.messages.find(m => m.id === targetMsgId);
     if (!targetMsg || targetMsg.role !== 'assistant') return;
 
     state.generating = true;
@@ -7350,7 +7343,7 @@ async function runContinue(session, targetMsgId) {
     };
 
     try {
-        const fullMessages = await assembleMessages(session, settings, CONTINUE_PROMPT);
+        const fullMessages = await assembleMessages(conversation, settings, CONTINUE_PROMPT);
         const fullPromptText = fullMessages.map(m => m.content).join('\n');
         
         const tokensIn = await estimateTokens(fullPromptText);
@@ -7363,7 +7356,7 @@ async function runContinue(session, targetMsgId) {
             tokensIn
         });
 
-        const result = await callGenerate(session, settings, CONTINUE_PROMPT, onChunk);
+        const result = await callGenerate(conversation, settings, CONTINUE_PROMPT, onChunk);
         cleanupCursor();
 
         if (result === null) {
@@ -7373,7 +7366,7 @@ async function runContinue(session, targetMsgId) {
                 if (targetMsg.swipes && targetMsg.swipeIndex !== undefined) {
                     targetMsg.swipes[targetMsg.swipeIndex] = { content: combined, reasoning: targetMsg.reasoning || null };
                 }
-                saveSessionsToMetadata();
+                saveConversation();
                 _applyFinalContinuation(combined);
             }
             return;
@@ -7393,12 +7386,12 @@ async function runContinue(session, targetMsgId) {
         if (targetMsg.swipes && targetMsg.swipeIndex !== undefined) {
             targetMsg.swipes[targetMsg.swipeIndex] = { content: combined, reasoning: targetMsg.reasoning || null };
         }
-        saveSessionsToMetadata();
+        saveConversation();
         _applyFinalContinuation(combined);
 
         const tokensOut = await estimateTokens(continuation);
 
-        updateMsgCount(session);
+        updateMsgCount(conversation);
         playCompletionSound();
         _dbgAdd('CONTINUE_DONE', { chars: continuation?.length || 0, tokensOut });
 
@@ -8250,13 +8243,13 @@ function _buildContextInspectorHTML(messages) {
 let _lastInspectorMessages = [];
 
 async function openInspector() {
-    const sess = getCurrentSession();
-    const { getEffectiveSettings } = await Promise.resolve().then(function () { return session; });
+    const conv = getConversation();
+    const { getEffectiveSettings } = await Promise.resolve().then(function () { return conversation; });
     const settings = getEffectiveSettings();
     const inputEl = document.getElementById('iv-input');
     const pendingText = inputEl ? inputEl.value.trim() : '';
 
-    const messages = await assembleMessages(sess, settings, pendingText);
+    const messages = await assembleMessages(conv, settings, pendingText);
     _lastInspectorMessages = messages;
 
     const fmtEl = document.getElementById('iv-ctx-formatted');
@@ -8658,15 +8651,15 @@ function attachWindowListeners() {
 
     // Toolbar actions
     document.getElementById('iv-regen-btn')?.addEventListener('click', () => {
-        const sess = getCurrentSession();
-        if (!sess.messages.length || state.generating) return;
+        const conv = getConversation();
+        if (!conv.messages.length || state.generating) return;
         let lastUserIdx = -1;
-        for (let i = sess.messages.length - 1; i >= 0; i--) { if (sess.messages[i].role === 'user') { lastUserIdx = i; break; } }
+        for (let i = conv.messages.length - 1; i >= 0; i--) { if (conv.messages[i].role === 'user') { lastUserIdx = i; break; } }
         if (lastUserIdx === -1) return;
-        const userMsg = sess.messages[lastUserIdx];
-        Promise.resolve().then(function () { return session; }).then(m => m.truncateAfter(sess, userMsg.id));
+        const userMsg = conv.messages[lastUserIdx];
+        Promise.resolve().then(function () { return conversation; }).then(m => m.truncateAfter(conv, userMsg.id));
         Promise.resolve().then(function () { return uiChat; }).then(m => m.removeMsgElAfter(userMsg.id));
-        runGenerate(sess, userMsg.content, false);
+        runGenerate(conv, userMsg.content, false);
     });
 
     document.getElementById('iv-search-btn')?.addEventListener('click', () => { state.searchOpen ? closeSearch() : openSearch(); });
@@ -8717,7 +8710,7 @@ function attachWindowListeners() {
     if (inputEl) {
         inputEl.addEventListener('input', () => {
             autoResize(inputEl);
-            updateMsgCount(getCurrentSession());
+            updateMsgCount(getConversation());
         });
         inputEl.addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -8733,12 +8726,12 @@ function attachWindowListeners() {
         const rawText = inputEl?.value.trim();
         if (!rawText || state.generating) return;
 
-        const { expandMacros, getEffectiveSettings } = await Promise.resolve().then(function () { return session; });
+        const { expandMacros, getEffectiveSettings } = await Promise.resolve().then(function () { return conversation; });
         const _s = getEffectiveSettings();
         const text = _s.autoExpandMacros ? expandMacros(rawText || '') : (rawText || '');
         if (inputEl) { inputEl.value = ''; autoResize(inputEl); }
 
-        runGenerate(getCurrentSession(), text, true).catch(console.error);
+        runGenerate(getConversation(), text, true).catch(console.error);
     });
 
     // Modals
@@ -8798,7 +8791,7 @@ function attachWindowListeners() {
             getSettings().contextDepth = val;
             saveSettings();
             syncOverlayUI('contextDepth', val);
-            updateMsgCount(getCurrentSession());
+            updateMsgCount(getConversation());
         });
     }
     setupDepthClickEdit();
@@ -8856,11 +8849,11 @@ async function init() {
     if (es) {
         es.on(et.CHAT_CHANGED || 'chat_changed', async () => {
             await onChatChanged();
-            renderSession(getCurrentSession());
+            renderConversation(getConversation());
         });
         es.on(et.CHARACTER_SELECTED || 'character_selected', async () => {
             await onChatChanged();
-            renderSession(getCurrentSession());
+            renderConversation(getConversation());
         });
         es.on(et.APP_READY || 'app_ready', () => {
             updateProfilesList();

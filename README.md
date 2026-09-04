@@ -14,8 +14,10 @@ from this repository's history.
 
 ## Status
 
-Fork landing (issue #2): the stripped chat core. The Inner Voice product behavior —
-exchanges, inner memory, simulation view, hide, and portray — lands in later issues.
+Exchange spine (issue #3): one continuous inner conversation per main chat, with every
+turn anchored to a main-chat message. New turns always anchor to the live edge (the
+latest main-chat message); older exchanges stay readable but never grow. Remaining
+product behavior — inner memory, simulation view, hide, and portray — lands in later issues.
 
 ## Development
 

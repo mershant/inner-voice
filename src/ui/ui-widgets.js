@@ -1,5 +1,5 @@
 import { CHANGELOG, EXT_DISPLAY, I, QP_ICON_POOL } from '../constants.js';
-import { getSettings, saveSettings, getCurrentSession } from '../session.js';
+import { getSettings, saveSettings, getConversation } from '../conversation.js';
 import { escHtml, showCustomDialog, autoResize } from '../utils/util-dom.js';
 import { assembleMessages } from '../api.js';
 
@@ -821,13 +821,13 @@ export function _buildContextInspectorHTML(messages) {
 export let _lastInspectorMessages = [];
 
 export async function openInspector() {
-    const sess = getCurrentSession();
-    const { getEffectiveSettings } = await import('../session.js');
+    const conv = getConversation();
+    const { getEffectiveSettings } = await import('../conversation.js');
     const settings = getEffectiveSettings();
     const inputEl = document.getElementById('iv-input');
     const pendingText = inputEl ? inputEl.value.trim() : '';
 
-    const messages = await assembleMessages(sess, settings, pendingText);
+    const messages = await assembleMessages(conv, settings, pendingText);
     _lastInspectorMessages = messages;
 
     const fmtEl = document.getElementById('iv-ctx-formatted');

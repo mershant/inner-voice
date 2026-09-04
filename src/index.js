@@ -1,13 +1,13 @@
 import { EXT_DISPLAY, CHANGELOG, I, WIN_ID, ICON_ID, MODAL_ID, ICON_STORAGE_KEY } from './constants.js';
 import { state } from './state.js';
-import { getSettings, saveSettings, getCurrentSession } from './session.js';
+import { getSettings, saveSettings, getConversation } from './conversation.js';
 import { _dbgSetupGlobalErrorHandlers, _dbgSnapshotSettings } from './utils/util-debug.js';
 import { autoResize, copyText } from './utils/util-dom.js';
 
 import { restoreWindowState, hideWindow, minimize, toggleVisibility, makeDraggable, makeResizable, makeIconDraggable, updateIconVisibility, toggleGhostMode, setupGhostHotkey, setupHotkey, bringWindowToFront } from './ui/ui-window.js';
 import { setupSettingsPanelListeners, setupSettingsHandlers, updateSettingsUI, updateProfilesList, updateSPConnProfileList, _takeProfileSnapshot, openSettingsPanel, syncOverlayUI } from './ui/ui-settings.js';
 import { updateMemoryDot } from './features/feature-memory.js';
-import { setupChatPickerListeners, onChatChanged, updateDepthSlidersMax, renderSession, openSearch, navigateSearch, performSearch, closeSearch, openChatPicker, toggleSearchWholeWord, setupDepthClickEdit, updateMsgCount, setupSearchHotkey, setupMessagesScrollTracking } from './ui/ui-chat.js';
+import { setupChatPickerListeners, onChatChanged, updateDepthSlidersMax, renderConversation, openSearch, navigateSearch, performSearch, closeSearch, openChatPicker, toggleSearchWholeWord, setupDepthClickEdit, updateMsgCount, setupSearchHotkey, setupMessagesScrollTracking } from './ui/ui-chat.js';
 import { checkChangelogAutoShow, setupChangelogListeners, openInspector, renderQuickPromptsBar } from './ui/ui-widgets.js';
 
 import * as apiMod from './api.js';
@@ -140,15 +140,15 @@ function attachWindowListeners() {
 
     // Toolbar actions
     document.getElementById('iv-regen-btn')?.addEventListener('click', () => {
-        const sess = getCurrentSession();
-        if (!sess.messages.length || state.generating) return;
+        const conv = getConversation();
+        if (!conv.messages.length || state.generating) return;
         let lastUserIdx = -1;
-        for (let i = sess.messages.length - 1; i >= 0; i--) { if (sess.messages[i].role === 'user') { lastUserIdx = i; break; } }
+        for (let i = conv.messages.length - 1; i >= 0; i--) { if (conv.messages[i].role === 'user') { lastUserIdx = i; break; } }
         if (lastUserIdx === -1) return;
-        const userMsg = sess.messages[lastUserIdx];
-        import('./session.js').then(m => m.truncateAfter(sess, userMsg.id));
+        const userMsg = conv.messages[lastUserIdx];
+        import('./conversation.js').then(m => m.truncateAfter(conv, userMsg.id));
         import('./ui/ui-chat.js').then(m => m.removeMsgElAfter(userMsg.id));
-        apiMod.runGenerate(sess, userMsg.content, false);
+        apiMod.runGenerate(conv, userMsg.content, false);
     });
 
     document.getElementById('iv-search-btn')?.addEventListener('click', () => { state.searchOpen ? closeSearch() : openSearch(); });
@@ -199,7 +199,7 @@ function attachWindowListeners() {
     if (inputEl) {
         inputEl.addEventListener('input', () => {
             autoResize(inputEl);
-            updateMsgCount(getCurrentSession());
+            updateMsgCount(getConversation());
         });
         inputEl.addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -215,12 +215,12 @@ function attachWindowListeners() {
         const rawText = inputEl?.value.trim();
         if (!rawText || state.generating) return;
 
-        const { expandMacros, getEffectiveSettings } = await import('./session.js');
+        const { expandMacros, getEffectiveSettings } = await import('./conversation.js');
         const _s = getEffectiveSettings();
         const text = _s.autoExpandMacros ? expandMacros(rawText || '') : (rawText || '');
         if (inputEl) { inputEl.value = ''; autoResize(inputEl); }
 
-        apiMod.runGenerate(getCurrentSession(), text, true).catch(console.error);
+        apiMod.runGenerate(getConversation(), text, true).catch(console.error);
     });
 
     // Modals
@@ -280,7 +280,7 @@ function attachWindowListeners() {
             getSettings().contextDepth = val;
             saveSettings();
             syncOverlayUI('contextDepth', val);
-            updateMsgCount(getCurrentSession());
+            updateMsgCount(getConversation());
         });
     }
     setupDepthClickEdit();
@@ -338,11 +338,11 @@ async function init() {
     if (es) {
         es.on(et.CHAT_CHANGED || 'chat_changed', async () => {
             await onChatChanged();
-            renderSession(getCurrentSession());
+            renderConversation(getConversation());
         });
         es.on(et.CHARACTER_SELECTED || 'character_selected', async () => {
             await onChatChanged();
-            renderSession(getCurrentSession());
+            renderConversation(getConversation());
         });
         es.on(et.APP_READY || 'app_ready', () => {
             updateProfilesList();
