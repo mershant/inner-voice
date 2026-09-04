@@ -22,6 +22,16 @@ function sanitizeToolCallsForSave(toolCalls) {
     return (toolCalls || []).map(tc => ({ ...tc }));
 }
 
+async function notePortrayAutoTrigger(turn) {
+    const { considerAutoTriggerPortray } = await import('./portray.js');
+    await considerAutoTriggerPortray(turn);
+}
+
+async function flushPortrayAutoTrigger() {
+    const { flushPendingAutoPortray } = await import('./portray.js');
+    await flushPendingAutoPortray();
+}
+
 export async function buildSystemContent(settings) {
     let sysPromptRaw = (typeof settings.systemPrompt === 'string' && settings.systemPrompt.trim()) ? settings.systemPrompt : DEFAULT_SYSTEM_PROMPT;
     const parts = [_ensureWrapped(sysPromptRaw, 'system_prompt')];
@@ -763,6 +773,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
         if (addUserMsg && userText) {
             const msgObj = addTurn(conversation, 'user', userText);
             appendMsgEl(msgObj);
+            await notePortrayAutoTrigger(msgObj);
         }
 
         const fullMessages = await assembleMessages(conversation, settings, userText || null);
@@ -939,6 +950,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
 
         const savedToolCalls = state.activeToolCalls.length ? sanitizeToolCallsForSave(JSON.parse(JSON.stringify(state.activeToolCalls))) : undefined;
 
+        let completedAssistant = null;
         if (streamMsgId) {
             const msg = conversation.messages.find(m => m.id === streamMsgId);
             if (msg) { 
@@ -947,6 +959,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
                 msg.toolCalls = savedToolCalls; 
                 msg.swipes = [{ content: fullText, reasoning: fullReasoning || null }];
                 msg.swipeIndex = 0;
+                completedAssistant = msg;
             }
             saveConversation();
 
@@ -959,7 +972,9 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
             newMsg.swipeIndex = 0;
             saveConversation();
             appendMsgEl(newMsg);
+            completedAssistant = newMsg;
         }
+        if (completedAssistant) await notePortrayAutoTrigger(completedAssistant);
 
         _refreshSwipeBars(conversation);
         state.activeToolCalls = [];
@@ -989,6 +1004,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
     } finally {
         state.generating = false;
         setGeneratingState(false);
+        await flushPortrayAutoTrigger();
     }
 }
 

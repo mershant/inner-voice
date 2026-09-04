@@ -78,6 +78,58 @@ export function routePortrayToInput(text) {
     ta.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+function sendMainChatInput() {
+    document.getElementById('send_but')?.click();
+}
+
+export function routePortrayResult(text, settings) {
+    routePortrayToInput(text);
+    if (settings?.portrayImmediateSend) sendMainChatInput();
+}
+
+let pendingAutoPortray = false;
+let pendingAutoPortrayOpts = null;
+
+function clearPendingAutoPortray() {
+    pendingAutoPortray = false;
+    pendingAutoPortrayOpts = null;
+}
+
+// A conclusion cue is a turn that settles on acting in the scene now:
+// directing {{user}} to do or say something, or resolving to do it.
+function isPortrayConclusionCue(text) {
+    if (typeof text !== 'string' || !text.trim()) return false;
+    const t = text.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (/\blet'?s just do that\b/.test(t)) return true;
+    if (/\byou should(?:\s+\w+){0,3}\s+(?:tell|say|ask|do|talk)\b/.test(t)) return true;
+    if (/\b(?:alright|okay|ok)[,.]?\s+(?:tell|say)\s+(?:her|him|them)\b/.test(t)) return true;
+    if (/\b(?:yeah|yes|yep|alright|okay|ok|fine)\b.{0,60}\b(?:let'?s|i(?:'ll| will| am going| am gonna|'m going|'m gonna))\b/.test(t)) return true;
+    return false;
+}
+
+export async function considerAutoTriggerPortray(turn, opts = {}) {
+    if (!getSettings().portrayAutoTrigger) {
+        clearPendingAutoPortray();
+        return null;
+    }
+    if (isPortrayConclusionCue(turn?.content)) {
+        pendingAutoPortray = true;
+        pendingAutoPortrayOpts = opts;
+    }
+    return flushPendingAutoPortray(opts);
+}
+
+export async function flushPendingAutoPortray(opts = {}) {
+    if (!getSettings().portrayAutoTrigger) {
+        clearPendingAutoPortray();
+        return null;
+    }
+    if (!pendingAutoPortray || state.generating) return null;
+    const runOpts = pendingAutoPortrayOpts || opts;
+    clearPendingAutoPortray();
+    return runPortray(runOpts.formOverride || {}, runOpts);
+}
+
 export async function runPortray(formOverride = {}, { generate } = {}) {
     if (state.generating) return null;
     const settings = getEffectiveSettings();
@@ -99,7 +151,7 @@ export async function runPortray(formOverride = {}, { generate } = {}) {
             messages,
         );
         const text = result && typeof result.text === 'string' ? result.text.trim() : '';
-        if (text) routePortrayToInput(text);
+        if (text) routePortrayResult(text, getSettings());
         return result;
     } catch (err) {
         const { showGenerationError } = await import('./ui/ui-chat.js');

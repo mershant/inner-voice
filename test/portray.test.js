@@ -89,7 +89,8 @@ const {
     saveSettings,
     addTurn,
 } = await import('../src/conversation.js');
-const { assemblePortrayMessages, readFireTimePortrayForm, routePortrayToInput, runPortray } = await import('../src/portray.js');
+const { state } = await import('../src/state.js');
+const { assemblePortrayMessages, readFireTimePortrayForm, routePortrayToInput, runPortray, considerAutoTriggerPortray, flushPendingAutoPortray } = await import('../src/portray.js');
 
 function mainMsg(text, isUser = false) {
     return { mes: text, is_user: isUser };
@@ -118,7 +119,9 @@ async function reset() {
     stub.sendButton.clicks = 0;
     stub.fireStyleEl.value = 'rp';
     stub.firePersonEl.value = 'first';
+    state.generating = false;
     await initConversation({ forceReset: true });
+    await flushPendingAutoPortray();
 }
 
 beforeEach(reset);
@@ -225,6 +228,11 @@ test('portray asks for the next turn instead of more private thinking', async ()
     assert.ok(text.includes("Write {{user}}'s next turn"));
 });
 
+test('portray trigger defaults are manual and input-box landing', () => {
+    assert.equal(getSettings().portrayAutoTrigger, false);
+    assert.equal(getSettings().portrayImmediateSend, false);
+});
+
 test('the portray result lands in the input box and is not sent', async () => {
     const draft = 'I set the cup down. "We leave at dawn."';
     routePortrayToInput(draft);
@@ -246,4 +254,110 @@ test('runPortray routes generated text to the input box without sending', async 
     assert.equal(stub.sendButton.clicks, 0);
     assert.equal(stub.generateCalls, 0);
     assert.equal(stub.chat.length, 1);
+});
+
+test('immediate send routes the same portray result to a sent message', async () => {
+    getSettings().portrayImmediateSend = true;
+    const draft = 'I look at Kyrine. "Enough."';
+    await runPortray({}, {
+        generate: async () => ({ text: draft }),
+    });
+
+    assert.equal(stub.inputBox.value, draft);
+    assert.equal(stub.sendButton.clicks, 1);
+    assert.equal(stub.generateCalls, 0);
+});
+
+test('auto-trigger disabled produces no detection behavior at all', async () => {
+    let portrayStarted = 0;
+    await considerAutoTriggerPortray(
+        { role: 'assistant', content: "...yeah, let's just do that." },
+        { generate: async () => { portrayStarted += 1; return { text: 'I nod.' }; } },
+    );
+
+    assert.equal(getSettings().portrayAutoTrigger, false);
+    assert.equal(portrayStarted, 0);
+    assert.equal(stub.inputBox.value, '');
+    assert.equal(stub.sendButton.clicks, 0);
+});
+
+test('auto-trigger firing never sends unless immediate send is separately enabled', async () => {
+    getSettings().portrayAutoTrigger = true;
+    const draft = 'I set the cup down. "We leave at dawn."';
+    await considerAutoTriggerPortray(
+        { role: 'assistant', content: "...yeah, let's just do that." },
+        { generate: async () => ({ text: draft }) },
+    );
+
+    assert.equal(stub.inputBox.value, draft);
+    assert.equal(stub.sendButton.clicks, 0);
+    assert.equal(stub.generateCalls, 0);
+    assert.equal(stub.chat.length, 1);
+});
+
+test('auto-trigger with immediate send on sends the portray', async () => {
+    getSettings().portrayAutoTrigger = true;
+    getSettings().portrayImmediateSend = true;
+    const draft = 'I look at Kyrine. "Enough."';
+    await considerAutoTriggerPortray(
+        { role: 'user', content: 'you should probably tell her about the letter.' },
+        { generate: async () => ({ text: draft }) },
+    );
+
+    assert.equal(stub.inputBox.value, draft);
+    assert.equal(stub.sendButton.clicks, 1);
+});
+
+test('a non-concluding exchange turn does not fire auto-trigger', async () => {
+    getSettings().portrayAutoTrigger = true;
+    let portrayStarted = 0;
+    await considerAutoTriggerPortray(
+        { role: 'user', content: 'wtf? how can she talk to us like that?' },
+        { generate: async () => { portrayStarted += 1; return { text: 'I stare.' }; } },
+    );
+
+    assert.equal(portrayStarted, 0);
+    assert.equal(stub.inputBox.value, '');
+    assert.equal(stub.sendButton.clicks, 0);
+});
+
+test('telling someone not to speak is not a portray conclusion cue', async () => {
+    getSettings().portrayAutoTrigger = true;
+    let portrayStarted = 0;
+    await considerAutoTriggerPortray(
+        { role: 'user', content: "don't tell her yet" },
+        { generate: async () => { portrayStarted += 1; return { text: 'I wait.' }; } },
+    );
+
+    assert.equal(portrayStarted, 0);
+    assert.equal(stub.inputBox.value, '');
+});
+
+test('an intrusive command is not a portray conclusion cue', async () => {
+    getSettings().portrayAutoTrigger = true;
+    let portrayStarted = 0;
+    await considerAutoTriggerPortray(
+        { role: 'user', content: 'Slap Kyrine.' },
+        { generate: async () => { portrayStarted += 1; return { text: 'I slap her.' }; } },
+    );
+
+    assert.equal(portrayStarted, 0);
+    assert.equal(stub.inputBox.value, '');
+});
+
+test('auto-trigger waits until inner generation is idle, then still does not send', async () => {
+    getSettings().portrayAutoTrigger = true;
+    const draft = 'I look at Kyrine. "Enough."';
+    state.generating = true;
+    await considerAutoTriggerPortray(
+        { role: 'assistant', content: "...yeah, let's just do that." },
+        { generate: async () => ({ text: draft }) },
+    );
+    assert.equal(stub.inputBox.value, '');
+    assert.equal(stub.sendButton.clicks, 0);
+
+    state.generating = false;
+    await flushPendingAutoPortray();
+    assert.equal(stub.inputBox.value, draft);
+    assert.equal(stub.sendButton.clicks, 0);
 });

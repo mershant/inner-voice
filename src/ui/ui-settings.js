@@ -83,6 +83,8 @@ const _SETTINGS_DEF = [
       onChange: () => import('../portray.js').then(m => m.syncFireTimePortrayForm()) },
     { key: 'portrayPerson', stId: 'iv-portray-person', spId: 'iv-sp-portray-person', type: 'select',
       onChange: () => import('../portray.js').then(m => m.syncFireTimePortrayForm()) },
+    { key: 'portrayImmediateSend', stId: 'iv-portray-immediate-send', spId: 'iv-sp-portray-immediate-send', type: 'checkbox' },
+    { key: 'portrayAutoTrigger', stId: 'iv-portray-auto-trigger', spId: 'iv-sp-portray-auto-trigger', type: 'checkbox' },
     { key: 'localHistoryLimit',   stId: 'iv-history-limit',    spId: 'iv-sp-history-limit',    type: 'input',    toVal: Number, updCtx: true, profileKey: true },
     { key: 'includeSystemPrompt', stId: 'iv-include-sysprompt', spId: 'iv-sp-include-sysprompt', type: 'checkbox', updCtx: true, profileKey: true },
     { key: 'includeUserPersonality', stId: 'iv-include-persona', spId: 'iv-sp-include-persona', type: 'checkbox', updCtx: true, profileKey: true },

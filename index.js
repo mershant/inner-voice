@@ -851,6 +851,8 @@ function getSettings() {
         includeHiddenMessages: false,
         portrayStyle: 'rp',
         portrayPerson: 'first',
+        portrayImmediateSend: false,
+        portrayAutoTrigger: false,
     };
     for (const [k, v] of Object.entries(defaults)) {
         if (s[k] === undefined) s[k] = v;
@@ -2464,6 +2466,8 @@ const _SETTINGS_DEF = [
       onChange: () => Promise.resolve().then(function () { return portray; }).then(m => m.syncFireTimePortrayForm()) },
     { key: 'portrayPerson', stId: 'iv-portray-person', spId: 'iv-sp-portray-person', type: 'select',
       onChange: () => Promise.resolve().then(function () { return portray; }).then(m => m.syncFireTimePortrayForm()) },
+    { key: 'portrayImmediateSend', stId: 'iv-portray-immediate-send', spId: 'iv-sp-portray-immediate-send', type: 'checkbox' },
+    { key: 'portrayAutoTrigger', stId: 'iv-portray-auto-trigger', spId: 'iv-sp-portray-auto-trigger', type: 'checkbox' },
     { key: 'localHistoryLimit',   stId: 'iv-history-limit',    spId: 'iv-sp-history-limit',    type: 'input',    toVal: Number, updCtx: true, profileKey: true },
     { key: 'includeSystemPrompt', stId: 'iv-include-sysprompt', spId: 'iv-sp-include-sysprompt', type: 'checkbox', updCtx: true, profileKey: true },
     { key: 'includeUserPersonality', stId: 'iv-include-persona', spId: 'iv-sp-include-persona', type: 'checkbox', updCtx: true, profileKey: true },
@@ -6666,6 +6670,16 @@ function sanitizeToolCallsForSave(toolCalls) {
     return (toolCalls || []).map(tc => ({ ...tc }));
 }
 
+async function notePortrayAutoTrigger(turn) {
+    const { considerAutoTriggerPortray } = await Promise.resolve().then(function () { return portray; });
+    await considerAutoTriggerPortray(turn);
+}
+
+async function flushPortrayAutoTrigger() {
+    const { flushPendingAutoPortray } = await Promise.resolve().then(function () { return portray; });
+    await flushPendingAutoPortray();
+}
+
 async function buildSystemContent(settings) {
     let sysPromptRaw = (typeof settings.systemPrompt === 'string' && settings.systemPrompt.trim()) ? settings.systemPrompt : DEFAULT_SYSTEM_PROMPT;
     const parts = [_ensureWrapped(sysPromptRaw, 'system_prompt')];
@@ -7407,6 +7421,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
         if (addUserMsg && userText) {
             const msgObj = addTurn(conversation, 'user', userText);
             appendMsgEl(msgObj);
+            await notePortrayAutoTrigger(msgObj);
         }
 
         const fullMessages = await assembleMessages(conversation, settings, userText || null);
@@ -7583,6 +7598,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
 
         const savedToolCalls = state.activeToolCalls.length ? sanitizeToolCallsForSave(JSON.parse(JSON.stringify(state.activeToolCalls))) : undefined;
 
+        let completedAssistant = null;
         if (streamMsgId) {
             const msg = conversation.messages.find(m => m.id === streamMsgId);
             if (msg) { 
@@ -7591,6 +7607,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
                 msg.toolCalls = savedToolCalls; 
                 msg.swipes = [{ content: fullText, reasoning: fullReasoning || null }];
                 msg.swipeIndex = 0;
+                completedAssistant = msg;
             }
             saveConversation();
 
@@ -7603,7 +7620,9 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
             newMsg.swipeIndex = 0;
             saveConversation();
             appendMsgEl(newMsg);
+            completedAssistant = newMsg;
         }
+        if (completedAssistant) await notePortrayAutoTrigger(completedAssistant);
 
         _refreshSwipeBars(conversation);
         state.activeToolCalls = [];
@@ -7633,6 +7652,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
     } finally {
         state.generating = false;
         setGeneratingState(false);
+        await flushPortrayAutoTrigger();
     }
 }
 
@@ -8964,6 +8984,58 @@ function routePortrayToInput(text) {
     ta.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+function sendMainChatInput() {
+    document.getElementById('send_but')?.click();
+}
+
+function routePortrayResult(text, settings) {
+    routePortrayToInput(text);
+    if (settings?.portrayImmediateSend) sendMainChatInput();
+}
+
+let pendingAutoPortray = false;
+let pendingAutoPortrayOpts = null;
+
+function clearPendingAutoPortray() {
+    pendingAutoPortray = false;
+    pendingAutoPortrayOpts = null;
+}
+
+// A conclusion cue is a turn that settles on acting in the scene now:
+// directing {{user}} to do or say something, or resolving to do it.
+function isPortrayConclusionCue(text) {
+    if (typeof text !== 'string' || !text.trim()) return false;
+    const t = text.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (/\blet'?s just do that\b/.test(t)) return true;
+    if (/\byou should(?:\s+\w+){0,3}\s+(?:tell|say|ask|do|talk)\b/.test(t)) return true;
+    if (/\b(?:alright|okay|ok)[,.]?\s+(?:tell|say)\s+(?:her|him|them)\b/.test(t)) return true;
+    if (/\b(?:yeah|yes|yep|alright|okay|ok|fine)\b.{0,60}\b(?:let'?s|i(?:'ll| will| am going| am gonna|'m going|'m gonna))\b/.test(t)) return true;
+    return false;
+}
+
+async function considerAutoTriggerPortray(turn, opts = {}) {
+    if (!getSettings().portrayAutoTrigger) {
+        clearPendingAutoPortray();
+        return null;
+    }
+    if (isPortrayConclusionCue(turn?.content)) {
+        pendingAutoPortray = true;
+        pendingAutoPortrayOpts = opts;
+    }
+    return flushPendingAutoPortray(opts);
+}
+
+async function flushPendingAutoPortray(opts = {}) {
+    if (!getSettings().portrayAutoTrigger) {
+        clearPendingAutoPortray();
+        return null;
+    }
+    if (!pendingAutoPortray || state.generating) return null;
+    const runOpts = pendingAutoPortrayOpts || opts;
+    clearPendingAutoPortray();
+    return runPortray(runOpts.formOverride || {}, runOpts);
+}
+
 async function runPortray(formOverride = {}, { generate } = {}) {
     if (state.generating) return null;
     const settings = getEffectiveSettings();
@@ -8985,7 +9057,7 @@ async function runPortray(formOverride = {}, { generate } = {}) {
             messages,
         );
         const text = result && typeof result.text === 'string' ? result.text.trim() : '';
-        if (text) routePortrayToInput(text);
+        if (text) routePortrayResult(text, getSettings());
         return result;
     } catch (err) {
         const { showGenerationError } = await Promise.resolve().then(function () { return uiChat; });
@@ -9006,8 +9078,11 @@ var portray = /*#__PURE__*/Object.freeze({
     PORTRAY_STYLES: PORTRAY_STYLES,
     assemblePortrayMessages: assemblePortrayMessages,
     buildPortrayInstruction: buildPortrayInstruction,
+    considerAutoTriggerPortray: considerAutoTriggerPortray,
+    flushPendingAutoPortray: flushPendingAutoPortray,
     readFireTimePortrayForm: readFireTimePortrayForm,
     resolvePortrayForm: resolvePortrayForm,
+    routePortrayResult: routePortrayResult,
     routePortrayToInput: routePortrayToInput,
     runPortray: runPortray,
     syncFireTimePortrayForm: syncFireTimePortrayForm

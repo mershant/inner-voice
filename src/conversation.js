@@ -136,6 +136,8 @@ export function getSettings() {
         includeHiddenMessages: false,
         portrayStyle: 'rp',
         portrayPerson: 'first',
+        portrayImmediateSend: false,
+        portrayAutoTrigger: false,
     };
     for (const [k, v] of Object.entries(defaults)) {
         if (s[k] === undefined) s[k] = v;
