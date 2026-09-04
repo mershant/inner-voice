@@ -116,10 +116,7 @@ const _OV_EL_MAP = {
 };
 
 // Profile keys
-const _PROFILE_KEYS = [
-    ..._SETTINGS_DEF.filter(d => d.profileKey).map(d => d.key),
-    'includeAuthorsNote', 'includeCharacterCard'
-];
+const _PROFILE_KEYS = _SETTINGS_DEF.filter(d => d.profileKey).map(d => d.key);
 
 // ─── Configuration Profiles ───────────────────────────────────────────────────
 
@@ -189,7 +186,7 @@ export function refreshProfilesDropdown() {
     const sel = document.getElementById('iv-profile-select'); if (!sel) return;
     const s = getSettings();
     if (!Object.keys(s.profiles).length) {
-        s.profiles['Default'] = { systemPrompt: DEFAULT_SYSTEM_PROMPT, includeSystemPrompt: true, includeAuthorsNote: true, includeCharacterCard: true, includeUserPersonality: true, contextDepth: 15, localHistoryLimit: 50, connectionSource: 'default', connectionProfileId: '', maxTokens: 8200, applyRegexToContext: true };
+        s.profiles['Default'] = { systemPrompt: DEFAULT_SYSTEM_PROMPT, includeSystemPrompt: true, includeUserPersonality: true, contextDepth: 15, localHistoryLimit: 50, connectionSource: 'default', connectionProfileId: '', maxTokens: 8200, applyRegexToContext: true };
         s.activeProfile = 'Default'; saveSettings();
     }
     sel.innerHTML = ''; let hasActive = false;
@@ -257,7 +254,7 @@ export function refreshSPProfilesDropdown() {
     const sel = document.getElementById('iv-sp-profile-select'); if (!sel) return;
     const s = getSettings();
     if (!Object.keys(s.profiles).length) {
-        s.profiles['Default'] = { systemPrompt: DEFAULT_SYSTEM_PROMPT, includeSystemPrompt: true, includeAuthorsNote: true, includeCharacterCard: true, includeUserPersonality: true, contextDepth: 15, localHistoryLimit: 50, connectionSource: 'default', connectionProfileId: '', maxTokens: 8200, applyRegexToContext: true };
+        s.profiles['Default'] = { systemPrompt: DEFAULT_SYSTEM_PROMPT, includeSystemPrompt: true, includeUserPersonality: true, contextDepth: 15, localHistoryLimit: 50, connectionSource: 'default', connectionProfileId: '', maxTokens: 8200, applyRegexToContext: true };
         s.activeProfile = 'Default'; saveSettings();
     }
     sel.innerHTML = '';
@@ -775,7 +772,7 @@ export function setupSettingsHandlers() {
     document.getElementById('iv-profile-create-new')?.addEventListener('click', async () => {
         const name = await showCustomDialog({ type: 'prompt', title: 'New Configuration', message: 'Enter a name for the new default profile:', placeholder: 'New Config' }); if (!name?.trim()) return;
         const n = name.trim(); const s = getSettings();
-        s.profiles[n] = { systemPrompt: DEFAULT_SYSTEM_PROMPT, includeSystemPrompt: true, includeAuthorsNote: true, includeCharacterCard: true, includeUserPersonality: true, contextDepth: 15, localHistoryLimit: 50, connectionSource: 'default', connectionProfileId: '', maxTokens: 8200 };
+        s.profiles[n] = { systemPrompt: DEFAULT_SYSTEM_PROMPT, includeSystemPrompt: true, includeUserPersonality: true, contextDepth: 15, localHistoryLimit: 50, connectionSource: 'default', connectionProfileId: '', maxTokens: 8200 };
         saveSettings(); refreshProfilesDropdown(); loadProfile(n);
         const sel = document.getElementById('iv-profile-select'); if (sel) sel.value = n;
         updateBindingSection(); toastr.success(`Created "${n}"`, EXT_DISPLAY);
@@ -894,7 +891,7 @@ export function setupSettingsPanelListeners() {
     document.getElementById('iv-sp-profile-create')?.addEventListener('click', async () => {
         const name = await showCustomDialog({ type: 'prompt', title: 'New Configuration', message: 'Name:', placeholder: 'New Config' }); if (!name?.trim()) return;
         const n = name.trim(); const s = getSettings();
-        s.profiles[n] = { systemPrompt: DEFAULT_SYSTEM_PROMPT, includeSystemPrompt: true, includeAuthorsNote: true, includeCharacterCard: true, includeUserPersonality: true, contextDepth: 15, localHistoryLimit: 50, connectionSource: 'default', connectionProfileId: '', maxTokens: 8200, applyRegexToContext: true };
+        s.profiles[n] = { systemPrompt: DEFAULT_SYSTEM_PROMPT, includeSystemPrompt: true, includeUserPersonality: true, contextDepth: 15, localHistoryLimit: 50, connectionSource: 'default', connectionProfileId: '', maxTokens: 8200, applyRegexToContext: true };
         saveSettings(); refreshSPProfilesDropdown(); refreshProfilesDropdown(); loadProfile(n); syncSPFromSettings(); updateSettingsUI();
         const sel = document.getElementById('iv-sp-profile-select'); if (sel) sel.value = n;
         updateSPBindingSection(); toastr.success(`Created "${n}"`, EXT_DISPLAY);

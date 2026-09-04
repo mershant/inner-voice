@@ -1,10 +1,10 @@
 import { EXT_DISPLAY, CHANGELOG, I, WIN_ID, ICON_ID, MODAL_ID, ICON_STORAGE_KEY } from './constants.js';
 import { state } from './state.js';
 import { getSettings, saveSettings, getCurrentSession } from './session.js';
-import { _dbgSetupGlobalErrorHandlers, _dbgAdd, dbgDownload, _dbgSnapshotSettings } from './utils/util-debug.js';
+import { _dbgSetupGlobalErrorHandlers, _dbgSnapshotSettings } from './utils/util-debug.js';
 import { autoResize, copyText } from './utils/util-dom.js';
 
-import { restoreWindowState, applyCustomTheme, hideWindow, showWindow, minimize, toggleVisibility, makeDraggable, makeResizable, makeIconDraggable, updateIconVisibility, toggleGhostMode, setupGhostHotkey, setupHotkey, bringWindowToFront } from './ui/ui-window.js';
+import { restoreWindowState, hideWindow, minimize, toggleVisibility, makeDraggable, makeResizable, makeIconDraggable, updateIconVisibility, toggleGhostMode, setupGhostHotkey, setupHotkey, bringWindowToFront } from './ui/ui-window.js';
 import { setupSettingsPanelListeners, setupSettingsHandlers, updateSettingsUI, updateProfilesList, updateSPConnProfileList, _takeProfileSnapshot, openSettingsPanel, syncOverlayUI } from './ui/ui-settings.js';
 import { updateMemoryDot } from './features/feature-memory.js';
 import { setupChatPickerListeners, onChatChanged, updateDepthSlidersMax, renderSession, openSearch, navigateSearch, performSearch, closeSearch, openChatPicker, toggleSearchWholeWord, setupDepthClickEdit, updateMsgCount, setupSearchHotkey, setupMessagesScrollTracking } from './ui/ui-chat.js';

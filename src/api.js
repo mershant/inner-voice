@@ -79,8 +79,7 @@ export async function buildSystemContent(settings) {
 
     const modules = [memoryAIInstr, toolsBlock].filter(Boolean);
     if (modules.length > 0) {
-        const reminder = `\n\n[SYSTEM REMINDER: If you intend to modify anything you MUST write the appropriate structured markdown block containing your instructions. The system strictly relies on these blocks to parse and apply your changes automatically. Simply describing your changes in plain text without outputting the corresponding markdown block will result in failure to apply them.]`;
-        parts.push(`\n\n<modules>\n${modules.join('\n\n')}${reminder}\n</modules>`);
+        parts.push(`\n\n<modules>\n${modules.join('\n\n')}\n</modules>`);
     }
 
     return parts.join('\n');

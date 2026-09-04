@@ -18,11 +18,11 @@ globalThis.SillyTavern = {
 
 const { parseToolCallsFromText } = await import('../src/features/feature-tools-engine.js');
 
-test('existing tool parsing: single fenced generate_image call', () => {
-    const text = 'Sure.\n```tool_call\n{"name":"generate_image","input":{"prompt":"Eloise in the chapel","composition":"character_sheet","subjects":[{"name":"Eloise"}]}}\n```\n';
+test('existing tool parsing: single fenced get_recent_messages call', () => {
+    const text = 'Sure.\n```tool_call\n{"name":"get_recent_messages","input":{"prompt":"Eloise in the chapel","composition":"character_sheet","subjects":[{"name":"Eloise"}]}}\n```\n';
     const calls = parseToolCallsFromText(text);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].name, 'generate_image');
+    assert.equal(calls[0].name, 'get_recent_messages');
     assert.equal(calls[0].input.composition, 'character_sheet');
     assert.equal(calls[0].input.prompt, 'Eloise in the chapel');
 });
