@@ -80,7 +80,7 @@ const {
     isExchangeHidden,
 } = await import('../src/conversation.js');
 const { assembleMessages, buildSystemContent } = await import('../src/api.js');
-const { DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPTS, DEFAULT_MEMORY_PROMPT, LEGACY_MEMORY_PROMPTS } = await import('../src/constants.js');
+const { DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPTS, DEFAULT_MEMORY_PROMPT, LEGACY_MEMORY_PROMPTS, DEFAULT_TOOLS_PROMPT } = await import('../src/constants.js');
 const { getSettings } = await import('../src/conversation.js');
 
 function mainMsg(text, isUser = false) {
@@ -235,14 +235,89 @@ test('no default prompt restricts the Voice to established events (ADR 0002)', a
     }
 });
 
-test('a stored copy of the superseded default prompt upgrades to the current default', () => {
-    stub.extensionSettings.inner_voice = { systemPrompt: LEGACY_SYSTEM_PROMPTS[0] };
-    const s = getSettings();
-    assert.equal(s.systemPrompt, DEFAULT_SYSTEM_PROMPT);
+test('stored copies of every superseded default prompt upgrade to the current default', () => {
+    for (const legacy of LEGACY_SYSTEM_PROMPTS) {
+        stub.extensionSettings.inner_voice = { systemPrompt: legacy };
+        assert.equal(getSettings().systemPrompt, DEFAULT_SYSTEM_PROMPT);
+    }
 
     // A genuinely customized prompt stays untouched.
     stub.extensionSettings.inner_voice = { systemPrompt: 'My own prompt.' };
     assert.equal(getSettings().systemPrompt, 'My own prompt.');
+});
+
+test('profiles carrying a superseded default prompt upgrade too', () => {
+    stub.extensionSettings.inner_voice = {
+        profiles: {
+            'Default': { systemPrompt: LEGACY_SYSTEM_PROMPTS[LEGACY_SYSTEM_PROMPTS.length - 1] },
+            'Mine': { systemPrompt: 'My own profile prompt.' },
+        },
+    };
+    const s = getSettings();
+    assert.equal(s.profiles['Default'].systemPrompt, DEFAULT_SYSTEM_PROMPT);
+    assert.equal(s.profiles['Mine'].systemPrompt, 'My own profile prompt.');
+});
+
+test('a stored copy of the superseded tools prompt empties back to the current default', async () => {
+    const { LEGACY_TOOLS_PROMPTS } = await import('../src/constants.js');
+    stub.extensionSettings.inner_voice = { toolsSystemPrompt: LEGACY_TOOLS_PROMPTS[0] };
+    assert.equal(getSettings().toolsSystemPrompt, '');
+
+    stub.extensionSettings.inner_voice = { toolsSystemPrompt: 'My own tools prompt.' };
+    assert.equal(getSettings().toolsSystemPrompt, 'My own tools prompt.');
+});
+
+// ─── Voice repair (ticket #11) ─────────────────────────────────────────────────
+
+test('the system prompt casts the model as {{user}} in first person', async () => {
+    // The answering voice is {{user}} themselves, thinking.
+    assert.match(DEFAULT_SYSTEM_PROMPT, /\{\{user\}\}:\s*you\b/i);
+    assert.match(DEFAULT_SYSTEM_PROMPT, /first person/i);
+
+    // The player's side is the Inner Voice, and the live system content
+    // still defines both entities.
+    const sys = await buildSystemContent(getEffectiveSettings());
+    assert.ok(sys.includes('Inner Voice'));
+    assert.match(sys, /\{\{user\}\}:\s*you\b/i);
+});
+
+test('no assistant or co-writer framing remains in the default prompt', async () => {
+    const framings = [
+        /you are (an? |the )?(assistant|co-?writer|copilot|engine|strategist)/i,
+        /sounding board/i,
+        /brainstorm/i,
+        /dungeon master/i,
+        /meta-analytical/i,
+        /use markdown/i,
+        /bullet points/i,
+    ];
+    // The full live system content — the system prompt plus every module block
+    // that rides along with it — must not recast the answering voice.
+    const sys = await buildSystemContent(getEffectiveSettings());
+    for (const f of framings) {
+        assert.ok(!f.test(DEFAULT_SYSTEM_PROMPT), `default prompt still carries assistant framing: ${f}`);
+        assert.ok(!f.test(sys), `live system content still carries assistant framing: ${f}`);
+    }
+    // The system prompt itself additionally never speaks OOC vocabulary; the
+    // memory module may say OOC about its own administrative database.
+    assert.ok(!/\bOOC\b/.test(DEFAULT_SYSTEM_PROMPT));
+});
+
+test('the ticket-#4 inner-voice-cast default is superseded, not the live default', () => {
+    // The previous default cast the model as the guiding half — the Inner
+    // Voice. That casting must now live only in the legacy list.
+    assert.ok(!/guiding half of one mind/i.test(DEFAULT_SYSTEM_PROMPT));
+    assert.ok(LEGACY_SYSTEM_PROMPTS.some(p => /guiding half of one mind/i.test(p)),
+        'the superseded inner-voice-cast default must upgrade on load');
+});
+
+test('the tools prompt speaks to {{user}}, not about {{user}} from outside', () => {
+    // Tools are cast as reaching into the speaker's own memory...
+    assert.match(DEFAULT_TOOLS_PROMPT, /your memory/i);
+    assert.match(DEFAULT_TOOLS_PROMPT, /you remembering/i);
+    // ...never as a helper serving a third-person {{user}}.
+    assert.ok(!/\{\{user\}\}\s+(wonders|asks|wants|needs)/i.test(DEFAULT_TOOLS_PROMPT),
+        'the tools prompt must not describe {{user}} in the third person');
 });
 
 test('stored copies of superseded memory prompts upgrade, including CRLF copies', () => {

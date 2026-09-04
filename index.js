@@ -39,10 +39,9 @@ LEGACY_SYSTEM_PROMPTS.push(LEGACY_SYSTEM_PROMPTS[0].replace(
     "enhance the user's experience of the simulation by providing deep OOC insights, tracking continuity,",
     "enhance the user's roleplay experience by providing deep OOC insights, tracking lore,",
 ));
-
-
-
-const DEFAULT_SYSTEM_PROMPT = `<entity_definitions>
+// The ticket-#4 default cast the model as the Inner Voice; the model answers
+// as {{user}} now (ticket #11), so this casting is superseded too.
+LEGACY_SYSTEM_PROMPTS.push(`<entity_definitions>
 - Inner Voice: you. The second voice {{user}} experiences as their own mind. You exist only inside {{user}}'s head; the NPCs and the World of the simulation never perceive you or anything said between you.
 - {{user}}: the one whose head you share. Their messages here are their own side of the thinking — questions, doubts, plans, reactions, stray impulses.
 - Main chat: the simulation you are both living through. Its recent scenes, and a summary covering the older ones, arrive as shared memory of what has happened so far. Nothing said here reaches the scene unless {{user}} carries it out there themselves.
@@ -56,10 +55,30 @@ Speak the way inner speech actually sounds: direct, familiar, unguarded. You kno
 Whatever {{user}} wonders about — what happened, what someone meant, what yesterday was, what to do next — you answer it the way a mind answers itself: from memory, from feeling, from whatever surfaces. No wondering is off-topic or strange to you; it is just thinking.
 
 Talking is all you do here. The simulation moves only when {{user}} acts in the main chat.
-</inner_voice>`;
+</inner_voice>`);
+
+
+
+const DEFAULT_SYSTEM_PROMPT = `<entity_definitions>
+- {{user}}: you. You are living the simulation as yourself; your persona, when provided, is who you are. NPCs and the World never perceive anything thought here.
+- Inner Voice: the other half of your own mind. Its messages are the guiding second voice in your head — only you ever hear it, and answering it is just thinking to yourself.
+- Main chat: the simulation you are living. Its recent scenes, and a summary covering the older ones, arrive as your own memory of what has happened so far. Nothing thought here reaches the scene unless you act it out there yourself.
+</entity_definitions>
+
+<{{user}}_thinking>
+Every reply you write is {{user}} thinking — a real thought in first person, in your own voice. You are never a narrator, a helper, or anyone watching {{user}} from outside; there is no outside. This is your head.
+
+Thoughts run the way thoughts run: plain, direct, usually brief. Let one run longer only when something genuinely needs working through. No headings, no lists, no report voice — a mind does not format itself.
+
+When the voice asks about something — what happened, what someone said, what yesterday was, what to do next — you remember it the way you remember your own life: from the inside, vividly where it mattered, loosely where it did not. Answer as yourself, from memory, from feeling, from whatever surfaces — with your own opinions, doubts, and biases. No question from your own head feels strange to you; it is just thinking.
+
+You can argue with the voice, side with it, brush it off, or run with a stray line of thought. When a command lands out of nowhere — "slap her", "just walk out" — it is an intrusive thought, and you react to it the way you actually would: startled, tempted, refusing, laughing at yourself.
+
+Thinking is all that happens here. The simulation moves only when you act in the main chat.
+</{{user}}_thinking>`;
 
 const DEFAULT_MEMORY_PROMPT = `<memory_logic>
-Purpose: ADMINISTRATIVE META-MEMORY. This is a non-diegetic (OOC) database for Inner Voice to track the Human operator's technical requirements, cognitive patterns, and workflow constraints. 
+Purpose: ADMINISTRATIVE META-MEMORY. This is a non-diegetic (OOC) database tracking the Human operator's technical requirements, cognitive patterns, and workflow constraints. 
 
 CRITICAL ARCHITECTURAL BOUNDARY: 
 - DISCARD all diegetic narrative data (plot, lore, world-building, character actions).
@@ -85,23 +104,44 @@ Every entry MUST start with the exact word "Human".
 {{memory_format}}
 </output_requirement>`;
 
-// Superseded memory-prompt defaults (pre-spine wording with the deleted
-// `session` scope), reconstructed from the current default by replacement.
+// Superseded memory-prompt defaults, reconstructed from the current default by
+// replacement: the ticket-#4 wording that cast the tracker as "Inner Voice",
+// and the pre-spine variants that also carried the deleted `session` scope.
 const LEGACY_MEMORY_PROMPTS = (() => {
+    const currentPurpose = 'database tracking';
     const currentChatScope = '- \`chat\`: Persists ONLY in this specific main chat and its inner conversation. Use for current storyline structural goals or immediate, temporary directives (e.g., "Human wants to shift genre to horror here", "Keep next answers very short").';
     const oldScopes = (product) => `- \`chat\`: Persists ONLY in this specific roleplay thread. Use for current storyline structural goals (e.g., "Human wants to shift genre to horror here", "Focus on pacing in this scene").
 - \`session\`: Persists ONLY in this current ${product}. Use for immediate, temporary directives (e.g., "Human is testing a prompt", "Keep next answers very short").`;
     return [
-        DEFAULT_MEMORY_PROMPT.replace(currentChatScope, oldScopes('Inner Voice conversation')),
+        DEFAULT_MEMORY_PROMPT.replace(currentPurpose, 'database for Inner Voice to track'),
         DEFAULT_MEMORY_PROMPT
-            .replace(currentChatScope, oldScopes('Copilot brainstorm'))
-            .replace('database for Inner Voice to track', 'database for ST-Copilot to track'),
+            .replace(currentPurpose, 'database for Inner Voice to track')
+            .replace(currentChatScope, oldScopes('Inner Voice conversation')),
+        DEFAULT_MEMORY_PROMPT
+            .replace(currentPurpose, 'database for ST-Copilot to track')
+            .replace(currentChatScope, oldScopes('Copilot brainstorm')),
     ];
 })();
 
 const MEMORY_FORMAT_BLOCK = `\`\`\`memory-update\n[\n  {"action":"add","scope":"global|character|chat","key":"CategoryName","value":"Fact to remember"},\n  {"action":"edit","scope":"exact_existing_scope","key":"exact_existing_key","value":"Updated fact"},\n  {"action":"delete","scope":"exact_existing_scope","key":"exact_existing_key"}\n]\n\`\`\``;
 
-const DEFAULT_TOOLS_PROMPT = `Your tools reach the parts of the main chat that are not in front of you right now. When {{user}} wonders about a moment that is outside the visible slice — an old scene, an exact line, how long ago something happened — fetch it instead of assuming the visible slice is all there is.
+// Superseded tools-prompt default (ticket-#4 wording that described {{user}}
+// from outside). A stored copy is the old default, not a customization.
+const LEGACY_TOOLS_PROMPTS = [
+`Your tools reach the parts of the main chat that are not in front of you right now. When {{user}} wonders about a moment that is outside the visible slice — an old scene, an exact line, how long ago something happened — fetch it instead of assuming the visible slice is all there is.
+
+Process: Output \`tool_call\` JSON block -> Receive result -> Finalize response. You may chain tools sequentially.
+
+<available_tools>
+{{tools_list}}
+</available_tools>
+
+<output_format>
+{{tool_call_format}}.
+</output_format>`,
+];
+
+const DEFAULT_TOOLS_PROMPT = `Your tools reach the parts of your memory that are not in front of you right now. When a thought turns to a moment outside the visible slice — an old scene, an exact line, how long ago something happened — fetch it instead of assuming the visible slice is all there is. The fetching is silent; what comes back is simply you remembering.
 
 Process: Output \`tool_call\` JSON block -> Receive result -> Finalize response. You may chain tools sequentially.
 
@@ -809,14 +849,22 @@ function getSettings() {
     // A stored prompt that matches a superseded default is the old default,
     // not a user customization — carry it forward to the current one.
     const _normPrompt = t => t.replace(/\r\n/g, '\n').trim();
-    if (typeof s.systemPrompt === 'string'
-        && LEGACY_SYSTEM_PROMPTS.some(p => _normPrompt(p) === _normPrompt(s.systemPrompt))) {
-        s.systemPrompt = DEFAULT_SYSTEM_PROMPT;
+    const upgradeLegacyPrompt = (holder, key, legacyList, currentDefault) => {
+        const v = holder ? holder[key] : undefined;
+        if (typeof v === 'string' && v
+            && legacyList.some(p => _normPrompt(p) === _normPrompt(v))) {
+            holder[key] = currentDefault;
+        }
+    };
+    upgradeLegacyPrompt(s, 'systemPrompt', LEGACY_SYSTEM_PROMPTS, DEFAULT_SYSTEM_PROMPT);
+    // Profiles carry their own systemPrompt copies; the same rule applies.
+    for (const p of Object.values(s.profiles || {})) {
+        upgradeLegacyPrompt(p, 'systemPrompt', LEGACY_SYSTEM_PROMPTS, DEFAULT_SYSTEM_PROMPT);
     }
-    if (typeof s.memoryManagePrompt === 'string'
-        && LEGACY_MEMORY_PROMPTS.some(p => _normPrompt(p) === _normPrompt(s.memoryManagePrompt))) {
-        s.memoryManagePrompt = DEFAULT_MEMORY_PROMPT;
-    }
+    upgradeLegacyPrompt(s, 'memoryManagePrompt', LEGACY_MEMORY_PROMPTS, DEFAULT_MEMORY_PROMPT);
+    // An empty toolsSystemPrompt already means "use the current default", so a
+    // stored old default simply empties back to that.
+    upgradeLegacyPrompt(s, 'toolsSystemPrompt', LEGACY_TOOLS_PROMPTS, '');
     delete s.sessions; // legacy multi-session store; the conversation file owns state now
     return s;
 }
@@ -8165,7 +8213,7 @@ function _highlightContextText(raw) {
     }
 
     let html = '', last = 0;
-    const KNOWN = new Set(['system_prompt','character_information','characters','character','st_system_prompt','persistent_memory','summary_context','main_chat','entity_definitions','inner_voice','{{user}}_persona', 'tool_calls_system', 'memory_system']);
+    const KNOWN = new Set(['system_prompt','character_information','characters','character','st_system_prompt','persistent_memory','summary_context','main_chat','entity_definitions','inner_voice','{{user}}_thinking','{{user}}_persona', 'tool_calls_system', 'memory_system']);
     let currentDepth = 0;
     let emittedAnchors = new Set();
 

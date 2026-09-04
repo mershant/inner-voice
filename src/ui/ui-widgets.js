@@ -658,7 +658,7 @@ export function _highlightContextText(raw) {
     }
 
     let html = '', last = 0;
-    const KNOWN = new Set(['system_prompt','character_information','characters','character','st_system_prompt','persistent_memory','summary_context','main_chat','entity_definitions','inner_voice','{{user}}_persona', 'tool_calls_system', 'memory_system']);
+    const KNOWN = new Set(['system_prompt','character_information','characters','character','st_system_prompt','persistent_memory','summary_context','main_chat','entity_definitions','inner_voice','{{user}}_thinking','{{user}}_persona', 'tool_calls_system', 'memory_system']);
     let currentDepth = 0;
     let emittedAnchors = new Set();
 

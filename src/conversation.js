@@ -5,6 +5,7 @@ import {
     LEGACY_SYSTEM_PROMPTS,
     DEFAULT_MEMORY_PROMPT,
     LEGACY_MEMORY_PROMPTS,
+    LEGACY_TOOLS_PROMPTS,
     THEME_PRESETS
 } from './constants.js';
 import { _dbgAdd, _dbgDiffSettings } from './utils/util-debug.js';
@@ -139,14 +140,22 @@ export function getSettings() {
     // A stored prompt that matches a superseded default is the old default,
     // not a user customization — carry it forward to the current one.
     const _normPrompt = t => t.replace(/\r\n/g, '\n').trim();
-    if (typeof s.systemPrompt === 'string'
-        && LEGACY_SYSTEM_PROMPTS.some(p => _normPrompt(p) === _normPrompt(s.systemPrompt))) {
-        s.systemPrompt = DEFAULT_SYSTEM_PROMPT;
+    const upgradeLegacyPrompt = (holder, key, legacyList, currentDefault) => {
+        const v = holder ? holder[key] : undefined;
+        if (typeof v === 'string' && v
+            && legacyList.some(p => _normPrompt(p) === _normPrompt(v))) {
+            holder[key] = currentDefault;
+        }
+    };
+    upgradeLegacyPrompt(s, 'systemPrompt', LEGACY_SYSTEM_PROMPTS, DEFAULT_SYSTEM_PROMPT);
+    // Profiles carry their own systemPrompt copies; the same rule applies.
+    for (const p of Object.values(s.profiles || {})) {
+        upgradeLegacyPrompt(p, 'systemPrompt', LEGACY_SYSTEM_PROMPTS, DEFAULT_SYSTEM_PROMPT);
     }
-    if (typeof s.memoryManagePrompt === 'string'
-        && LEGACY_MEMORY_PROMPTS.some(p => _normPrompt(p) === _normPrompt(s.memoryManagePrompt))) {
-        s.memoryManagePrompt = DEFAULT_MEMORY_PROMPT;
-    }
+    upgradeLegacyPrompt(s, 'memoryManagePrompt', LEGACY_MEMORY_PROMPTS, DEFAULT_MEMORY_PROMPT);
+    // An empty toolsSystemPrompt already means "use the current default", so a
+    // stored old default simply empties back to that.
+    upgradeLegacyPrompt(s, 'toolsSystemPrompt', LEGACY_TOOLS_PROMPTS, '');
     delete s.sessions; // legacy multi-session store; the conversation file owns state now
     return s;
 }
