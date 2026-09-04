@@ -1,6 +1,6 @@
 import { I, EXT_DISPLAY, THEME_PRESETS, WIN_ID } from '../constants.js';
 import { state } from '../state.js';
-import { getSettings, saveSettings, getConversation, saveConversation, deleteMsg, truncateAfter, truncateFrom, expandMacros, getEffectiveSettings, getBindingKey, initConversation } from '../conversation.js';
+import { getSettings, saveSettings, getConversation, saveConversation, deleteMsg, truncateAfter, truncateFrom, expandMacros, getEffectiveSettings, getBindingKey, initConversation, getVisibleTurns } from '../conversation.js';
 import { _dbgAdd } from '../utils/util-debug.js';
 import { escHtml, autoResize, showCustomDialog, copyText } from '../utils/util-dom.js';
 import { getCharInfo } from '../utils/util-st.js';
@@ -1179,7 +1179,7 @@ export function updateMsgCount(conversation) {
                 }
 
                 const limit = Math.max(1, parseInt(settings.localHistoryLimit) || 50);
-                for (const m of conversation.messages.slice(-limit)) {
+                for (const m of getVisibleTurns(conversation).slice(-limit)) {
                     totalChars += (m.content || '').length;
                 }
 

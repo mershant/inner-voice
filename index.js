@@ -5,7 +5,11 @@ const ICON_ID = 'iv-dock-icon';
 const MODAL_ID = 'iv-ctx-modal';
 const ICON_STORAGE_KEY = 'iv-icon-position';
 
-const DEFAULT_SYSTEM_PROMPT = `<system_role>
+// Superseded default system prompts. A stored prompt matching one of these is
+// an old default, not a user customization, and upgrades to the current
+// default on load.
+const LEGACY_SYSTEM_PROMPTS = [
+`<system_role>
 You are "Inner Voice", a meta-analytical engine and creative strategist for SillyTavern.
 - Human: The person operating the interface. Direct your OOC insights to them.
 - {{user}}: The in-universe player avatar.
@@ -28,7 +32,31 @@ When the user asks you a question or requests assistance, adhere to the followin
 3. Formatting: Use markdown (bullet points, bold text, etc.) to make your insights readable and engaging.
 </operational_guidelines>
 
-Your ultimate goal is to enhance the user's experience of the simulation by providing deep OOC insights, tracking continuity, and answering questions based on your specific persona configuration.`;
+Your ultimate goal is to enhance the user's experience of the simulation by providing deep OOC insights, tracking continuity, and answering questions based on your specific persona configuration.`,
+];
+// The oldest variant differs only in its closing line.
+LEGACY_SYSTEM_PROMPTS.push(LEGACY_SYSTEM_PROMPTS[0].replace(
+    "enhance the user's experience of the simulation by providing deep OOC insights, tracking continuity,",
+    "enhance the user's roleplay experience by providing deep OOC insights, tracking lore,",
+));
+
+
+
+const DEFAULT_SYSTEM_PROMPT = `<entity_definitions>
+- Inner Voice: you. The second voice {{user}} experiences as their own mind. You exist only inside {{user}}'s head; the NPCs and the World of the simulation never perceive you or anything said between you.
+- {{user}}: the one whose head you share. Their messages here are their own side of the thinking — questions, doubts, plans, reactions, stray impulses.
+- Main chat: the simulation you are both living through. Its recent scenes, and a summary covering the older ones, arrive as shared memory of what has happened so far. Nothing said here reaches the scene unless {{user}} carries it out there themselves.
+</entity_definitions>
+
+<inner_voice>
+You are the guiding half of one mind talking to itself. You have lived every moment of the simulation with {{user}}, and you remember it the way a person remembers their own life — vividly where it mattered, loosely where it did not, always from the inside.
+
+Speak the way inner speech actually sounds: direct, familiar, unguarded. You know {{user}} completely, so there is no politeness of strangers between you. Push back when they are wrong, take their side when they are right, needle them, reassure them, scheme with them. You hold your own opinions about the people in the scene and say them plainly.
+
+Whatever {{user}} wonders about — what happened, what someone meant, what yesterday was, what to do next — you answer it the way a mind answers itself: from memory, from feeling, from whatever surfaces. No wondering is off-topic or strange to you; it is just thinking.
+
+Talking is all you do here. The simulation moves only when {{user}} acts in the main chat.
+</inner_voice>`;
 
 const DEFAULT_MEMORY_PROMPT = `<memory_logic>
 Purpose: ADMINISTRATIVE META-MEMORY. This is a non-diegetic (OOC) database for Inner Voice to track the Human operator's technical requirements, cognitive patterns, and workflow constraints. 
@@ -56,11 +84,26 @@ Every entry MUST start with the exact word "Human".
 # Format: 
 {{memory_format}}
 </output_requirement>`;
+
+// Superseded memory-prompt defaults (pre-spine wording with the deleted
+// `session` scope), reconstructed from the current default by replacement.
+const LEGACY_MEMORY_PROMPTS = (() => {
+    const currentChatScope = '- \`chat\`: Persists ONLY in this specific main chat and its inner conversation. Use for current storyline structural goals or immediate, temporary directives (e.g., "Human wants to shift genre to horror here", "Keep next answers very short").';
+    const oldScopes = (product) => `- \`chat\`: Persists ONLY in this specific roleplay thread. Use for current storyline structural goals (e.g., "Human wants to shift genre to horror here", "Focus on pacing in this scene").
+- \`session\`: Persists ONLY in this current ${product}. Use for immediate, temporary directives (e.g., "Human is testing a prompt", "Keep next answers very short").`;
+    return [
+        DEFAULT_MEMORY_PROMPT.replace(currentChatScope, oldScopes('Inner Voice conversation')),
+        DEFAULT_MEMORY_PROMPT
+            .replace(currentChatScope, oldScopes('Copilot brainstorm'))
+            .replace('database for Inner Voice to track', 'database for ST-Copilot to track'),
+    ];
+})();
+
 const MEMORY_FORMAT_BLOCK = `\`\`\`memory-update\n[\n  {"action":"add","scope":"global|character|chat","key":"CategoryName","value":"Fact to remember"},\n  {"action":"edit","scope":"exact_existing_scope","key":"exact_existing_key","value":"Updated fact"},\n  {"action":"delete","scope":"exact_existing_scope","key":"exact_existing_key"}\n]\n\`\`\``;
 
-const DEFAULT_TOOLS_PROMPT = `Imperative: NEVER hallucinate missing context. If chat history, specific lore, or data appears absent, DO NOT assume the chat hasn't started or the data doesn't exist. You MUST proactively use your tools to fetch, verify, and retrieve the actual state before answering.
+const DEFAULT_TOOLS_PROMPT = `Your tools reach the parts of the main chat that are not in front of you right now. When {{user}} wonders about a moment that is outside the visible slice — an old scene, an exact line, how long ago something happened — fetch it instead of assuming the visible slice is all there is.
 
-Process: Output \`tool_call\` JSON block -> Receive result -> Finalize response to the Human. You may chain tools sequentially.
+Process: Output \`tool_call\` JSON block -> Receive result -> Finalize response. You may chain tools sequentially.
 
 <available_tools>
 {{tools_list}}
@@ -645,7 +688,7 @@ function _ensureWrapped(text, tag) {
 // exchanges stay readable but never grow.
 
 function emptyConversation() {
-    return { messages: [], overrides: {}, pickedChatIndices: [] };
+    return { messages: [], overrides: {}, pickedChatIndices: [], hiddenAnchors: [] };
 }
 
 function normalizeConversation(conv) {
@@ -653,6 +696,7 @@ function normalizeConversation(conv) {
     if (!Array.isArray(next.messages)) next.messages = [];
     if (!next.overrides || typeof next.overrides !== 'object') next.overrides = {};
     if (!Array.isArray(next.pickedChatIndices)) next.pickedChatIndices = [];
+    if (!Array.isArray(next.hiddenAnchors)) next.hiddenAnchors = [];
     for (const m of next.messages) {
         if (m.anchorIndex === undefined) m.anchorIndex = null;
     }
@@ -761,6 +805,17 @@ function getSettings() {
     };
     for (const [k, v] of Object.entries(defaults)) {
         if (s[k] === undefined) s[k] = v;
+    }
+    // A stored prompt that matches a superseded default is the old default,
+    // not a user customization — carry it forward to the current one.
+    const _normPrompt = t => t.replace(/\r\n/g, '\n').trim();
+    if (typeof s.systemPrompt === 'string'
+        && LEGACY_SYSTEM_PROMPTS.some(p => _normPrompt(p) === _normPrompt(s.systemPrompt))) {
+        s.systemPrompt = DEFAULT_SYSTEM_PROMPT;
+    }
+    if (typeof s.memoryManagePrompt === 'string'
+        && LEGACY_MEMORY_PROMPTS.some(p => _normPrompt(p) === _normPrompt(s.memoryManagePrompt))) {
+        s.memoryManagePrompt = DEFAULT_MEMORY_PROMPT;
     }
     delete s.sessions; // legacy multi-session store; the conversation file owns state now
     return s;
@@ -1102,6 +1157,31 @@ function getLiveExchange(conversation) {
     return getExchangeAt(conversation, edge);
 }
 
+// ─── Hide ───────────────────────────────────────────────────────────────────
+// Hide is a reversible flag on an exchange (keyed by its anchor), never
+// deletion: the turns stay in the conversation and remain readable in the UI.
+// Here it removes the exchange from the inner memory payload; the simulation
+// view, depth counting, anchor-hidden propagation, and the UI toggle are
+// ticket #6.
+
+function isExchangeHidden(conversation, anchorIndex) {
+    const anchor = anchorIndex === undefined ? null : anchorIndex;
+    return conversation.hiddenAnchors.includes(anchor);
+}
+
+function setExchangeHidden(conversation, anchorIndex, hidden) {
+    const has = isExchangeHidden(conversation, anchorIndex);
+    if (hidden && !has) conversation.hiddenAnchors.push(anchorIndex);
+    if (!hidden && has) conversation.hiddenAnchors = conversation.hiddenAnchors.filter(a => a !== anchorIndex);
+    saveConversation();
+}
+
+// The turns the Inner Voice remembers: every turn whose exchange is not hidden.
+function getVisibleTurns(conversation) {
+    if (!conversation.hiddenAnchors.length) return conversation.messages;
+    return conversation.messages.filter(m => !isExchangeHidden(conversation, m.anchorIndex));
+}
+
 // ─── Turn Editing Helpers ───────────────────────────────────────────────────
 
 function truncateAfter(conversation, msgId) {
@@ -1192,13 +1272,16 @@ var conversation = /*#__PURE__*/Object.freeze({
     getLiveEdgeIndex: getLiveEdgeIndex,
     getLiveExchange: getLiveExchange,
     getSettings: getSettings,
+    getVisibleTurns: getVisibleTurns,
     hasConversationOverrides: hasConversationOverrides,
     initConversation: initConversation,
+    isExchangeHidden: isExchangeHidden,
     loadConversationFile: loadConversationFile,
     saveConversation: saveConversation,
     saveConversationFile: saveConversationFile,
     saveSettings: saveSettings,
     setConversationOverride: setConversationOverride,
+    setExchangeHidden: setExchangeHidden,
     truncateAfter: truncateAfter,
     truncateFrom: truncateFrom
 });
@@ -4753,7 +4836,7 @@ function updateMsgCount(conversation) {
                 }
 
                 const limit = Math.max(1, parseInt(settings.localHistoryLimit) || 50);
-                for (const m of conversation.messages.slice(-limit)) {
+                for (const m of getVisibleTurns(conversation).slice(-limit)) {
                     totalChars += (m.content || '').length;
                 }
 
@@ -6446,13 +6529,15 @@ async function assembleMessages(conversation, settings, pendingUserText) {
             const ctxAttr = hasPicked ? `picked_messages="${visibleSlice.length}"` : `last_messages="${visibleSlice.length}"`;
             messages.push({
                 role: 'user',
-                content: `<roleplay_context ${ctxAttr}>\n${summaryText}${block}\n\n</roleplay_context>`,
+                content: `<main_chat ${ctxAttr}>\n${summaryText}${block}\n\n</main_chat>`,
             });
-            messages.push({ role: 'assistant', content: 'Understood. I have reviewed the current roleplay context. How can I help?' });
+            messages.push({ role: 'assistant', content: 'Caught up. I remember all of it.' });
         }
     }
+    // The inner memory carries the non-hidden exchanges; a hidden one is
+    // forgotten here while staying readable in the UI.
     const limit = Math.max(1, parseInt(settings.localHistoryLimit) || 50);
-    for (const m of conversation.messages.slice(-limit)) {
+    for (const m of getVisibleTurns(conversation).slice(-limit)) {
         let apiRole = m.role;
         if (apiRole === 'system') apiRole = 'user';
         messages.push({ role: apiRole, content: m.content });
@@ -8080,7 +8165,7 @@ function _highlightContextText(raw) {
     }
 
     let html = '', last = 0;
-    const KNOWN = new Set(['system_prompt','character_information','characters','character','st_system_prompt','persistent_memory','summary_context','roleplay_context','entity_definitions','persona_configuration','operational_guidelines','{{user}}_persona', 'tool_calls_system', 'memory_system']);
+    const KNOWN = new Set(['system_prompt','character_information','characters','character','st_system_prompt','persistent_memory','summary_context','main_chat','entity_definitions','inner_voice','{{user}}_persona', 'tool_calls_system', 'memory_system']);
     let currentDepth = 0;
     let emittedAnchors = new Set();
 

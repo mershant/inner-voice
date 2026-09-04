@@ -2,7 +2,9 @@ import {
     EXT_NAME,
     EXT_DISPLAY,
     DEFAULT_SYSTEM_PROMPT,
+    LEGACY_SYSTEM_PROMPTS,
     DEFAULT_MEMORY_PROMPT,
+    LEGACY_MEMORY_PROMPTS,
     THEME_PRESETS
 } from './constants.js';
 import { _dbgAdd, _dbgDiffSettings } from './utils/util-debug.js';
@@ -16,7 +18,7 @@ import { _repairJSON } from './utils/util-text.js';
 // exchanges stay readable but never grow.
 
 function emptyConversation() {
-    return { messages: [], overrides: {}, pickedChatIndices: [] };
+    return { messages: [], overrides: {}, pickedChatIndices: [], hiddenAnchors: [] };
 }
 
 function normalizeConversation(conv) {
@@ -24,6 +26,7 @@ function normalizeConversation(conv) {
     if (!Array.isArray(next.messages)) next.messages = [];
     if (!next.overrides || typeof next.overrides !== 'object') next.overrides = {};
     if (!Array.isArray(next.pickedChatIndices)) next.pickedChatIndices = [];
+    if (!Array.isArray(next.hiddenAnchors)) next.hiddenAnchors = [];
     for (const m of next.messages) {
         if (m.anchorIndex === undefined) m.anchorIndex = null;
     }
@@ -132,6 +135,17 @@ export function getSettings() {
     };
     for (const [k, v] of Object.entries(defaults)) {
         if (s[k] === undefined) s[k] = v;
+    }
+    // A stored prompt that matches a superseded default is the old default,
+    // not a user customization — carry it forward to the current one.
+    const _normPrompt = t => t.replace(/\r\n/g, '\n').trim();
+    if (typeof s.systemPrompt === 'string'
+        && LEGACY_SYSTEM_PROMPTS.some(p => _normPrompt(p) === _normPrompt(s.systemPrompt))) {
+        s.systemPrompt = DEFAULT_SYSTEM_PROMPT;
+    }
+    if (typeof s.memoryManagePrompt === 'string'
+        && LEGACY_MEMORY_PROMPTS.some(p => _normPrompt(p) === _normPrompt(s.memoryManagePrompt))) {
+        s.memoryManagePrompt = DEFAULT_MEMORY_PROMPT;
     }
     delete s.sessions; // legacy multi-session store; the conversation file owns state now
     return s;
@@ -471,6 +485,31 @@ export function getLiveExchange(conversation) {
     const edge = getLiveEdgeIndex();
     if (edge === null) return null;
     return getExchangeAt(conversation, edge);
+}
+
+// ─── Hide ───────────────────────────────────────────────────────────────────
+// Hide is a reversible flag on an exchange (keyed by its anchor), never
+// deletion: the turns stay in the conversation and remain readable in the UI.
+// Here it removes the exchange from the inner memory payload; the simulation
+// view, depth counting, anchor-hidden propagation, and the UI toggle are
+// ticket #6.
+
+export function isExchangeHidden(conversation, anchorIndex) {
+    const anchor = anchorIndex === undefined ? null : anchorIndex;
+    return conversation.hiddenAnchors.includes(anchor);
+}
+
+export function setExchangeHidden(conversation, anchorIndex, hidden) {
+    const has = isExchangeHidden(conversation, anchorIndex);
+    if (hidden && !has) conversation.hiddenAnchors.push(anchorIndex);
+    if (!hidden && has) conversation.hiddenAnchors = conversation.hiddenAnchors.filter(a => a !== anchorIndex);
+    saveConversation();
+}
+
+// The turns the Inner Voice remembers: every turn whose exchange is not hidden.
+export function getVisibleTurns(conversation) {
+    if (!conversation.hiddenAnchors.length) return conversation.messages;
+    return conversation.messages.filter(m => !isExchangeHidden(conversation, m.anchorIndex));
 }
 
 // ─── Turn Editing Helpers ───────────────────────────────────────────────────

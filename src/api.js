@@ -1,6 +1,6 @@
 import { DEFAULT_SYSTEM_PROMPT, EXT_DISPLAY } from './constants.js';
 import { state } from './state.js';
-import { getEffectiveSettings, saveConversation, addTurn, getConversation, getLiveEdgeIndex } from './conversation.js';
+import { getEffectiveSettings, saveConversation, addTurn, getConversation, getLiveEdgeIndex, getVisibleTurns } from './conversation.js';
 import { _dbgAdd } from './utils/util-debug.js';
 import { escHtml } from './utils/util-dom.js';
 import { _ensureWrapped, normalizeCharNamesInBlock } from './utils/util-text.js';
@@ -165,13 +165,15 @@ export async function assembleMessages(conversation, settings, pendingUserText) 
             const ctxAttr = hasPicked ? `picked_messages="${visibleSlice.length}"` : `last_messages="${visibleSlice.length}"`;
             messages.push({
                 role: 'user',
-                content: `<roleplay_context ${ctxAttr}>\n${summaryText}${block}\n\n</roleplay_context>`,
+                content: `<main_chat ${ctxAttr}>\n${summaryText}${block}\n\n</main_chat>`,
             });
-            messages.push({ role: 'assistant', content: 'Understood. I have reviewed the current roleplay context. How can I help?' });
+            messages.push({ role: 'assistant', content: 'Caught up. I remember all of it.' });
         }
     }
+    // The inner memory carries the non-hidden exchanges; a hidden one is
+    // forgotten here while staying readable in the UI.
     const limit = Math.max(1, parseInt(settings.localHistoryLimit) || 50);
-    for (const m of conversation.messages.slice(-limit)) {
+    for (const m of getVisibleTurns(conversation).slice(-limit)) {
         let apiRole = m.role;
         if (apiRole === 'system') apiRole = 'user';
         messages.push({ role: apiRole, content: m.content });
