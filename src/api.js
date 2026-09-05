@@ -957,7 +957,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
                     updateMsgCount(conversation);
                 }
             }
-            return;
+            return null;
         }
 
         const { text: rawFullText, reasoning: fullReasoning } = result;
@@ -1001,13 +1001,14 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
 
         playCompletionSound();
         _dbgAdd('GEN_DONE', { chars: fullText?.length || 0, hasReasoning: !!fullReasoning, tokensOut });
+        return completedAssistant;
 
     } catch (err) {
         cleanupCursor();
         if (state.abortController?.signal?.aborted || err?.message === 'userStopped') {
             state.generating = false;
             setGeneratingState(false);
-            return;
+            return null;
         }
         
         const inputEl = document.getElementById('iv-input');
@@ -1019,6 +1020,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
         console.error(`[${EXT_DISPLAY}] Generation failed:`, err);
         
         showGenerationError(err);
+        return null;
     } finally {
         state.generating = false;
         setGeneratingState(false);

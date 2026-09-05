@@ -101,6 +101,7 @@ const {
     considerAutoTriggerPortray,
     flushPendingAutoPortray,
     splitPortraySignal,
+    withPortrayAutoTriggerSuppressed,
 } = await import('../src/portray.js');
 
 function mainMsg(text, isUser = false) {
@@ -372,6 +373,23 @@ test('immediate send routes the same portray result to a sent message', async ()
     assert.equal(stub.generateCalls, 0);
 });
 
+test('a per-fire portray authorization sends once without changing the stored landing setting', async () => {
+    assert.equal(getSettings().portrayImmediateSend, false);
+    await runPortray({}, {
+        forceSend: true,
+        generate: async () => ({ text: 'I step through the door.' }),
+    });
+
+    assert.equal(stub.sendButton.clicks, 1);
+    assert.equal(getSettings().portrayImmediateSend, false);
+
+    await runPortray({}, {
+        generate: async () => ({ text: 'I wait by the door.' }),
+    });
+    assert.equal(stub.sendButton.clicks, 1);
+    assert.equal(getSettings().portrayImmediateSend, false);
+});
+
 test('auto-trigger off ignores a hidden portray signal and makes no extra request', async () => {
     let generateCalls = 0;
     await considerAutoTriggerPortray(
@@ -400,6 +418,27 @@ test('auto-trigger with immediate send on sends the portray', async () => {
 
     assert.equal(stub.inputBox.value, draft);
     assert.equal(stub.sendButton.clicks, 1);
+});
+
+test('a scoped delayed portray suppresses the automatic portray for only that exchange turn', async () => {
+    getSettings().portrayAutoTrigger = true;
+    let generateCalls = 0;
+    const triggeredTurn = { role: 'assistant', content: 'I have decided.\n\n<scene-now />' };
+    const options = {
+        generate: async () => {
+            generateCalls += 1;
+            return { text: 'I act.' };
+        },
+    };
+
+    await withPortrayAutoTriggerSuppressed(
+        () => considerAutoTriggerPortray(triggeredTurn, options),
+    );
+    await flushPendingAutoPortray();
+    assert.equal(generateCalls, 0);
+
+    await considerAutoTriggerPortray(triggeredTurn, options);
+    assert.equal(generateCalls, 1);
 });
 
 test('a generated reply without the hidden portray signal does not fire portray', async () => {
@@ -541,6 +580,24 @@ test('portray with think-box text still routes to the main-chat box without send
     assert.equal(stub.inputBox.value, draft);
     assert.equal(stub.sendButton.clicks, 0);
     assert.equal(stub.generateCalls, 0);
+});
+
+test('an explicit command seed uses the portray seed path and consumes the command text on success', async () => {
+    stub.thinkBox.value = 'p:thank him and take it. tell him.';
+    let portrayPayload = null;
+    await runPortray({}, {
+        seedText: 'thank him and take it. tell him.',
+        generate: async (_conv, _settings, _pending, messages) => {
+            portrayPayload = messages;
+            return { text: 'I thank him and take it. "Listen."' };
+        },
+    });
+
+    const payload = payloadText(portrayPayload);
+    assert.ok(payload.includes('<authored-conduct>'));
+    assert.ok(payload.includes('thank him and take it. tell him.'));
+    assert.ok(!payload.includes('p:thank him and take it. tell him.'));
+    assert.equal(stub.thinkBox.value, '');
 });
 
 test('portray with think-box text and immediate send still sends', async () => {

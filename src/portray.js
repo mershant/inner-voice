@@ -113,16 +113,23 @@ function sendMainChatInput() {
     document.getElementById('send_but')?.click();
 }
 
-export function routePortrayResult(text, settings) {
+export function routePortrayResult(text, settings, { forceSend = false } = {}) {
     routePortrayToInput(text);
-    if (settings?.portrayImmediateSend) sendMainChatInput();
+    if (forceSend || settings?.portrayImmediateSend) sendMainChatInput();
 }
 
 let pendingAutoPortray = null;
 let autoPortrayFlushPromise = null;
+let autoTriggerSuppressionDepth = 0;
 
 function clearPendingAutoPortray() {
     pendingAutoPortray = null;
+}
+
+function discardBlockedAutoPortray() {
+    if (autoTriggerSuppressionDepth === 0 && getSettings().portrayAutoTrigger) return false;
+    clearPendingAutoPortray();
+    return true;
 }
 
 function replyCarriesPortraySignal(turn, opts) {
@@ -130,6 +137,15 @@ function replyCarriesPortraySignal(turn, opts) {
     if (opts.triggered === false) return false;
     if (turn?.role === 'user') return false;
     return splitPortraySignal(typeof turn?.content === 'string' ? turn.content : '').triggered;
+}
+
+export async function withPortrayAutoTriggerSuppressed(task) {
+    autoTriggerSuppressionDepth += 1;
+    try {
+        return await task();
+    } finally {
+        autoTriggerSuppressionDepth -= 1;
+    }
 }
 
 async function processPendingAutoPortray() {
@@ -140,19 +156,13 @@ async function processPendingAutoPortray() {
 }
 
 export async function considerAutoTriggerPortray(turn, opts = {}) {
-    if (!getSettings().portrayAutoTrigger) {
-        clearPendingAutoPortray();
-        return null;
-    }
+    if (discardBlockedAutoPortray()) return null;
     if (replyCarriesPortraySignal(turn, opts)) pendingAutoPortray = { opts };
     return flushPendingAutoPortray();
 }
 
 export async function flushPendingAutoPortray() {
-    if (!getSettings().portrayAutoTrigger) {
-        clearPendingAutoPortray();
-        return null;
-    }
+    if (discardBlockedAutoPortray()) return null;
     if (state.generating || !pendingAutoPortray) return null;
     if (!autoPortrayFlushPromise) {
         autoPortrayFlushPromise = processPendingAutoPortray().finally(() => {
@@ -162,11 +172,16 @@ export async function flushPendingAutoPortray() {
     return autoPortrayFlushPromise;
 }
 
-export async function runPortray(formOverride = {}, { generate, consumeSeed = true } = {}) {
+export async function runPortray(formOverride = {}, {
+    generate,
+    consumeSeed = true,
+    seedText,
+    forceSend = false,
+} = {}) {
     if (state.generating) return null;
     const settings = getEffectiveSettings();
     const conversation = getConversation();
-    const seed = consumeSeed ? readThinkBoxText() : '';
+    const seed = seedText === undefined && !consumeSeed ? '' : seedText;
     const messages = await assemblePortrayMessages(conversation, settings, formOverride, seed);
     const generateFn = generate || ((conv, reqSettings, pendingText, payload) =>
         callGenerate(conv, reqSettings, pendingText, undefined, payload));
@@ -185,7 +200,7 @@ export async function runPortray(formOverride = {}, { generate, consumeSeed = tr
         );
         const text = result && typeof result.text === 'string' ? result.text.trim() : '';
         if (text) {
-            routePortrayResult(text, getSettings());
+            routePortrayResult(text, getSettings(), { forceSend });
             if (consumeSeed) clearThinkBox();
         }
         return result;

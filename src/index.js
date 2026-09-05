@@ -12,7 +12,8 @@ import { checkChangelogAutoShow, setupChangelogListeners, openInspector, renderQ
 
 import * as apiMod from './api.js';
 import { syncSimulationView } from './simulation-view.js';
-import { readFireTimePortrayForm, runPortray } from './portray.js';
+import { readFireTimePortrayForm, runPortray, withPortrayAutoTriggerSuppressed } from './portray.js';
+import { executeThinkSubmission, syncThinkCommandHint } from './think-command.js';
 
 export let extVersion = '?';
 export let __extPath = null;
@@ -204,10 +205,12 @@ function attachWindowListeners() {
     });
 
     const inputEl = document.getElementById('iv-input');
+    const commandHintEl = document.getElementById('iv-think-command-hint');
     if (inputEl) {
         inputEl.addEventListener('input', () => {
             autoResize(inputEl);
             updateMsgCount(getConversation());
+            syncThinkCommandHint(inputEl, commandHintEl);
         });
         inputEl.addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -220,15 +223,25 @@ function attachWindowListeners() {
         });
     }
     document.getElementById('iv-send-btn')?.addEventListener('click', async () => {
-        const rawText = inputEl?.value.trim();
-        if (!rawText || state.generating) return;
+        const rawText = inputEl?.value || '';
+        if (!rawText.trim() || state.generating) return;
 
         const { expandMacros, getEffectiveSettings } = await import('./conversation.js');
-        const _s = getEffectiveSettings();
-        const text = _s.autoExpandMacros ? expandMacros(rawText || '') : (rawText || '');
-        if (inputEl) { inputEl.value = ''; autoResize(inputEl); }
+        const settings = getEffectiveSettings();
+        const consumeInput = () => {
+            if (!inputEl) return;
+            inputEl.value = '';
+            inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        };
 
-        apiMod.runGenerate(getConversation(), text, true).catch(console.error);
+        executeThinkSubmission(rawText, {
+            consumeInput,
+            expandExchangeText: text => settings.autoExpandMacros ? expandMacros(text) : text,
+            sendExchange: text => apiMod.runGenerate(getConversation(), text, true),
+            suppressAutoTrigger: withPortrayAutoTriggerSuppressed,
+            portray: (form, options) => runPortray(form, options),
+            portrayForm: readFireTimePortrayForm(),
+        }).catch(console.error);
     });
 
     // Modals

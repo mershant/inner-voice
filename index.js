@@ -8088,7 +8088,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
                     updateMsgCount(conversation);
                 }
             }
-            return;
+            return null;
         }
 
         const { text: rawFullText, reasoning: fullReasoning } = result;
@@ -8132,13 +8132,14 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
 
         playCompletionSound();
         _dbgAdd('GEN_DONE', { chars: fullText?.length || 0, hasReasoning: !!fullReasoning, tokensOut });
+        return completedAssistant;
 
     } catch (err) {
         cleanupCursor();
         if (state.abortController?.signal?.aborted || err?.message === 'userStopped') {
             state.generating = false;
             setGeneratingState(false);
-            return;
+            return null;
         }
         
         const inputEl = document.getElementById('iv-input');
@@ -8150,6 +8151,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
         console.error(`[${EXT_DISPLAY}] Generation failed:`, err);
         
         showGenerationError(err);
+        return null;
     } finally {
         state.generating = false;
         setGeneratingState(false);
@@ -9520,16 +9522,23 @@ function sendMainChatInput() {
     document.getElementById('send_but')?.click();
 }
 
-function routePortrayResult(text, settings) {
+function routePortrayResult(text, settings, { forceSend = false } = {}) {
     routePortrayToInput(text);
-    if (settings?.portrayImmediateSend) sendMainChatInput();
+    if (forceSend || settings?.portrayImmediateSend) sendMainChatInput();
 }
 
 let pendingAutoPortray = null;
 let autoPortrayFlushPromise = null;
+let autoTriggerSuppressionDepth = 0;
 
 function clearPendingAutoPortray() {
     pendingAutoPortray = null;
+}
+
+function discardBlockedAutoPortray() {
+    if (autoTriggerSuppressionDepth === 0 && getSettings().portrayAutoTrigger) return false;
+    clearPendingAutoPortray();
+    return true;
 }
 
 function replyCarriesPortraySignal(turn, opts) {
@@ -9537,6 +9546,15 @@ function replyCarriesPortraySignal(turn, opts) {
     if (opts.triggered === false) return false;
     if (turn?.role === 'user') return false;
     return splitPortraySignal(typeof turn?.content === 'string' ? turn.content : '').triggered;
+}
+
+async function withPortrayAutoTriggerSuppressed(task) {
+    autoTriggerSuppressionDepth += 1;
+    try {
+        return await task();
+    } finally {
+        autoTriggerSuppressionDepth -= 1;
+    }
 }
 
 async function processPendingAutoPortray() {
@@ -9547,19 +9565,13 @@ async function processPendingAutoPortray() {
 }
 
 async function considerAutoTriggerPortray(turn, opts = {}) {
-    if (!getSettings().portrayAutoTrigger) {
-        clearPendingAutoPortray();
-        return null;
-    }
+    if (discardBlockedAutoPortray()) return null;
     if (replyCarriesPortraySignal(turn, opts)) pendingAutoPortray = { opts };
     return flushPendingAutoPortray();
 }
 
 async function flushPendingAutoPortray() {
-    if (!getSettings().portrayAutoTrigger) {
-        clearPendingAutoPortray();
-        return null;
-    }
+    if (discardBlockedAutoPortray()) return null;
     if (state.generating || !pendingAutoPortray) return null;
     if (!autoPortrayFlushPromise) {
         autoPortrayFlushPromise = processPendingAutoPortray().finally(() => {
@@ -9569,11 +9581,16 @@ async function flushPendingAutoPortray() {
     return autoPortrayFlushPromise;
 }
 
-async function runPortray(formOverride = {}, { generate, consumeSeed = true } = {}) {
+async function runPortray(formOverride = {}, {
+    generate,
+    consumeSeed = true,
+    seedText,
+    forceSend = false,
+} = {}) {
     if (state.generating) return null;
     const settings = getEffectiveSettings();
     const conversation = getConversation();
-    const seed = consumeSeed ? readThinkBoxText() : '';
+    const seed = seedText === undefined && !consumeSeed ? '' : seedText;
     const messages = await assemblePortrayMessages(conversation, settings, formOverride, seed);
     const generateFn = generate || ((conv, reqSettings, pendingText, payload) =>
         callGenerate(conv, reqSettings, pendingText, undefined, payload));
@@ -9592,7 +9609,7 @@ async function runPortray(formOverride = {}, { generate, consumeSeed = true } = 
         );
         const text = result && typeof result.text === 'string' ? result.text.trim() : '';
         if (text) {
-            routePortrayResult(text, getSettings());
+            routePortrayResult(text, getSettings(), { forceSend });
             if (consumeSeed) clearThinkBox();
         }
         return result;
@@ -9623,8 +9640,80 @@ var portray = /*#__PURE__*/Object.freeze({
     routePortrayToInput: routePortrayToInput,
     runPortray: runPortray,
     splitPortraySignal: splitPortraySignal,
-    syncFireTimePortrayForm: syncFireTimePortrayForm
+    syncFireTimePortrayForm: syncFireTimePortrayForm,
+    withPortrayAutoTriggerSuppressed: withPortrayAutoTriggerSuppressed
 });
+
+const COMMANDS = ['dp', 'pa', 'p'];
+
+function commandText(raw, command) {
+    const forms = [`${command}:`, `${command} `, `/${command}:`, `/${command} `];
+    const prefix = forms.find(form => raw.startsWith(form));
+    if (prefix) return raw.slice(prefix.length).trim();
+    if (raw === command || raw === `/${command}`) return '';
+    return null;
+}
+
+function parseThinkCommand(value) {
+    const raw = typeof value === 'string' ? value : '';
+    for (const command of COMMANDS) {
+        const text = commandText(raw, command);
+        if (text !== null) return { command, text };
+    }
+    return null;
+}
+
+function syncThinkCommandHint(inputEl, hintEl) {
+    const visible = !!parseThinkCommand(inputEl?.value);
+    if (hintEl) hintEl.hidden = !visible;
+    return visible;
+}
+
+async function executeThinkSubmission(rawValue, {
+    consumeInput,
+    expandExchangeText,
+    sendExchange,
+    suppressAutoTrigger,
+    portray,
+    portrayForm,
+}) {
+    const raw = typeof rawValue === 'string' ? rawValue : '';
+    const parsed = parseThinkCommand(raw);
+
+    if (!parsed) {
+        const text = raw.trim();
+        if (!text) return { kind: 'empty' };
+        const expanded = expandExchangeText(text);
+        consumeInput();
+        return { kind: 'exchange', exchangeResult: await sendExchange(expanded) };
+    }
+
+    if (parsed.command === 'dp' && parsed.text) {
+        const exchangeText = expandExchangeText(parsed.text);
+        consumeInput();
+        const exchangeResult = await suppressAutoTrigger(() => sendExchange(exchangeText));
+        const portrayResult = exchangeResult
+            ? await portray(portrayForm, {
+                seedText: '',
+                consumeSeed: false,
+                forceSend: false,
+            })
+            : null;
+
+        return { kind: 'delayed-portray', exchangeResult, portrayResult };
+    }
+
+    const forceSend = parsed.command === 'pa';
+    const portrayResult = await portray(portrayForm, {
+        seedText: parsed.text,
+        consumeSeed: true,
+        forceSend,
+    });
+    return {
+        kind: forceSend ? 'portray-and-send' : 'portray',
+        portrayResult,
+    };
+}
 
 let extVersion = '?';
 let __extPath = null;
@@ -9815,10 +9904,12 @@ function attachWindowListeners() {
     });
 
     const inputEl = document.getElementById('iv-input');
+    const commandHintEl = document.getElementById('iv-think-command-hint');
     if (inputEl) {
         inputEl.addEventListener('input', () => {
             autoResize(inputEl);
             updateMsgCount(getConversation());
+            syncThinkCommandHint(inputEl, commandHintEl);
         });
         inputEl.addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -9831,15 +9922,25 @@ function attachWindowListeners() {
         });
     }
     document.getElementById('iv-send-btn')?.addEventListener('click', async () => {
-        const rawText = inputEl?.value.trim();
-        if (!rawText || state.generating) return;
+        const rawText = inputEl?.value || '';
+        if (!rawText.trim() || state.generating) return;
 
         const { expandMacros, getEffectiveSettings } = await Promise.resolve().then(function () { return conversation; });
-        const _s = getEffectiveSettings();
-        const text = _s.autoExpandMacros ? expandMacros(rawText || '') : (rawText || '');
-        if (inputEl) { inputEl.value = ''; autoResize(inputEl); }
+        const settings = getEffectiveSettings();
+        const consumeInput = () => {
+            if (!inputEl) return;
+            inputEl.value = '';
+            inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        };
 
-        runGenerate(getConversation(), text, true).catch(console.error);
+        executeThinkSubmission(rawText, {
+            consumeInput,
+            expandExchangeText: text => settings.autoExpandMacros ? expandMacros(text) : text,
+            sendExchange: text => runGenerate(getConversation(), text, true),
+            suppressAutoTrigger: withPortrayAutoTriggerSuppressed,
+            portray: (form, options) => runPortray(form, options),
+            portrayForm: readFireTimePortrayForm(),
+        }).catch(console.error);
     });
 
     // Modals
