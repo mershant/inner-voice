@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Live STD check: send-box text is performed as the portray turn.
+"""Live STD check: think-box text is performed as the portray turn.
 
-Typed send-box text must be in the portray request as already-decided conduct,
-and the resulting turn must perform that conduct rather than ignore it or
-restage the exchange.
+Typed think-box text must be in the portray request as already-decided conduct.
+The main-chat send box is never read as a seed. The think box clears after a
+successful portray, and the seed is not posted as an exchange turn.
 """
 
 import json
@@ -16,6 +16,7 @@ STORAGE_STATE = "/home/opc/.local/share/openchamber/playwright/std-storage-state
 CHARACTER = "Seraphina"
 CHAT_FILE = "ff5-internal-state-toggles-fresh-seraphina"
 SEED = 'take the brass compass. "North moved."'
+DECOY = 'DECOY-MAIN-CHAT-SEED-MUST-NOT-APPEAR'
 
 
 def _ready(page):
@@ -148,24 +149,33 @@ def main():
         _show_inner_voice(page)
 
         before = page.evaluate(
-            """(seed) => {
+            """({ seed, decoy }) => {
+                const think = document.getElementById('iv-input');
                 const ta = document.getElementById('send_textarea');
                 const ctx = SillyTavern.getContext();
                 const s = ctx.extensionSettings.inner_voice || {};
                 s.portrayImmediateSend = false;
+                if (think) {
+                    think.value = seed;
+                    think.dispatchEvent(new Event('input', { bubbles: true }));
+                }
                 if (ta) {
-                    ta.value = seed;
+                    ta.value = decoy;
                     ta.dispatchEvent(new Event('input', { bubbles: true }));
                 }
                 return {
+                    think: think ? think.value : '',
                     input: ta ? ta.value : '',
+                    innerTurns: document.querySelectorAll('#iv-messages .iv-msg').length,
                     chatLength: (ctx.chat || []).length,
                 };
             }""",
-            SEED,
+            {"seed": SEED, "decoy": DECOY},
         )
-        if before["input"].strip() != SEED:
-            raise SystemExit(f"failed to type the seed into the send box: {before['input']!r}")
+        if before["think"].strip() != SEED:
+            raise SystemExit(f"failed to type the seed into the think box: {before['think']!r}")
+        if before["input"].strip() != DECOY:
+            raise SystemExit(f"failed to put decoy text in the main-chat box: {before['input']!r}")
 
         exchange = _ui_exchange_texts(page)
         if not exchange:
@@ -187,12 +197,15 @@ def main():
 
         after = page.evaluate(
             """() => {
+                const think = document.getElementById('iv-input');
                 const ta = document.getElementById('send_textarea');
                 const ctx = SillyTavern.getContext();
                 return {
+                    think: think ? String(think.value || '') : '',
                     input: ta ? String(ta.value || '') : '',
                     disabled: !!(ta && ta.disabled),
                     readOnly: !!(ta && ta.readOnly),
+                    innerTurns: document.querySelectorAll('#iv-messages .iv-msg').length,
                     chatLength: (ctx.chat || []).length,
                 };
             }"""
@@ -204,14 +217,26 @@ def main():
         raise SystemExit("portray request did not carry an authored-conduct block")
     if SEED not in payload:
         raise SystemExit("portray request did not carry the typed seed")
+    if DECOY in payload:
+        raise SystemExit("portray request carried main-chat box text as a seed")
     if "already decided" not in payload.lower():
         raise SystemExit("authored-conduct block did not present the seed as already-decided conduct")
+
+    if after["think"].strip():
+        raise SystemExit(f"portray left the think box filled: {after['think']!r}")
+    if after["innerTurns"] != before["innerTurns"]:
+        raise SystemExit(
+            f"portray posted an exchange turn "
+            f"(inner {before['innerTurns']} -> {after['innerTurns']})"
+        )
 
     turn = after["input"].strip()
     if not turn:
         raise SystemExit("portray left the main-chat input box empty")
     if turn == SEED:
-        raise SystemExit("portray left the seed unperformed in the send box")
+        raise SystemExit("portray left the seed unperformed in the main-chat box")
+    if DECOY in turn:
+        raise SystemExit("portray treated main-chat box text as the seed")
     if after["disabled"] or after["readOnly"]:
         raise SystemExit("portray filled the input box but it is not editable")
     if after["chatLength"] != before["chatLength"]:
@@ -237,8 +262,10 @@ def main():
         )
 
     print(
-        f"ok: seeded portray carried authored conduct and performed the seed "
+        f"ok: think-box seed was authored conduct, main-chat box was ignored, "
+        f"think box cleared, no exchange turn "
         f"({after['chatLength']} main-chat messages unchanged; "
+        f"{after['innerTurns']} inner turns unchanged; "
         f"{len(turn)} chars; {len(snippets)} leak snippets; "
         f"model requests: {len(model_requests)})"
     )

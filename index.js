@@ -9348,9 +9348,16 @@ function withoutToolModules(messages) {
     });
 }
 
-function readSendBoxText() {
-    const ta = document.getElementById('send_textarea');
+function readThinkBoxText() {
+    const ta = document.getElementById('iv-input');
     return typeof ta?.value === 'string' ? ta.value.trim() : '';
+}
+
+function clearThinkBox() {
+    const ta = document.getElementById('iv-input');
+    if (!ta) return;
+    ta.value = '';
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 function buildAuthoredConductBlock(text) {
@@ -9361,16 +9368,16 @@ ${text}
 </authored-conduct>`;
 }
 
-async function assemblePortrayMessages(conversation, settings, formOverride) {
+async function assemblePortrayMessages(conversation, settings, formOverride, seedText) {
     const form = resolvePortrayForm(settings, formOverride);
     const messages = withoutToolModules(await assembleMessages(
         conversation,
         portrayRequestSettings(settings),
         buildPortrayInstruction(form),
     ));
-    const sendBox = readSendBoxText();
-    if (!sendBox) return messages;
-    const block = { role: 'user', content: buildAuthoredConductBlock(sendBox) };
+    const seed = seedText === undefined ? readThinkBoxText() : String(seedText || '').trim();
+    if (!seed) return messages;
+    const block = { role: 'user', content: buildAuthoredConductBlock(seed) };
     const insertAt = Math.max(0, messages.length - 1);
     return [...messages.slice(0, insertAt), block, ...messages.slice(insertAt)];
 }
@@ -9540,7 +9547,7 @@ async function processPendingAutoPortray() {
 
     if (!getSettings().portrayAutoTrigger) clearPendingAutoPortray();
     if (!conclusion || !getSettings().portrayAutoTrigger) return null;
-    return runPortray(conclusion.opts.formOverride || {}, conclusion.opts);
+    return runPortray(conclusion.opts.formOverride || {}, { ...conclusion.opts, consumeSeed: false });
 }
 
 async function considerAutoTriggerPortray(turn, opts = {}) {
@@ -9572,11 +9579,12 @@ async function flushPendingAutoPortray() {
     return autoPortrayFlushPromise;
 }
 
-async function runPortray(formOverride = {}, { generate } = {}) {
+async function runPortray(formOverride = {}, { generate, consumeSeed = true } = {}) {
     if (state.generating) return null;
     const settings = getEffectiveSettings();
     const conversation = getConversation();
-    const messages = await assemblePortrayMessages(conversation, settings, formOverride);
+    const seed = consumeSeed ? readThinkBoxText() : '';
+    const messages = await assemblePortrayMessages(conversation, settings, formOverride, seed);
     const generateFn = generate || ((conv, reqSettings, pendingText, payload) =>
         callGenerate(conv, reqSettings, pendingText, undefined, payload));
 
@@ -9593,7 +9601,10 @@ async function runPortray(formOverride = {}, { generate } = {}) {
             messages,
         );
         const text = result && typeof result.text === 'string' ? result.text.trim() : '';
-        if (text) routePortrayResult(text, getSettings());
+        if (text) {
+            routePortrayResult(text, getSettings());
+            if (consumeSeed) clearThinkBox();
+        }
         return result;
     } catch (err) {
         const { showGenerationError } = await Promise.resolve().then(function () { return uiChat; });

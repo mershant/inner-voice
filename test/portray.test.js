@@ -11,6 +11,7 @@ globalThis.document = {
     addEventListener() {},
     getElementById(id) {
         if (id === 'send_textarea') return stub.inputBox;
+        if (id === 'iv-input') return stub.thinkBox;
         if (id === 'send_but') return stub.sendButton;
         if (id === 'iv-fire-portray-style') return stub.fireStyleEl;
         if (id === 'iv-fire-portray-person') return stub.firePersonEl;
@@ -56,6 +57,7 @@ const stub = {
     extensionSettings: {},
     generateCalls: 0,
     inputBox: { value: '', events: [], dispatchEvent(ev) { this.events.push(ev.type); return true; } },
+    thinkBox: { value: '', events: [], dispatchEvent(ev) { this.events.push(ev.type); return true; } },
     sendButton: { clicks: 0, click() { this.clicks += 1; } },
     fireStyleEl: { value: 'rp' },
     firePersonEl: { value: 'first' },
@@ -125,6 +127,8 @@ async function reset() {
     stub.generateCalls = 0;
     stub.inputBox.value = '';
     stub.inputBox.events = [];
+    stub.thinkBox.value = '';
+    stub.thinkBox.events = [];
     stub.sendButton.clicks = 0;
     stub.fireStyleEl.value = 'rp';
     stub.firePersonEl.value = 'first';
@@ -490,24 +494,49 @@ test('the semantic detector asks the inner model for a structured verdict', asyn
     assert.ok(payloadText(messages).includes('"speaker": "{{user}}"'));
 });
 
-test('an empty send box leaves the portray request without an authored-conduct block', async () => {
-    stub.inputBox.value = '';
+test('the portray request carries think-box text as authored conduct, never main-chat box content', async () => {
+    stub.thinkBox.value = 'thank him and take it. tell him.';
+    stub.inputBox.value = 'DECOY FROM MAIN CHAT';
+    const messages = await assemblePortrayMessages(getConversation(), getEffectiveSettings());
+    const block = messages.find(m => typeof m.content === 'string' && m.content.includes('<authored-conduct>'));
+    assert.ok(block, 'portray request is missing the authored-conduct block');
+    assert.ok(block.content.includes('thank him and take it. tell him.'));
+    assert.match(block.content, /already decided/i);
+    assert.ok(!payloadText(messages).includes('DECOY FROM MAIN CHAT'));
+});
+
+test('an empty think box leaves the portray request without an authored-conduct block', async () => {
+    stub.thinkBox.value = '';
+    stub.inputBox.value = 'DECOY FROM MAIN CHAT';
     const messages = await assemblePortrayMessages(getConversation(), getEffectiveSettings());
     assert.ok(!payloadText(messages).includes('<authored-conduct>'));
     assert.ok(!payloadText(messages).includes('already decided this conduct'));
+    assert.ok(!payloadText(messages).includes('DECOY FROM MAIN CHAT'));
 });
 
-test('whitespace in the send box is treated as empty', async () => {
-    stub.inputBox.value = '  \n\t  ';
+test('whitespace in the think box is treated as empty', async () => {
+    stub.thinkBox.value = '  \n\t  ';
+    stub.inputBox.value = 'DECOY FROM MAIN CHAT';
     const messages = await assemblePortrayMessages(getConversation(), getEffectiveSettings());
     assert.ok(!payloadText(messages).includes('<authored-conduct>'));
+    assert.ok(!payloadText(messages).includes('DECOY FROM MAIN CHAT'));
+});
+
+test('an empty think box matches unseeded portray byte-for-byte even with main-chat box text', async () => {
+    stub.thinkBox.value = '';
+    stub.inputBox.value = '';
+    const unseeded = await assemblePortrayMessages(getConversation(), getEffectiveSettings());
+    stub.inputBox.value = 'DECOY FROM MAIN CHAT';
+    const withDecoy = await assemblePortrayMessages(getConversation(), getEffectiveSettings());
+    assert.deepEqual(withDecoy, unseeded);
 });
 
 test('authored conduct stays outside the exchange and does not restage it', async () => {
     const conv = getConversation();
     addTurn(conv, 'user', 'alright, TELL HER');
     addTurn(conv, 'assistant', 'Fine. I am going to say it to her face.');
-    stub.inputBox.value = 'thank him and take it. tell him.';
+    stub.thinkBox.value = 'thank him and take it. tell him.';
+    stub.inputBox.value = 'DECOY FROM MAIN CHAT';
 
     const messages = await assemblePortrayMessages(conv, getEffectiveSettings());
     const innerMemory = messages.find(m => typeof m.content === 'string' && m.content.includes('<inner-exchange>'));
@@ -520,12 +549,14 @@ test('authored conduct stays outside the exchange and does not restage it', asyn
     assert.ok(!block.content.includes('<inner-exchange>'));
     assert.ok(!block.content.includes('alright, TELL HER'));
     assert.ok(block.content.includes('thank him and take it. tell him.'));
+    assert.ok(!payloadText(messages).includes('DECOY FROM MAIN CHAT'));
 });
 
-test('a send box with text and an empty send box differ only by the authored-conduct block', async () => {
-    stub.inputBox.value = '';
+test('a think box with text and an empty think box differ only by the authored-conduct block', async () => {
+    stub.thinkBox.value = '';
+    stub.inputBox.value = 'DECOY FROM MAIN CHAT';
     const unseeded = await assemblePortrayMessages(getConversation(), getEffectiveSettings());
-    stub.inputBox.value = 'thank him and take it. tell him.';
+    stub.thinkBox.value = 'thank him and take it. tell him.';
     const seeded = await assemblePortrayMessages(getConversation(), getEffectiveSettings());
 
     assert.equal(seeded.length, unseeded.length + 1);
@@ -537,8 +568,8 @@ test('a send box with text and an empty send box differ only by the authored-con
     assert.ok(seeded[blockIdx].content.includes('thank him and take it. tell him.'));
 });
 
-test('portray with send-box text still routes to the input box without sending', async () => {
-    stub.inputBox.value = 'thank him and take it. tell him.';
+test('portray with think-box text still routes to the main-chat box without sending', async () => {
+    stub.thinkBox.value = 'thank him and take it. tell him.';
     const draft = 'I thank him and take the cup. "You should hear this."';
     await runPortray({}, { generate: async () => ({ text: draft }) });
     assert.equal(stub.inputBox.value, draft);
@@ -546,24 +577,34 @@ test('portray with send-box text still routes to the input box without sending',
     assert.equal(stub.generateCalls, 0);
 });
 
-test('portray with send-box text and immediate send still sends', async () => {
+test('portray with think-box text and immediate send still sends', async () => {
     getSettings().portrayImmediateSend = true;
-    stub.inputBox.value = 'thank him and take it. tell him.';
+    stub.thinkBox.value = 'thank him and take it. tell him.';
     const draft = 'I thank him and take the cup. "You should hear this."';
     await runPortray({}, { generate: async () => ({ text: draft }) });
     assert.equal(stub.inputBox.value, draft);
     assert.equal(stub.sendButton.clicks, 1);
 });
 
-test('an empty portray result leaves send-box text in place', async () => {
-    stub.inputBox.value = 'thank him and take it. tell him.';
+test('a successful portray consumes think-box text without posting an exchange turn', async () => {
+    stub.thinkBox.value = 'thank him and take it. tell him.';
+    const before = getConversation().messages.slice();
+    const draft = 'I thank him and take the cup. "You should hear this."';
+    await runPortray({}, { generate: async () => ({ text: draft }) });
+    assert.equal(stub.thinkBox.value, '');
+    assert.deepEqual(getConversation().messages, before);
+    assert.equal(stub.inputBox.value, draft);
+});
+
+test('an empty portray result leaves think-box text in place', async () => {
+    stub.thinkBox.value = 'thank him and take it. tell him.';
     await runPortray({}, { generate: async () => ({ text: '   ' }) });
-    assert.equal(stub.inputBox.value, 'thank him and take it. tell him.');
+    assert.equal(stub.thinkBox.value, 'thank him and take it. tell him.');
     assert.equal(stub.sendButton.clicks, 0);
 });
 
-test('with text in the send box, the portray request carries it as authored conduct', async () => {
-    stub.inputBox.value = 'thank him and take it. tell him.';
+test('with text in the think box, the portray request carries it as authored conduct', async () => {
+    stub.thinkBox.value = 'thank him and take it. tell him.';
     const messages = await assemblePortrayMessages(getConversation(), getEffectiveSettings());
     const block = messages.find(m => typeof m.content === 'string' && m.content.includes('<authored-conduct>'));
     assert.ok(block, 'portray request is missing the authored-conduct block');
@@ -573,6 +614,29 @@ test('with text in the send box, the portray request carries it as authored cond
     const sys = messages.find(m => m.role === 'system')?.content || '';
     assert.ok(sys.includes('supporting opinion'));
     assert.ok(!sys.includes('thank him and take it. tell him.'));
+});
+
+test('auto-triggered portray never consumes think-box text', async () => {
+    getSettings().portrayAutoTrigger = true;
+    stub.thinkBox.value = 'thank him and take it. tell him.';
+    const draft = 'I look at Kyrine. "Enough."';
+    let portrayPayload = null;
+    await considerAutoTriggerPortray(
+        { role: 'assistant', content: "Screw it. I'm doing it." },
+        {
+            detectConclusion: async () => true,
+            generate: async (_conv, _settings, _pending, messages) => {
+                portrayPayload = messages;
+                return { text: draft };
+            },
+        },
+    );
+
+    assert.ok(portrayPayload);
+    assert.ok(!payloadText(portrayPayload).includes('<authored-conduct>'));
+    assert.ok(!payloadText(portrayPayload).includes('thank him and take it. tell him.'));
+    assert.equal(stub.thinkBox.value, 'thank him and take it. tell him.');
+    assert.equal(stub.inputBox.value, draft);
 });
 
 test('auto-trigger waits until inner generation is idle, then still does not send', async () => {
