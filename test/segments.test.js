@@ -87,8 +87,28 @@ test('segmentAnchorLabel names the speaker and opens the anchored line', () => {
         mainMsg('The corridor breathes.', false),
         mainMsg('I head for the bridge.', true),
     ];
-    assert.equal(segmentAnchorLabel(1), 'You · I head for the bridge.');
-    assert.equal(segmentAnchorLabel(0), 'Char · The corridor breathes.');
+    assert.equal(segmentAnchorLabel(1), '#1 · You · I head for the bridge.');
+    assert.equal(segmentAnchorLabel(0), '#0 · Char · The corridor breathes.');
+});
+
+test('segmentAnchorLabel skips opening markup and shows the first readable words', () => {
+    stub.chat = [
+        mainMsg('<!-- EP_PLAN: n=1 | source="scene" -->\nThe corridor breathes.', false),
+    ];
+    stub.chat[0].name = 'Lewd World';
+    assert.equal(segmentAnchorLabel(0), '#0 · Lewd World · The corridor breathes.');
+});
+
+test('segmentAnchorLabel skips tags and code fences before the excerpt', () => {
+    stub.chat = [mainMsg('<em>The corridor breathes.</em>', false)];
+    assert.equal(segmentAnchorLabel(0), '#0 · Char · The corridor breathes.');
+    stub.chat = [mainMsg('```html\nsecret\n```\nThe corridor breathes.', false)];
+    assert.equal(segmentAnchorLabel(0), '#0 · Char · The corridor breathes.');
+});
+
+test('segmentAnchorLabel keeps a markup-only message identifiable by number and speaker', () => {
+    stub.chat = [mainMsg('<!-- EP_PLAN: n=1 | source="scene" -->', false)];
+    assert.equal(segmentAnchorLabel(0), '#0 · Char');
 });
 
 test('segmentAnchorLabel survives missing, unnamed, and long anchors', () => {
@@ -96,9 +116,7 @@ test('segmentAnchorLabel survives missing, unnamed, and long anchors', () => {
     assert.equal(segmentAnchorLabel(null), 'Unanchored');
     assert.equal(segmentAnchorLabel(5), 'Main chat · message 6');
     stub.chat = [{ mes: 'x'.repeat(200), is_user: true }];
-    const label = segmentAnchorLabel(0);
-    assert.ok(label.startsWith('You · '));
-    assert.ok(label.length < 60);
+    assert.equal(segmentAnchorLabel(0), `#0 · You · ${'x'.repeat(48)}…`);
 });
 
 // ─── Closed exchanges: old ones present as closed, not extendable ────────────

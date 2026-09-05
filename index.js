@@ -3793,9 +3793,23 @@ Promise.resolve().then(function () { return uiSettings; }).then(m => uiSetMod = 
 // happened under. These helpers are pure conversation → view-model mapping so
 // the designed rendering stays thin.
 
-// A human label for an exchange's anchor: who spoke in the main chat and the
-// opening words of that message. Falls back when the anchor is unanchored
-// (pre-story) or no longer resolvable (main chat has moved on).
+const ANCHOR_EXCERPT_MAX = 48;
+
+// Drop comments, tags, fences, and leftover markdown marks so the excerpt
+// starts on words a person can actually read.
+function readableAnchorText(mes) {
+    let text = String(mes || '');
+    text = text.replace(/<!--[\s\S]*?(?:-->|$)/g, ' ');
+    text = text.replace(/```[\s\S]*?(?:```|$)/g, ' ');
+    text = text.replace(/<\/?[a-zA-Z][^>]*>/g, ' ');
+    text = text.replace(/[`*_#>]+/g, ' ');
+    return text.replace(/\s+/g, ' ').trim();
+}
+
+// A human label for an exchange's anchor: the main-chat message number
+// (same #N badge main chat shows), who spoke, and the first readable words.
+// Falls back when the anchor is unanchored (pre-story) or no longer
+// resolvable (main chat has moved on).
 function segmentAnchorLabel(anchorIndex) {
     if (anchorIndex === null || anchorIndex === undefined) return 'Unanchored';
     let chat = [];
@@ -3803,10 +3817,12 @@ function segmentAnchorLabel(anchorIndex) {
     const msg = chat[anchorIndex];
     if (!msg) return `Main chat · message ${anchorIndex + 1}`;
     const who = msg.is_user ? 'You' : (msg.name || 'Char');
-    const text = String(msg.mes || '').replace(/\s+/g, ' ').trim();
-    if (!text) return `${who} · (no text)`;
-    const excerpt = text.length > 28 ? `${text.slice(0, 28).trimEnd()}…` : text;
-    return `${who} · ${excerpt}`;
+    const text = readableAnchorText(msg.mes);
+    if (!text) return `#${anchorIndex} · ${who}`;
+    const excerpt = text.length > ANCHOR_EXCERPT_MAX
+        ? `${text.slice(0, ANCHOR_EXCERPT_MAX).trimEnd()}…`
+        : text;
+    return `#${anchorIndex} · ${who} · ${excerpt}`;
 }
 
 // An exchange is closed once its anchor is no longer the live edge — the
