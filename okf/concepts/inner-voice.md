@@ -108,6 +108,26 @@ options: RP-style or written-summary style, and first/second/third person.
 
 #### Ambiguity and open questions
 
+Superseded in part by IV-P-006: "from what {{user}} felt, planned, or formed" understated the
+scene's role and licensed restaging the exchange as the turn (IV-S-008).
+
+### IV-P-006 — 2026-09-05
+
+- State: `proposed`
+- Wording: `agent-authored interpretation`
+- Idea provenance: `user-derived`
+- Operation: `replace` (the portray-relationship sentence of IV-P-005)
+- Sources: [IV-S-008](../sources/inner-voice.md#iv-s-008), [IV-S-001](../sources/inner-voice.md#iv-s-001)
+
+#### Exact proposed canonical change
+
+A portray turn is an action responding to the world given the present circumstances. The exchange
+is a supporting opinion — it tilts how {{user}} acts, and is never material to restage, summarize,
+or synthesize into the turn. The scene supplies what the turn answers; the inner life only shapes
+the answer. Without an exchange, the turn comes from {{user}}'s standing state.
+
+#### Ambiguity and open questions
+
 None identified.
 
 ## History

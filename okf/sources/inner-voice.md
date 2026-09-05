@@ -174,4 +174,23 @@ Concerns. right now its talking like an assistant rather than {{user}}, but this
 ```
 ````
 
+## IV-S-008
+
+- State: `recorded`
+- Author: `user`
+- Locator: `2026-09-05, complaint after live portray output (portray restaged the exchange); attachment references preserved as written`
+- Clarifies: IV-S-001 (portray's relationship to the exchange)
+
+````
+```
+[pasted-context-3.txt]
+```
+
+HUGE issue on how portray works. This is what portray gave me. so the ghostwriter literally just wrote the same thing. is the portray prompt editable or no? cuz this sucks. straight up. thats not how portray should work, it should be an aciton responding to the world given the circumstances (the exchange is just a supporting opinion) not a synthesis of what the whole exchange was about. wtf 
+
+```
+[pasted-context-2.txt]
+```
+````
+
 Concept file: [`../concepts/inner-voice.md`](../concepts/inner-voice.md)
