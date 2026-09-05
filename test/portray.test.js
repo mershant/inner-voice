@@ -91,7 +91,15 @@ const {
 } = await import('../src/conversation.js');
 const { state } = await import('../src/state.js');
 const { DEFAULT_PORTRAY_PROMPT } = await import('../src/constants.js');
-const { assemblePortrayMessages, readFireTimePortrayForm, routePortrayToInput, runPortray, considerAutoTriggerPortray, flushPendingAutoPortray } = await import('../src/portray.js');
+const {
+    assemblePortrayMessages,
+    readFireTimePortrayForm,
+    routePortrayToInput,
+    runPortray,
+    detectPortrayConclusion,
+    considerAutoTriggerPortray,
+    flushPendingAutoPortray,
+} = await import('../src/portray.js');
 
 function mainMsg(text, isUser = false) {
     return { mes: text, is_user: isUser };
@@ -361,26 +369,42 @@ test('immediate send routes the same portray result to a sent message', async ()
 });
 
 test('auto-trigger disabled produces no detection behavior at all', async () => {
+    let detectionCalls = 0;
     let portrayStarted = 0;
     await considerAutoTriggerPortray(
-        { role: 'assistant', content: "...yeah, let's just do that." },
-        { generate: async () => { portrayStarted += 1; return { text: 'I nod.' }; } },
+        { role: 'assistant', content: "Screw it. I'm doing it." },
+        {
+            detectConclusion: async () => { detectionCalls += 1; return true; },
+            generate: async () => { portrayStarted += 1; return { text: 'I nod.' }; },
+        },
     );
 
     assert.equal(getSettings().portrayAutoTrigger, false);
+    assert.equal(detectionCalls, 0);
     assert.equal(portrayStarted, 0);
     assert.equal(stub.inputBox.value, '');
     assert.equal(stub.sendButton.clicks, 0);
 });
 
-test('auto-trigger firing never sends unless immediate send is separately enabled', async () => {
+test('an injected model conclusion verdict fires a portray draft for unseen resolving wording', async () => {
     getSettings().portrayAutoTrigger = true;
+    const judged = [];
     const draft = 'I set the cup down. "We leave at dawn."';
     await considerAutoTriggerPortray(
-        { role: 'assistant', content: "...yeah, let's just do that." },
-        { generate: async () => ({ text: draft }) },
+        { role: 'assistant', content: "Screw it. I'm doing it." },
+        {
+            detectConclusion: async (turn, { exchangeTurns }) => detectPortrayConclusion(turn, {
+                exchangeTurns,
+                generate: async () => {
+                    judged.push(turn.content);
+                    return { text: '{"resolvedIntent":true}' };
+                },
+            }),
+            generate: async () => ({ text: draft }),
+        },
     );
 
+    assert.deepEqual(judged, ["Screw it. I'm doing it."]);
     assert.equal(stub.inputBox.value, draft);
     assert.equal(stub.sendButton.clicks, 0);
     assert.equal(stub.generateCalls, 0);
@@ -392,49 +416,78 @@ test('auto-trigger with immediate send on sends the portray', async () => {
     getSettings().portrayImmediateSend = true;
     const draft = 'I look at Kyrine. "Enough."';
     await considerAutoTriggerPortray(
-        { role: 'user', content: 'you should probably tell her about the letter.' },
-        { generate: async () => ({ text: draft }) },
+        { role: 'user', content: 'Just thank him and take it. Tell him.' },
+        {
+            detectConclusion: async () => true,
+            generate: async () => ({ text: draft }),
+        },
     );
 
     assert.equal(stub.inputBox.value, draft);
     assert.equal(stub.sendButton.clicks, 1);
 });
 
-test('a non-concluding exchange turn does not fire auto-trigger', async () => {
+test('an injected non-conclusion verdict does not fire portray', async () => {
     getSettings().portrayAutoTrigger = true;
+    let detectionCalls = 0;
     let portrayStarted = 0;
     await considerAutoTriggerPortray(
         { role: 'user', content: 'wtf? how can she talk to us like that?' },
-        { generate: async () => { portrayStarted += 1; return { text: 'I stare.' }; } },
+        {
+            detectConclusion: async () => { detectionCalls += 1; return false; },
+            generate: async () => { portrayStarted += 1; return { text: 'I stare.' }; },
+        },
     );
 
+    assert.equal(detectionCalls, 1);
     assert.equal(portrayStarted, 0);
     assert.equal(stub.inputBox.value, '');
     assert.equal(stub.sendButton.clicks, 0);
 });
 
-test('telling someone not to speak is not a portray conclusion cue', async () => {
+test('a deferral verdict does not fire portray', async () => {
     getSettings().portrayAutoTrigger = true;
+    const judged = [];
     let portrayStarted = 0;
     await considerAutoTriggerPortray(
         { role: 'user', content: "don't tell her yet" },
-        { generate: async () => { portrayStarted += 1; return { text: 'I wait.' }; } },
+        {
+            detectConclusion: async turn => { judged.push(turn.content); return false; },
+            generate: async () => { portrayStarted += 1; return { text: 'I wait.' }; },
+        },
     );
 
+    assert.deepEqual(judged, ["don't tell her yet"]);
     assert.equal(portrayStarted, 0);
     assert.equal(stub.inputBox.value, '');
 });
 
-test('an intrusive command is not a portray conclusion cue', async () => {
-    getSettings().portrayAutoTrigger = true;
-    let portrayStarted = 0;
-    await considerAutoTriggerPortray(
-        { role: 'user', content: 'Slap Kyrine.' },
-        { generate: async () => { portrayStarted += 1; return { text: 'I slap her.' }; } },
+test('the semantic detector asks the inner model for a structured verdict', async () => {
+    const calls = [];
+    const verdict = await detectPortrayConclusion(
+        { role: 'assistant', content: 'Just say it. Take it. Walk.' },
+        {
+            exchangeTurns: [
+                { role: 'user', content: '....just thank him and take it. tell him.' },
+                { role: 'assistant', content: 'Just say it. Take it. Walk.' },
+            ],
+            generate: async (...args) => {
+                calls.push(args);
+                return { text: '{"resolvedIntent":true}' };
+            },
+        },
     );
 
-    assert.equal(portrayStarted, 0);
-    assert.equal(stub.inputBox.value, '');
+    assert.equal(verdict, true);
+    assert.equal(calls.length, 1);
+    const [, requestSettings, , messages] = calls[0];
+    assert.equal(requestSettings.forceStreaming, 'off');
+    assert.equal(requestSettings.toolsEnabled, false);
+    assert.ok(messages.some(message => message.role === 'system' && /meaning determines the verdict/i.test(message.content)));
+    assert.ok(payloadText(messages).includes('Just say it. Take it. Walk.'));
+    assert.ok(payloadText(messages).includes('....just thank him and take it. tell him.'));
+    assert.ok(payloadText(messages).includes('"speaker": "Inner Voice"'));
+    assert.ok(payloadText(messages).includes('"speaker": "{{user}}"'));
 });
 
 test('an empty send box leaves the portray request without an authored-conduct block', async () => {
@@ -524,17 +577,23 @@ test('with text in the send box, the portray request carries it as authored cond
 
 test('auto-trigger waits until inner generation is idle, then still does not send', async () => {
     getSettings().portrayAutoTrigger = true;
+    let detectionCalls = 0;
     const draft = 'I look at Kyrine. "Enough."';
     state.generating = true;
     await considerAutoTriggerPortray(
-        { role: 'assistant', content: "...yeah, let's just do that." },
-        { generate: async () => ({ text: draft }) },
+        { role: 'assistant', content: 'Just say it. Take it. Walk.' },
+        {
+            detectConclusion: async () => { detectionCalls += 1; return true; },
+            generate: async () => ({ text: draft }),
+        },
     );
+    assert.equal(detectionCalls, 0);
     assert.equal(stub.inputBox.value, '');
     assert.equal(stub.sendButton.clicks, 0);
 
     state.generating = false;
     await flushPendingAutoPortray();
+    assert.equal(detectionCalls, 1);
     assert.equal(stub.inputBox.value, draft);
     assert.equal(stub.sendButton.clicks, 0);
 });

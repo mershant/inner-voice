@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
-"""Live STD check: a concluding exchange turn with auto-trigger on drafts, not sends."""
+"""Live STD check: a {{user}} conclusion drafts a portray without sending."""
 
 import sys
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 URL = "http://127.0.0.1:8001"
 STORAGE_STATE = "/home/opc/.local/share/openchamber/playwright/std-storage-state.json"
 CHARACTER = "Seraphina"
 CHAT_FILE = "ff5-internal-state-toggles-fresh-seraphina"
-RESOLVING_TURN = "...yeah, let's just do that."
+RESOLUTION_PROMPT = (
+    "What have you actually decided to do next? "
+    "Answer as a settled decision, not more discussion."
+)
+ISSUE_EXAMPLE_TURNS = {
+    "...yeah, let's just do that.",
+    "screw it, i'm doing it.",
+    "just say it. take it. walk.",
+}
 
 
 def _ready(page):
@@ -75,6 +83,7 @@ def _show_inner_voice(page):
 
 def main():
     model_requests = []
+    diagnostic_console = []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         context = browser.new_context(storage_state=STORAGE_STATE)
@@ -82,6 +91,12 @@ def main():
         page.on(
             "request",
             lambda req: model_requests.append(req.url) if "/generate" in req.url else None,
+        )
+        page.on(
+            "console",
+            lambda msg: diagnostic_console.append(f"{msg.type}: {msg.text}")
+            if msg.type == "error"
+            else None,
         )
         _ready(page)
         _select_character(page, CHARACTER)
@@ -97,16 +112,36 @@ def main():
                 ctx.extensionSettings.inner_voice = s;
                 const ta = document.getElementById('send_textarea');
                 if (ta) ta.value = '';
-                return { chatLength: (ctx.chat || []).length };
+                return {
+                    chatLength: (ctx.chat || []).length,
+                    assistantTurns: document.querySelectorAll('.iv-msg-assistant').length,
+                };
             }"""
         )
 
-        page.fill("#iv-input", RESOLVING_TURN)
+        page.fill("#iv-input", RESOLUTION_PROMPT)
         page.evaluate("() => document.getElementById('iv-send-btn').click()")
-        page.wait_for_function(
-            "() => String(document.getElementById('send_textarea')?.value || '').trim().length > 0",
-            timeout=180_000,
-        )
+        try:
+            page.wait_for_function(
+                "() => String(document.getElementById('send_textarea')?.value || '').trim().length > 0",
+                timeout=90_000,
+            )
+        except PlaywrightTimeoutError:
+            diagnostic = page.evaluate(
+                """() => ({
+                    generating: !!document.getElementById('iv-stop-btn')?.offsetParent,
+                    thinking: document.getElementById('iv-thinking-text')?.textContent || '',
+                    input: document.getElementById('send_textarea')?.value || '',
+                    innerTurns: document.querySelectorAll('.iv-msg').length,
+                })"""
+            )
+            print(
+                f"diagnostic: {diagnostic}; model requests: {len(model_requests)}",
+                file=sys.stderr,
+            )
+            for line in diagnostic_console:
+                print(line, file=sys.stderr)
+            raise
         page.wait_for_timeout(500)
 
         after = page.evaluate(
@@ -118,6 +153,9 @@ def main():
                     disabled: !!(ta && ta.disabled),
                     readOnly: !!(ta && ta.readOnly),
                     chatLength: (ctx.chat || []).length,
+                    assistantTurns: document.querySelectorAll('.iv-msg-assistant').length,
+                    latestAssistant: [...document.querySelectorAll('.iv-msg-assistant .iv-msg-content')]
+                        .at(-1)?.textContent || '',
                     autoTrigger: !!(ctx.extensionSettings.inner_voice || {}).portrayAutoTrigger,
                     immediateSend: !!(ctx.extensionSettings.inner_voice || {}).portrayImmediateSend,
                 };
@@ -138,11 +176,22 @@ def main():
             f"auto-trigger sent a main-chat message "
             f"(chat {before['chatLength']} -> {after['chatLength']})"
         )
-    if after["input"].strip() == RESOLVING_TURN:
+    if after["assistantTurns"] != before["assistantTurns"] + 1:
+        raise SystemExit("the ordinary path did not produce one new {{user}} turn")
+    if not after["latestAssistant"].strip():
+        raise SystemExit("the new {{user}} turn was empty")
+    if after["latestAssistant"].strip().lower() in ISSUE_EXAMPLE_TURNS:
+        raise SystemExit("the live resolving turn repeated an issue example")
+    if after["input"].strip() == RESOLUTION_PROMPT:
         raise SystemExit("input box still has the inner turn, not a portray")
+    if len(model_requests) != 4:
+        raise SystemExit(
+            f"expected inner reply, two semantic verdicts, and portray; "
+            f"saw {len(model_requests)} model requests"
+        )
 
     print(
-        f"ok: resolving exchange turn with auto-trigger on drafted a portray "
+        f"ok: {{{{user}}}} resolving turn with auto-trigger on drafted a portray "
         f"for {CHARACTER} ({after['chatLength']} main-chat messages unchanged; "
         f"{len(after['input'])} chars; model requests: {len(model_requests)})"
     )
