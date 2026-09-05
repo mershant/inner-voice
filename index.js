@@ -5675,6 +5675,28 @@ function setupChatPickerListeners() {
 
 // ─── Generation state ─────────────────────────────────────────────────────
 
+function overlayBlocksChatFocus() {
+    const overlays = ['iv-settings-overlay', 'iv-picker-overlay', 'iv-changelog-modal', 'iv-ctx-modal'];
+    for (const id of overlays) {
+        const el = document.getElementById(id);
+        if (el && el.style.display !== 'none' && el.style.display !== '') return true;
+    }
+    return !!document.querySelector('.iv-dialog-overlay.visible');
+}
+
+function restoreChatInputFocus() {
+    const input = document.getElementById('iv-input');
+    if (!input || input.disabled) return;
+    if (!state.windowActive || state.searchOpen) return;
+    const win = document.getElementById(WIN_ID);
+    if (!win || win.style.display === 'none') return;
+    if (overlayBlocksChatFocus()) return;
+    if (document.querySelector('.iv-tool-ask-input')) return;
+    const active = document.activeElement;
+    if (active && active !== input && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+    input.focus({ preventScroll: true });
+}
+
 function setGeneratingState(on) {
     const bar = document.getElementById('iv-thinking-bar'), sendBtn = document.getElementById('iv-send-btn'),
           input = document.getElementById('iv-input'), regenBtn = document.getElementById('iv-regen-btn'),
@@ -5693,6 +5715,7 @@ function setGeneratingState(on) {
     if (!on) {
         _refreshContinueBtns();
         _refreshSwipeBars(getConversation());
+        restoreChatInputFocus();
     }
 }
 
@@ -10030,4 +10053,4 @@ if (document.readyState === 'loading') {
     setTimeout(init, 0);
 }
 
-export { __extPath, extVersion };
+export { __extPath, extVersion, setGeneratingState };

@@ -7,7 +7,7 @@ import { autoResize, copyText } from './utils/util-dom.js';
 import { restoreWindowState, hideWindow, minimize, toggleVisibility, makeDraggable, makeResizable, makeIconDraggable, updateIconVisibility, toggleGhostMode, setupGhostHotkey, setupHotkey, bringWindowToFront } from './ui/ui-window.js';
 import { setupSettingsPanelListeners, setupSettingsHandlers, updateSettingsUI, updateProfilesList, updateSPConnProfileList, _takeProfileSnapshot, openSettingsPanel, syncOverlayUI } from './ui/ui-settings.js';
 import { updateMemoryDot } from './features/feature-memory.js';
-import { setupChatPickerListeners, onChatChanged, updateDepthSlidersMax, renderConversation, openSearch, navigateSearch, performSearch, closeSearch, openChatPicker, toggleSearchWholeWord, setupDepthClickEdit, updateMsgCount, setupSearchHotkey, setupMessagesScrollTracking, setupMainChatHideListener, syncExchangeHiddenUi, setupSegmentJumpNav, setupSegmentScrollTracking, jumpToPrevSegment, jumpToNextSegment } from './ui/ui-chat.js';
+import { setupChatPickerListeners, onChatChanged, updateDepthSlidersMax, renderConversation, openSearch, navigateSearch, performSearch, closeSearch, openChatPicker, toggleSearchWholeWord, setupDepthClickEdit, updateMsgCount, setupSearchHotkey, setupMessagesScrollTracking, setupMainChatHideListener, syncExchangeHiddenUi, setupSegmentJumpNav, setupSegmentScrollTracking, jumpToPrevSegment, jumpToNextSegment, setGeneratingState } from './ui/ui-chat.js';
 import { checkChangelogAutoShow, setupChangelogListeners, openInspector, renderQuickPromptsBar } from './ui/ui-widgets.js';
 
 import * as apiMod from './api.js';
@@ -16,6 +16,7 @@ import { readFireTimePortrayForm, runPortray } from './portray.js';
 
 export let extVersion = '?';
 export let __extPath = null;
+export { setGeneratingState };
 
 {
     const match = new URL(import.meta.url).pathname.match(/\/scripts\/extensions\/(.+)\/[^\/]+\.js$/);
