@@ -11,6 +11,7 @@ import { _getSummaryceptionSummary } from './integrations/integ-summaryception.j
 import { applyRegexIfEnabled } from './integrations/integ-regex.js';
 
 import { buildMemoryContextBlock, buildMemoryAIInstructions, processMemoryUpdates, stripMemoryBlock } from './features/feature-memory.js';
+import { buildLorebookContextBlock } from './features/feature-lorebook.js';
 import { buildToolCallsSystemBlock, parseToolCallsFromText, executeTool, getEnabledTools } from './features/feature-tools-engine.js';
 
 import { updateMsgCount, smartScrollToBottom, setGeneratingState, showGenerationError, _renderMsgBodyContent, _refreshSwipeBars, appendMsgEl } from './ui/ui-chat.js';
@@ -58,6 +59,9 @@ export async function buildSystemContent(settings) {
 
     const memoryBlock = buildMemoryContextBlock(settings)
     if (memoryBlock) parts.push(memoryBlock);
+
+    const lorebookBlock = await buildLorebookContextBlock(settings);
+    if (lorebookBlock) parts.push(lorebookBlock);
 
     if (!ctx.groupId) {
         parts.push(`\n\n<character_information>\nName: ${charInfo ? charInfo.name : (ctx.name2 || 'Character')}\n</character_information>`);

@@ -52,6 +52,7 @@ const _SETTINGS_DEF = [
       onChange: () => import('./ui-window.js').then(m => m.setupGhostHotkey()) },
     { key: 'changelogAutoShow',    stId: null, spId: 'iv-sp-changelog-auto', type: 'checkbox' },
     { key: 'includeSummaryception', stId: 'iv-include-summaryception', spId: 'iv-sp-include-summaryception', type: 'checkbox', fromSetting: s => s.includeSummaryception !== false },
+    { key: 'includeLorebook', stId: 'iv-include-lorebook', spId: 'iv-sp-include-lorebook', type: 'checkbox', fromSetting: s => s.includeLorebook !== false, updCtx: true },
     { key: 'useAspectEvolutia',    stId: 'iv-use-aspect-evolutia',    spId: 'iv-sp-use-aspect-evolutia',    type: 'checkbox', fromSetting: s => s.useAspectEvolutia !== false },
     { key: 'autoExpandMacros',     stId: 'iv-auto-expand-macros',     spId: 'iv-sp-auto-expand-macros',     type: 'checkbox' },
     { key: 'includeHiddenMessages', stId: 'iv-include-hidden-msgs',   spId: 'iv-sp-include-hidden-msgs',    type: 'checkbox', updCtx: true },

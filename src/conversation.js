@@ -133,6 +133,7 @@ export function getSettings() {
         toolsEnabled_get_chat_stats: true,
         toolsEnabled_get_recent_messages: true,
         includeSummaryception: true,
+        includeLorebook: true,
         useAspectEvolutia: true,
         autoExpandMacros: false,
         includeHiddenMessages: false,

@@ -6,6 +6,8 @@ export default {
         inlineDynamicImports: true,
     },
     external: [
-        '/scripts/extensions/regex/engine.js'
+        '/scripts/extensions/regex/engine.js',
+        '/scripts/world-info.js',
+        '/scripts/utils.js',
     ],
 };
