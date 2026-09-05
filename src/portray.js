@@ -31,10 +31,15 @@ export function buildPortrayInstruction(form) {
     return `Write {{user}}'s next turn now.\n\n${styleLine}\n\n${personLine}`;
 }
 
+function portrayPromptText(settings) {
+    const stored = settings?.portrayPrompt;
+    return (typeof stored === 'string' && stored.trim()) ? stored : DEFAULT_PORTRAY_PROMPT;
+}
+
 function portrayRequestSettings(settings) {
     return {
         ...settings,
-        systemPrompt: DEFAULT_PORTRAY_PROMPT,
+        systemPrompt: portrayPromptText(settings),
         memoryEnabled: false,
     };
 }

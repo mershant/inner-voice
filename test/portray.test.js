@@ -90,6 +90,7 @@ const {
     addTurn,
 } = await import('../src/conversation.js');
 const { state } = await import('../src/state.js');
+const { DEFAULT_PORTRAY_PROMPT } = await import('../src/constants.js');
 const { assemblePortrayMessages, readFireTimePortrayForm, routePortrayToInput, runPortray, considerAutoTriggerPortray, flushPendingAutoPortray } = await import('../src/portray.js');
 
 function mainMsg(text, isUser = false) {
@@ -125,6 +126,31 @@ async function reset() {
 }
 
 beforeEach(reset);
+
+test('the default portray request carries the scene-response prompt, not the old source-from-thinking wording', async () => {
+    const sys = (await assemblePortrayMessages(getConversation(), getEffectiveSettings()))
+        .find(m => m.role === 'system')?.content || '';
+    assert.ok(sys.includes('answers the present scene'));
+    assert.ok(sys.includes('supporting opinion'));
+    assert.ok(!/the turn comes from its feelings, plans, and conclusions/i.test(sys));
+    assert.ok(!/from what they presently hold/i.test(sys));
+});
+
+test('the default portray prompt answers the scene; private thinking only shapes how', () => {
+    // Ticket #17 / IV-P-006: the turn answers the present scene. The exchange
+    // is a supporting opinion that tilts manner. It is never source material.
+    assert.match(DEFAULT_PORTRAY_PROMPT, /answers the present scene/i);
+    assert.match(DEFAULT_PORTRAY_PROMPT, /supporting opinion/i);
+    assert.match(DEFAULT_PORTRAY_PROMPT, /how \{\{user\}\} acts/i);
+    assert.match(DEFAULT_PORTRAY_PROMPT, /not the material of the turn/i);
+    assert.match(DEFAULT_PORTRAY_PROMPT, /without private thinking/i);
+    assert.ok(DEFAULT_PORTRAY_PROMPT.includes("{{user}}'s own actions and spoken words"));
+
+    // The live failure: "the turn comes from its feelings, plans, and conclusions"
+    // made the model restage the exchange as the action.
+    assert.ok(!/the turn comes from its feelings, plans, and conclusions/i.test(DEFAULT_PORTRAY_PROMPT));
+    assert.ok(!/from what they presently hold/i.test(DEFAULT_PORTRAY_PROMPT));
+});
 
 test('the portray request carries inner memory', async () => {
     const conv = getConversation();
@@ -178,7 +204,7 @@ test('portray with no live exchange still carries {{user}} standing state', asyn
 
     assert.ok(text.includes('Kyrine waits at the door'));
     assert.ok(!text.includes('<inner-exchange>'));
-    assert.ok(text.includes('standing state'));
+    assert.match(text, /without private thinking/i);
     assert.ok(text.includes("{{user}}'s own actions and spoken words"));
 });
 
@@ -235,6 +261,57 @@ test('portray does not flip stored tool settings or keep tool modules', async ()
     assert.equal(getSettings().toolsEnabled, true);
     assert.ok(!payloadText(messages).includes('<modules>'));
     assert.ok(!payloadText(messages).includes('tool_calls_system'));
+});
+
+test('an edited portray prompt is what the portray request carries, and reset restores the default', async () => {
+    const edited = 'EDITED-PORTRAY-SEAM: write the knock at the door, not the private argument.';
+    getSettings().portrayPrompt = edited;
+    saveSettings();
+
+    let sys = (await assemblePortrayMessages(getConversation(), getEffectiveSettings()))
+        .find(m => m.role === 'system')?.content || '';
+    assert.ok(sys.includes('EDITED-PORTRAY-SEAM: write the knock at the door, not the private argument.'));
+    assert.ok(!sys.includes('answers the present scene'));
+
+    getSettings().portrayPrompt = DEFAULT_PORTRAY_PROMPT;
+    saveSettings();
+    sys = (await assemblePortrayMessages(getConversation(), getEffectiveSettings()))
+        .find(m => m.role === 'system')?.content || '';
+    assert.ok(sys.includes('answers the present scene'));
+    assert.ok(!sys.includes('EDITED-PORTRAY-SEAM'));
+});
+
+test('a blank portray prompt falls back to the default', async () => {
+    getSettings().portrayPrompt = '   ';
+    const sys = (await assemblePortrayMessages(getConversation(), getEffectiveSettings()))
+        .find(m => m.role === 'system')?.content || '';
+    assert.ok(sys.includes('answers the present scene'));
+});
+
+test('the portray prompt setting defaults to the shipped default', () => {
+    assert.equal(getSettings().portrayPrompt, DEFAULT_PORTRAY_PROMPT);
+});
+
+test('a stored copy of the superseded portray prompt upgrades to the current default', async () => {
+    const { LEGACY_PORTRAY_PROMPTS } = await import('../src/constants.js');
+    stub.extensionSettings.inner_voice = { portrayPrompt: LEGACY_PORTRAY_PROMPTS[0] };
+    assert.equal(getSettings().portrayPrompt, DEFAULT_PORTRAY_PROMPT);
+
+    stub.extensionSettings.inner_voice = { portrayPrompt: 'My own portray prompt.' };
+    assert.equal(getSettings().portrayPrompt, 'My own portray prompt.');
+});
+
+test('profiles carrying a superseded portray prompt upgrade too', async () => {
+    const { LEGACY_PORTRAY_PROMPTS } = await import('../src/constants.js');
+    stub.extensionSettings.inner_voice = {
+        profiles: {
+            'Default': { portrayPrompt: LEGACY_PORTRAY_PROMPTS[0] },
+            'Mine': { portrayPrompt: 'My own portray prompt.' },
+        },
+    };
+    const s = getSettings();
+    assert.equal(s.profiles['Default'].portrayPrompt, DEFAULT_PORTRAY_PROMPT);
+    assert.equal(s.profiles['Mine'].portrayPrompt, 'My own portray prompt.');
 });
 
 test('portray asks for the next turn instead of more private thinking', async () => {

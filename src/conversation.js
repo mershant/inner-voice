@@ -6,6 +6,8 @@ import {
     DEFAULT_MEMORY_PROMPT,
     LEGACY_MEMORY_PROMPTS,
     LEGACY_TOOLS_PROMPTS,
+    DEFAULT_PORTRAY_PROMPT,
+    LEGACY_PORTRAY_PROMPTS,
     THEME_PRESETS
 } from './constants.js';
 import { _dbgAdd, _dbgDiffSettings } from './utils/util-debug.js';
@@ -138,6 +140,7 @@ export function getSettings() {
         portrayPerson: 'first',
         portrayImmediateSend: false,
         portrayAutoTrigger: false,
+        portrayPrompt: DEFAULT_PORTRAY_PROMPT,
         postHistoryText: '',
         postHistoryRole: 'user',
     };
@@ -163,6 +166,10 @@ export function getSettings() {
     // An empty toolsSystemPrompt already means "use the current default", so a
     // stored old default simply empties back to that.
     upgradeLegacyPrompt(s, 'toolsSystemPrompt', LEGACY_TOOLS_PROMPTS, '');
+    upgradeLegacyPrompt(s, 'portrayPrompt', LEGACY_PORTRAY_PROMPTS, DEFAULT_PORTRAY_PROMPT);
+    for (const p of Object.values(s.profiles || {})) {
+        upgradeLegacyPrompt(p, 'portrayPrompt', LEGACY_PORTRAY_PROMPTS, DEFAULT_PORTRAY_PROMPT);
+    }
     delete s.sessions; // legacy multi-session store; the conversation file owns state now
     return s;
 }

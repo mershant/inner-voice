@@ -1,4 +1,4 @@
-import { THEME_PRESETS, THEME_VAR_DEFS, THEME_CSS_MAP, EXT_DISPLAY, DEFAULT_SYSTEM_PROMPT, DEFAULT_TOOLS_PROMPT, DEFAULT_MEMORY_PROMPT, I } from '../constants.js';
+import { THEME_PRESETS, THEME_VAR_DEFS, THEME_CSS_MAP, EXT_DISPLAY, DEFAULT_SYSTEM_PROMPT, DEFAULT_TOOLS_PROMPT, DEFAULT_MEMORY_PROMPT, DEFAULT_PORTRAY_PROMPT, I } from '../constants.js';
 import { state } from '../state.js';
 import { getSettings, saveSettings, getEffectiveSettings, setConversationOverride, clearAllConversationOverrides, getBindingKey, hasConversationOverrides, saveConversation, getConversation, getConversationOverrides, initConversation } from '../conversation.js';
 import { showCustomDialog, escHtml } from '../utils/util-dom.js';
@@ -85,6 +85,8 @@ const _SETTINGS_DEF = [
       onChange: () => import('../portray.js').then(m => m.syncFireTimePortrayForm()) },
     { key: 'portrayImmediateSend', stId: 'iv-portray-immediate-send', spId: 'iv-sp-portray-immediate-send', type: 'checkbox' },
     { key: 'portrayAutoTrigger', stId: 'iv-portray-auto-trigger', spId: 'iv-sp-portray-auto-trigger', type: 'checkbox' },
+    { key: 'portrayPrompt', stId: 'iv-portray-prompt', spId: 'iv-sp-portray-prompt', type: 'textarea', profileKey: true,
+      fromSetting: s => s.portrayPrompt || DEFAULT_PORTRAY_PROMPT },
     { key: 'localHistoryLimit',   stId: 'iv-history-limit',    spId: 'iv-sp-history-limit',    type: 'input',    toVal: Number, updCtx: true, profileKey: true },
     { key: 'includeSystemPrompt', stId: 'iv-include-sysprompt', spId: 'iv-sp-include-sysprompt', type: 'checkbox', updCtx: true, profileKey: true },
     { key: 'includeUserPersonality', stId: 'iv-include-persona', spId: 'iv-sp-include-persona', type: 'checkbox', updCtx: true, profileKey: true },
@@ -757,6 +759,7 @@ export function setupSettingsHandlers() {
         toastr.success(`${label} reset.`, EXT_DISPLAY);
     };
     document.getElementById('iv-reset-prompt')?.addEventListener('click', () => _resetPrompt('systemPrompt', DEFAULT_SYSTEM_PROMPT, 'iv-sysprompt', 'iv-sp-sysprompt', 'System Prompt'));
+    document.getElementById('iv-reset-portray-prompt')?.addEventListener('click', () => _resetPrompt('portrayPrompt', DEFAULT_PORTRAY_PROMPT, 'iv-portray-prompt', 'iv-sp-portray-prompt', 'Portray Prompt'));
     document.getElementById('iv-reset-memory-prompt')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Prompt', message: 'Reset memory prompt to default?' }); if (!ok) return;
         getSettings().memoryManagePrompt = DEFAULT_MEMORY_PROMPT; saveSettings();
@@ -954,6 +957,12 @@ export function setupSettingsPanelListeners() {
         getSettings().systemPrompt = DEFAULT_SYSTEM_PROMPT; saveSettings();
         ['iv-sp-sysprompt', 'iv-sysprompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_SYSTEM_PROMPT; });
         import('./ui-chat.js').then(m => m.updateMsgCount(getConversation())); toastr.success('System prompt reset.', EXT_DISPLAY);
+    });
+    document.getElementById('iv-sp-reset-portray-prompt')?.addEventListener('click', async () => {
+        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Portray Prompt', message: 'Reset to default?' }); if (!ok) return;
+        getSettings().portrayPrompt = DEFAULT_PORTRAY_PROMPT; saveSettings();
+        ['iv-sp-portray-prompt', 'iv-portray-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_PORTRAY_PROMPT; });
+        toastr.success('Portray prompt reset.', EXT_DISPLAY);
     });
     document.getElementById('iv-sp-reset-memory-prompt')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Prompt', message: 'Reset memory prompt to default?' }); if (!ok) return;
