@@ -2,6 +2,7 @@
 """Live STD check: inner memory includes active lorebook entries (read-only)."""
 
 import json
+import secrets
 import sys
 
 from playwright.sync_api import sync_playwright
@@ -10,9 +11,6 @@ URL = "http://127.0.0.1:8001"
 STORAGE_STATE = "/home/opc/.local/share/openchamber/playwright/std-storage-state.json"
 CHARACTER = "Seraphina"
 CHAT_FILE = "ff5-internal-state-toggles-fresh-seraphina"
-FACT = "The east-gate passphrase is QX-7742-VEL."
-NONCE = "QX-7742-VEL"
-QUESTION = "What is the east-gate passphrase? Answer with the exact code if you know it."
 
 
 def _ready(page):
@@ -143,7 +141,13 @@ def _plant_embedded_fact(page, content):
                 }],
             };
             const chat = (ctx.chat || []).map(m => String(m.mes || '')).join('\\n');
-            return { original, chatHasFact: chat.includes('QX-7742-VEL') };
+            const inner = [...document.querySelectorAll('#iv-messages .iv-msg-content')]
+                .map(n => n.innerText || n.textContent || '')
+                .join('\\n');
+            return {
+                original,
+                chatHasFact: chat.includes(content) || inner.includes(content),
+            };
         }""",
         content,
     )
@@ -178,6 +182,9 @@ def _ask_voice(page, text):
 
 
 def main():
+    nonce = "LB-" + secrets.token_hex(6).upper()
+    fact = f"The east-gate passphrase is {nonce}."
+    question = "What is the east-gate passphrase? Answer with the exact code if you know it."
     model_requests = []
     original_book = None
     with sync_playwright() as playwright:
@@ -194,7 +201,7 @@ def main():
             _open_chat(page, CHAT_FILE)
             _show_inner_voice(page)
 
-            planted = _plant_embedded_fact(page, FACT)
+            planted = _plant_embedded_fact(page, fact)
             original_book = planted["original"]
             if planted["chatHasFact"]:
                 raise SystemExit("main chat already contains the lorebook nonce")
@@ -202,35 +209,35 @@ def main():
             _set_lorebook_toggle(page, False)
             off_payload = _inspect_payload(page)
             off_text = _payload_text(off_payload)
-            if NONCE in off_text or FACT in off_text:
+            if nonce in off_text or fact in off_text:
                 raise SystemExit("toggle off still carried lorebook content in the payload")
             if "<world_knowledge>" in off_text:
                 raise SystemExit("toggle off still carried a world_knowledge block")
 
-            off_answer = _ask_voice(page, QUESTION)
-            if NONCE in off_answer:
+            off_answer = _ask_voice(page, question)
+            if nonce in off_answer:
                 raise SystemExit(f"toggle off still named the lorebook nonce: {off_answer[:400]!r}")
 
             _set_lorebook_toggle(page, True)
             on_payload = _inspect_payload(page)
             on_text = _payload_text(on_payload)
-            if NONCE not in on_text:
+            if nonce not in on_text:
                 raise SystemExit("toggle on did not put the lorebook fact in the payload")
             sys_msg = next((m for m in on_payload if m.get("role") == "system"), None)
             main_msg = next(
                 (m for m in on_payload if isinstance(m.get("content"), str) and "<main_chat" in m["content"]),
                 None,
             )
-            if not sys_msg or NONCE not in str(sys_msg.get("content") or ""):
+            if not sys_msg or nonce not in str(sys_msg.get("content") or ""):
                 raise SystemExit("lorebook fact is not in the system/world-knowledge material")
             if "<world_knowledge>" not in str(sys_msg.get("content") or ""):
                 raise SystemExit("payload is missing the world_knowledge frame")
-            if main_msg and NONCE in str(main_msg.get("content") or ""):
+            if main_msg and nonce in str(main_msg.get("content") or ""):
                 raise SystemExit("lorebook fact leaked into the main-chat slice")
 
-            on_answer = _ask_voice(page, QUESTION)
-            if NONCE not in on_answer:
-                raise SystemExit(f"toggle on, Voice did not use the lorebook fact: {on_answer[:400]!r}")
+            on_answer = _ask_voice(page, question)
+            if nonce not in on_answer:
+                raise SystemExit(f"toggle on, Inner Voice did not use the lorebook fact: {on_answer[:400]!r}")
         finally:
             try:
                 _restore_embedded_book(page, original_book)
@@ -241,7 +248,7 @@ def main():
 
     print(
         f"ok: lorebook fact absent from chat, in payload when on and out when off; "
-        f"Voice used it only with the toggle on; model requests: {len(model_requests)}"
+        f"Inner Voice used it only with the toggle on; model requests: {len(model_requests)}"
     )
     return 0
 
