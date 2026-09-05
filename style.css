@@ -269,8 +269,6 @@
     flex: 1; overflow-y: auto;
     padding: 10px 10px 4px;
     display: flex; flex-direction: column; gap: 2px;
-    /* The inner life reads on its own surface: never over the story. */
-    background: color-mix(in srgb, var(--iv-bg) 55%, rgba(0,0,0,0.55));
 }
 
 /* ── Empty State ─────────────────────────────────────────────── */
@@ -283,6 +281,7 @@
     pointer-events: none; user-select: none;
 }
 .iv-empty-icon { color: var(--iv-accent); opacity: 0.22; }
+.iv-empty-icon svg { width: 48px; height: 48px; }
 .iv-empty-title {
     font-size: 16px; font-weight: 700;
     color: var(--iv-text); opacity: 0.4;
@@ -310,6 +309,7 @@
 .iv-segment {
     position: relative;
     scroll-margin-top: 6px;
+    display: flex; flex-direction: column; gap: 2px;
 }
 .iv-anchor {
     position: relative;
@@ -578,10 +578,15 @@
 /* ── Actions Bar ─────────────────────────────────────────────── */
 
 .iv-actions-bar {
-    flex-shrink: 0; display: flex; align-items: center; gap: 5px;
+    flex-shrink: 0; display: flex; flex-direction: column; gap: 5px;
     padding: 6px 10px; background: var(--iv-toolbar-bg); border-top: var(--iv-border);
-    flex-wrap: wrap; white-space: nowrap;
 }
+.iv-actions-row {
+    display: flex; align-items: center; gap: 5px;
+    white-space: nowrap;
+}
+.iv-actions-row .iv-portray-controls { margin-left: 0; }
+.iv-actions-row .iv-qp-toggle-action { margin-left: auto; }
 .iv-action-btn {
     display: flex; align-items: center; gap: 5px; padding: 3px 9px;
     border-radius: 5px; font-size: 11px; cursor: pointer;
@@ -598,10 +603,6 @@
 .iv-action-btn:hover { color: var(--iv-accent); background: var(--iv-accent-bg); border-color: var(--iv-accent-dim); }
 .iv-action-btn:disabled { opacity: 0.3; cursor: default; pointer-events: none; }
 .iv-action-btn svg { overflow: visible; flex-shrink: 0; }
-.iv-action-sep {
-    width: 1px; height: 18px; background: rgba(255,255,255,0.08);
-    flex-shrink: 0; margin: 0 2px;
-}
 .iv-portray-controls {
     display: flex; align-items: center; gap: 4px; min-width: 0;
 }

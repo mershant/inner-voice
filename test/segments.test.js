@@ -62,7 +62,6 @@ globalThis.SillyTavern = {
 
 const { initConversation, getConversation, addTurn } = await import('../src/conversation.js');
 const {
-    segmentTurns,
     segmentAnchorLabel,
     isSegmentClosed,
     nearestSegmentAbove,
@@ -81,36 +80,7 @@ beforeEach(async () => {
     await initConversation({ forceReset: true });
 });
 
-// ─── Segments: the window renders one continuous conversation in exchanges ───
-
-test('segmentTurns groups turns by anchor in conversation order', () => {
-    stub.chat = [mainMsg('one'), mainMsg('two')];
-    const conv = getConversation();
-    addTurn(conv, 'user', 'first thought');
-    addTurn(conv, 'assistant', 'first answer');
-    stub.chat.push(mainMsg('three'));
-    addTurn(conv, 'user', 'second thought');
-
-    const segments = segmentTurns(conv);
-    assert.equal(segments.length, 2);
-    assert.deepEqual(segments.map(s => s.anchorIndex), [1, 2]);
-    assert.deepEqual(segments[0].turns.map(t => t.content), ['first thought', 'first answer']);
-    assert.deepEqual(segments[1].turns.map(t => t.content), ['second thought']);
-});
-
-test('segmentTurns keeps a pre-story segment first, ordered before anchored ones', () => {
-    stub.chat = [];
-    const conv = getConversation();
-    addTurn(conv, 'user', 'pre-story thought');
-    stub.chat.push(mainMsg('one'));
-    addTurn(conv, 'user', 'present thought');
-
-    const segments = segmentTurns(conv);
-    assert.deepEqual(segments.map(s => s.anchorIndex), [null, 0]);
-    assert.deepEqual(segments[0].turns.map(t => t.content), ['pre-story thought']);
-});
-
-// ─── Anchor labels: markers identify their main-chat message ─────────────────
+// ─── Anchor markers identify their main-chat message ─────────────────────────
 
 test('segmentAnchorLabel names the speaker and opens the anchored line', () => {
     stub.chat = [
@@ -131,29 +101,29 @@ test('segmentAnchorLabel survives missing, unnamed, and long anchors', () => {
     assert.ok(label.length < 60);
 });
 
-// ─── Closed segments: old exchanges present as closed, not extendable ────────
+// ─── Closed exchanges: old ones present as closed, not extendable ────────────
 
-test('only the live-edge segment is open; earlier ones present as closed', () => {
+test('only the live-edge exchange is open; earlier ones present as closed', () => {
     stub.chat = [mainMsg('one'), mainMsg('two')];
     const conv = getConversation();
     addTurn(conv, 'user', 'thought at one');
     stub.chat.push(mainMsg('three'));
     addTurn(conv, 'user', 'thought at two');
 
-    assert.equal(isSegmentClosed(conv, 1), true);
-    assert.equal(isSegmentClosed(conv, 2), false);
+    assert.equal(isSegmentClosed(1), true);
+    assert.equal(isSegmentClosed(2), false);
 });
 
-test('a live-edge segment is open regardless of turn count', () => {
+test('a live-edge exchange is open regardless of turn count', () => {
     stub.chat = [mainMsg('one')];
     const conv = getConversation();
     addTurn(conv, 'user', 'a');
     addTurn(conv, 'assistant', 'b');
     addTurn(conv, 'user', 'c');
-    assert.equal(isSegmentClosed(conv, 0), false);
+    assert.equal(isSegmentClosed(0), false);
 });
 
-// ─── Jump navigation: move between segments ──────────────────────────────────
+// ─── Jump navigation: move between exchanges ─────────────────────────────────
 
 test('nearestSegmentAbove steps to the previous distinct anchor', () => {
     stub.chat = [mainMsg('one')];
@@ -183,7 +153,7 @@ test('nearestSegmentBelow steps to the next distinct anchor', () => {
     assert.equal(nearestSegmentBelow(conv, 2), null);
 });
 
-test('unanchored segments participate in navigation as one end of the chain', () => {
+test('unanchored exchanges participate in navigation as one end of the chain', () => {
     stub.chat = [];
     const conv = getConversation();
     addTurn(conv, 'user', 'pre-story');

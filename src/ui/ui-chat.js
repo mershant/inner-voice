@@ -25,10 +25,6 @@ import('./ui-settings.js').then(m => uiSetMod = m);
 // happened under. These helpers are pure conversation → view-model mapping so
 // the designed rendering stays thin.
 
-export function segmentTurns(conversation) {
-    return getExchanges(conversation);
-}
-
 // A human label for an exchange's anchor: who spoke in the main chat and the
 // opening words of that message. Falls back when the anchor is unanchored
 // (pre-story) or no longer resolvable (main chat has moved on).
@@ -47,20 +43,20 @@ export function segmentAnchorLabel(anchorIndex) {
 
 // An exchange is closed once its anchor is no longer the live edge — the
 // story has moved on, so the segment reads but never grows.
-export function isSegmentClosed(conversation, anchorIndex) {
+export function isSegmentClosed(anchorIndex) {
     const anchor = anchorIndex === undefined ? null : anchorIndex;
     return anchor !== getLiveEdgeIndex();
 }
 
 export function nearestSegmentAbove(conversation, anchorIndex) {
-    const segments = segmentTurns(conversation);
+    const segments = getExchanges(conversation);
     const idx = segments.findIndex(s => s.anchorIndex === anchorIndex);
     if (idx <= 0) return null;
     return segments[idx - 1].anchorIndex;
 }
 
 export function nearestSegmentBelow(conversation, anchorIndex) {
-    const segments = segmentTurns(conversation);
+    const segments = getExchanges(conversation);
     const idx = segments.findIndex(s => s.anchorIndex === anchorIndex);
     if (idx === -1 || idx === segments.length - 1) return null;
     return segments[idx + 1].anchorIndex;
@@ -483,8 +479,7 @@ export function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
     wrap.className = `iv-msg ${isUser ? 'iv-msg-user' : 'iv-msg-assistant'}`;
     wrap.dataset.id = msg.id;
     wrap.dataset.anchorIndex = encodeAnchor(msg.anchorIndex);
-    if (isExchangeHidden(getConversation(), msg.anchorIndex)) wrap.classList.add('iv-exchange-hidden');
-    const closed = isSegmentClosed(getConversation(), msg.anchorIndex);
+    const closed = isSegmentClosed(msg.anchorIndex);
     if (closed) wrap.classList.add('iv-segment-closed');
 
     const avatarWrap = document.createElement('div');
@@ -526,11 +521,12 @@ export function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
 
     actions.appendChild(makeBtn(I.copy, 'Copy', '', () => onCopy(msg)));
     actions.appendChild(makeBtn(I.edit, 'Edit', '', () => onEdit(wrap, msg)));
-    actions.appendChild(makeBtn(I.refresh, 'Regen', '', () => onRegen(wrap, msg)));
+    // Generation affordances only exist on the live edge: a turn whose anchor
+    // has fallen behind the story presents as closed — past exchanges stay
+    // readable and editable but never regrow (regen, swipes, or Continue).
+    if (!closed) actions.appendChild(makeBtn(I.refresh, 'Regen', '', () => onRegen(wrap, msg)));
     actions.appendChild(makeBtn(I.trash, 'Delete', 'iv-msg-btn-danger', () => onDelete(wrap, msg)));
 
-    // Continue only exists on the live edge: a turn whose anchor has fallen
-    // behind the story presents as closed — past exchanges never extend.
     if (!isUser && !closed) {
         const continueBtn = makeBtn(I.continueArrow, 'Continue response', 'iv-msg-btn-continue', () => {
             if (apiMod) apiMod.runContinue(getConversation(), msg.id);
@@ -1104,22 +1100,21 @@ function paintHideControl(segment, conversation, anchorIndex) {
         : hidden ? 'Show this exchange' : 'Hide this exchange';
 }
 
-function segmentContainsAnchor(segment, anchorIndex) {
-    return decodeAnchor(segment.dataset.anchorIndex) === anchorIndex;
-}
-
-function lastRenderedAnchor(container) {
+function segmentAt(container, anchorIndex) {
     const segments = container.querySelectorAll('.iv-segment');
     const last = segments.length ? segments[segments.length - 1] : null;
-    return last ? decodeAnchor(last.dataset.anchorIndex) : Symbol('none');
+    if (last && decodeAnchor(last.dataset.anchorIndex) === anchorIndex) return last;
+    return null;
 }
 
-function appendSegmentIfNew(container, conversation, anchorIndex) {
-    if (lastRenderedAnchor(container) === anchorIndex) return;
+// The exchange's section: marker header plus its turns. Turns render inside
+// it, so hiding and pruning follow the tree instead of sibling bookkeeping.
+function ensureSegment(container, conversation, anchorIndex) {
+    const existing = segmentAt(container, anchorIndex);
+    if (existing) return existing;
     const segment = createSegment(conversation, anchorIndex);
-    const next = container.querySelector(`.iv-segment[data-anchor-index="${encodeAnchor(anchorIndex)}"]`);
-    if (next) container.insertBefore(segment, next);
-    else container.appendChild(segment);
+    container.appendChild(segment);
+    return segment;
 }
 
 function createSegment(conversation, anchorIndex) {
@@ -1129,7 +1124,9 @@ function createSegment(conversation, anchorIndex) {
 
     const header = document.createElement('div');
     header.className = 'iv-anchor';
-    header.title = 'Inner exchange under this main-chat message — click to jump';
+    header.title = 'Inner exchange under this main-chat message — click to snap to it';
+    header.setAttribute('role', 'button');
+    header.tabIndex = 0;
 
     const mark = document.createElement('span');
     mark.className = 'iv-anchor-mark';
@@ -1165,10 +1162,7 @@ export function syncExchangeHiddenUi(conversation = getConversation()) {
     c.querySelectorAll('.iv-segment').forEach(seg => {
         paintHideControl(seg, conversation, decodeAnchor(seg.dataset.anchorIndex));
     });
-    c.querySelectorAll('.iv-msg').forEach(el => {
-        el.classList.toggle('iv-exchange-hidden', isExchangeHidden(conversation, decodeAnchor(el.dataset.anchorIndex)));
-    });
-    // Closing the live-edge segment hides its Continue too.
+    // Hiding the live-edge exchange takes its Continue with it.
     if (!state.generating) _refreshContinueBtns();
 }
 
@@ -1218,8 +1212,8 @@ export function jumpToNextSegment() {
     jumpToSegment(nearestSegmentBelow(getConversation(), state.currentSegmentAnchor ?? getLiveEdgeIndex()));
 }
 
-// The segment that owns the message now on screen.
-function currentSegmentIndex(conversation) {
+// The anchor of the segment that owns the message now on screen.
+function anchorOnScreen() {
     const c = document.getElementById('iv-messages');
     if (!c) return state.currentSegmentAnchor ?? getLiveEdgeIndex();
     const msgs = [...c.querySelectorAll('.iv-msg')];
@@ -1239,7 +1233,7 @@ export function setupSegmentScrollTracking(container) {
         if (raf) return;
         raf = requestAnimationFrame(() => {
             raf = null;
-            state.currentSegmentAnchor = currentSegmentIndex(getConversation());
+            state.currentSegmentAnchor = anchorOnScreen();
         });
     }, { passive: true });
 }
@@ -1267,9 +1261,7 @@ export function renderConversation(conversation) {
     if (!conversation.messages.length) {
         c.innerHTML = `
             <div class="iv-empty-state">
-                <div class="iv-empty-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="currentColor" stroke="none"><g transform="translate(12 13.2) scale(1.32) translate(-12 -13.2)"><path d="M3.6 12.2 c0-2.4 1.1-4.7 2.9-6.3 q-1.5 2.2-1.4 4.7 c 1.8-.2 3 1 3 2.7 a2.7 2.7 0 0 1-2.8 2.8 q-1.7 0-1.7-1.9 Z"/><path d="M14 12.2 c0-2.4 1.1-4.7 2.9-6.3 q-1.5 2.2-1.4 4.7 c 1.8-.2 3 1 3 2.7 a2.7 2.7 0 0 1-2.8 2.8 q-1.7 0-1.7-1.9 Z"/></g></svg>
-                </div>
+                <div class="iv-empty-icon">${I.bot}</div>
                 <div class="iv-empty-title">Inner Voice</div>
                 <div class="iv-empty-sub">A private space to think, plan, and talk with yourself. Nothing here enters the scene.</div>
             </div>`;
@@ -1278,9 +1270,9 @@ export function renderConversation(conversation) {
     }
     for (const msg of conversation.messages) {
         const anchor = msg.anchorIndex === undefined ? null : msg.anchorIndex;
-        appendSegmentIfNew(c, conversation, anchor);
+        const segment = ensureSegment(c, conversation, anchor);
         const el = createMsgEl(msg, handleCopy, handleEdit, handleDelete, handleMessageRegen);
-        c.appendChild(el);
+        segment.appendChild(el);
     }
     updateMsgCount(conversation);
     _refreshContinueBtns();
@@ -1295,10 +1287,10 @@ export function appendMsgEl(msg, isStreamInit = false) {
 
     const conversation = getConversation();
     const anchor = msg.anchorIndex === undefined ? null : msg.anchorIndex;
-    appendSegmentIfNew(c, conversation, anchor);
+    const segment = ensureSegment(c, conversation, anchor);
 
     const el = createMsgEl(msg, handleCopy, handleEdit, handleDelete, handleMessageRegen);
-    c.appendChild(el);
+    segment.appendChild(el);
     
     if (!isStreamInit) {
         const conversation = getConversation();
