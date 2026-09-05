@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live STD check: a {{user}} conclusion drafts a portray without sending."""
+"""Live STD check: auto-trigger is one request without a portray, two with one."""
 
 import sys
 
@@ -9,6 +9,9 @@ URL = "http://127.0.0.1:8001"
 STORAGE_STATE = "/home/opc/.local/share/openchamber/playwright/std-storage-state.json"
 CHARACTER = "Seraphina"
 CHAT_FILE = "ff5-internal-state-toggles-fresh-seraphina"
+WONDERING_PROMPT = (
+    "Don't decide anything yet. Just tell me how the air in here feels on your skin."
+)
 RESOLUTION_PROMPT = (
     "What have you actually decided to do next? "
     "Answer as a settled decision, not more discussion."
@@ -81,6 +84,83 @@ def _show_inner_voice(page):
     page.wait_for_timeout(500)
 
 
+def _snapshot(page):
+    return page.evaluate(
+        """() => {
+            const ctx = SillyTavern.getContext();
+            const ta = document.getElementById('send_textarea');
+            return {
+                input: ta ? String(ta.value || '') : '',
+                disabled: !!(ta && ta.disabled),
+                readOnly: !!(ta && ta.readOnly),
+                chatLength: (ctx.chat || []).length,
+                assistantTurns: document.querySelectorAll('.iv-msg-assistant').length,
+                latestAssistant: [...document.querySelectorAll('.iv-msg-assistant .iv-msg-content')]
+                    .at(-1)?.textContent || '',
+                autoTrigger: !!(ctx.extensionSettings.inner_voice || {}).portrayAutoTrigger,
+                immediateSend: !!(ctx.extensionSettings.inner_voice || {}).portrayImmediateSend,
+            };
+        }"""
+    )
+
+
+def _prepare_settings(page):
+    page.evaluate(
+        """() => {
+            const ctx = SillyTavern.getContext();
+            const s = ctx.extensionSettings.inner_voice || {};
+            s.portrayAutoTrigger = true;
+            s.portrayImmediateSend = false;
+            s.toolsEnabled = false;
+            ctx.extensionSettings.inner_voice = s;
+            const ta = document.getElementById('send_textarea');
+            if (ta) ta.value = '';
+        }"""
+    )
+
+
+def _send_inner(page, text):
+    page.fill("#iv-input", text)
+    page.evaluate("() => document.getElementById('iv-send-btn').click()")
+
+
+def _wait_for_assistant(page, before_count):
+    page.wait_for_function(
+        """count => {
+            const els = document.querySelectorAll('.iv-msg-assistant .iv-msg-content');
+            const last = els[els.length - 1];
+            return els.length === count + 1 && String(last?.textContent || '').trim().length > 0;
+        }""",
+        arg=before_count,
+        timeout=90_000,
+    )
+
+
+def _wait_until_idle(page):
+    page.wait_for_function(
+        "() => !document.getElementById('iv-stop-btn')?.offsetParent",
+        timeout=90_000,
+    )
+
+
+def _fail_diagnostic(page, model_requests, diagnostic_console, err):
+    diagnostic = page.evaluate(
+        """() => ({
+            generating: !!document.getElementById('iv-stop-btn')?.offsetParent,
+            thinking: document.getElementById('iv-thinking-text')?.textContent || '',
+            input: document.getElementById('send_textarea')?.value || '',
+            innerTurns: document.querySelectorAll('.iv-msg').length,
+        })"""
+    )
+    print(
+        f"diagnostic: {diagnostic}; model requests: {len(model_requests)}",
+        file=sys.stderr,
+    )
+    for line in diagnostic_console:
+        print(line, file=sys.stderr)
+    raise err
+
+
 def main():
     model_requests = []
     diagnostic_console = []
@@ -102,98 +182,95 @@ def main():
         _select_character(page, CHARACTER)
         _open_chat(page, CHAT_FILE)
         _show_inner_voice(page)
+        _prepare_settings(page)
 
-        before = page.evaluate(
+        before_open = _snapshot(page)
+        if not before_open["autoTrigger"]:
+            raise SystemExit("auto-trigger was not on")
+        if before_open["immediateSend"]:
+            raise SystemExit("immediate send was on; this check is draft-only")
+
+        requests_before_wonder = len(model_requests)
+        _send_inner(page, WONDERING_PROMPT)
+        try:
+            _wait_for_assistant(page, before_open["assistantTurns"])
+            _wait_until_idle(page)
+        except PlaywrightTimeoutError as err:
+            _fail_diagnostic(page, model_requests, diagnostic_console, err)
+        page.wait_for_timeout(1000)
+        after_wonder = _snapshot(page)
+        wonder_requests = len(model_requests) - requests_before_wonder
+        if wonder_requests != 1:
+            raise SystemExit(
+                f"expected one model request with no portray trigger; "
+                f"saw {wonder_requests}"
+            )
+        if after_wonder["input"].strip():
+            raise SystemExit("a wondering turn drafted a portray")
+        if after_wonder["chatLength"] != before_open["chatLength"]:
+            raise SystemExit("a wondering turn sent a main-chat message")
+        if after_wonder["assistantTurns"] != before_open["assistantTurns"] + 1:
+            raise SystemExit("the wondering turn did not produce one new {{user}} reply")
+        if not after_wonder["latestAssistant"].strip():
+            raise SystemExit("the wondering reply was empty")
+        if "<scene-now" in after_wonder["latestAssistant"].lower():
+            raise SystemExit("the hidden portray signal was visible in the reply")
+
+        page.evaluate(
             """() => {
-                const ctx = SillyTavern.getContext();
-                const s = ctx.extensionSettings.inner_voice || {};
-                s.portrayAutoTrigger = true;
-                s.portrayImmediateSend = false;
-                ctx.extensionSettings.inner_voice = s;
                 const ta = document.getElementById('send_textarea');
                 if (ta) ta.value = '';
-                return {
-                    chatLength: (ctx.chat || []).length,
-                    assistantTurns: document.querySelectorAll('.iv-msg-assistant').length,
-                };
             }"""
         )
-
-        page.fill("#iv-input", RESOLUTION_PROMPT)
-        page.evaluate("() => document.getElementById('iv-send-btn').click()")
+        before_resolve = _snapshot(page)
+        requests_before_resolve = len(model_requests)
+        _send_inner(page, RESOLUTION_PROMPT)
+        try:
+            _wait_for_assistant(page, before_resolve["assistantTurns"])
+        except PlaywrightTimeoutError as err:
+            _fail_diagnostic(page, model_requests, diagnostic_console, err)
+        visible_before_portray = _snapshot(page)
+        if visible_before_portray["assistantTurns"] != before_resolve["assistantTurns"] + 1:
+            raise SystemExit("the resolving turn did not produce a visible {{user}} reply before portray")
+        if not visible_before_portray["latestAssistant"].strip():
+            raise SystemExit("the resolving reply was empty")
+        if "<scene-now" in visible_before_portray["latestAssistant"].lower():
+            raise SystemExit("the hidden portray signal was visible in the reply")
+        if visible_before_portray["latestAssistant"].strip().lower() in ISSUE_EXAMPLE_TURNS:
+            raise SystemExit("the live resolving turn repeated an issue example")
         try:
             page.wait_for_function(
                 "() => String(document.getElementById('send_textarea')?.value || '').trim().length > 0",
                 timeout=90_000,
             )
-        except PlaywrightTimeoutError:
-            diagnostic = page.evaluate(
-                """() => ({
-                    generating: !!document.getElementById('iv-stop-btn')?.offsetParent,
-                    thinking: document.getElementById('iv-thinking-text')?.textContent || '',
-                    input: document.getElementById('send_textarea')?.value || '',
-                    innerTurns: document.querySelectorAll('.iv-msg').length,
-                })"""
-            )
-            print(
-                f"diagnostic: {diagnostic}; model requests: {len(model_requests)}",
-                file=sys.stderr,
-            )
-            for line in diagnostic_console:
-                print(line, file=sys.stderr)
-            raise
+        except PlaywrightTimeoutError as err:
+            _fail_diagnostic(page, model_requests, diagnostic_console, err)
         page.wait_for_timeout(500)
-
-        after = page.evaluate(
-            """() => {
-                const ta = document.getElementById('send_textarea');
-                const ctx = SillyTavern.getContext();
-                return {
-                    input: ta ? String(ta.value || '') : '',
-                    disabled: !!(ta && ta.disabled),
-                    readOnly: !!(ta && ta.readOnly),
-                    chatLength: (ctx.chat || []).length,
-                    assistantTurns: document.querySelectorAll('.iv-msg-assistant').length,
-                    latestAssistant: [...document.querySelectorAll('.iv-msg-assistant .iv-msg-content')]
-                        .at(-1)?.textContent || '',
-                    autoTrigger: !!(ctx.extensionSettings.inner_voice || {}).portrayAutoTrigger,
-                    immediateSend: !!(ctx.extensionSettings.inner_voice || {}).portrayImmediateSend,
-                };
-            }"""
-        )
+        after_resolve = _snapshot(page)
         browser.close()
 
-    if not after["autoTrigger"]:
-        raise SystemExit("auto-trigger was not on")
-    if after["immediateSend"]:
-        raise SystemExit("immediate send was on; this check is draft-only")
-    if not after["input"].strip():
+    resolve_requests = len(model_requests) - requests_before_resolve
+    if not after_resolve["input"].strip():
         raise SystemExit("auto-trigger did not draft a portray into the input box")
-    if after["disabled"] or after["readOnly"]:
+    if after_resolve["disabled"] or after_resolve["readOnly"]:
         raise SystemExit("portray filled the input box but it is not editable")
-    if after["chatLength"] != before["chatLength"]:
+    if after_resolve["chatLength"] != before_open["chatLength"]:
         raise SystemExit(
             f"auto-trigger sent a main-chat message "
-            f"(chat {before['chatLength']} -> {after['chatLength']})"
+            f"(chat {before_open['chatLength']} -> {after_resolve['chatLength']})"
         )
-    if after["assistantTurns"] != before["assistantTurns"] + 1:
-        raise SystemExit("the ordinary path did not produce one new {{user}} turn")
-    if not after["latestAssistant"].strip():
-        raise SystemExit("the new {{user}} turn was empty")
-    if after["latestAssistant"].strip().lower() in ISSUE_EXAMPLE_TURNS:
-        raise SystemExit("the live resolving turn repeated an issue example")
-    if after["input"].strip() == RESOLUTION_PROMPT:
+    if after_resolve["input"].strip() == RESOLUTION_PROMPT:
         raise SystemExit("input box still has the inner turn, not a portray")
-    if len(model_requests) != 4:
+    if resolve_requests != 2:
         raise SystemExit(
-            f"expected inner reply, two semantic verdicts, and portray; "
-            f"saw {len(model_requests)} model requests"
+            f"expected inner reply plus portray; saw {resolve_requests} model requests"
         )
 
     print(
-        f"ok: {{{{user}}}} resolving turn with auto-trigger on drafted a portray "
-        f"for {CHARACTER} ({after['chatLength']} main-chat messages unchanged; "
-        f"{len(after['input'])} chars; model requests: {len(model_requests)})"
+        f"ok: no-trigger cost {wonder_requests} request and a conclusion cost "
+        f"{resolve_requests} for {CHARACTER} "
+        f"({after_resolve['chatLength']} main-chat messages unchanged; "
+        f"{len(after_resolve['input'])} chars)"
     )
     return 0
 

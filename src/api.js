@@ -14,6 +14,7 @@ import { buildMemoryContextBlock, buildMemoryAIInstructions, processMemoryUpdate
 import { buildLorebookContextBlock } from './features/feature-lorebook.js';
 import { buildCharacterInformationBlock } from './features/feature-characters.js';
 import { buildToolCallsSystemBlock, parseToolCallsFromText, executeTool, getEnabledTools } from './features/feature-tools-engine.js';
+import { buildPortraySignalBlock, splitPortraySignal } from './portray-signal.js';
 
 import { updateMsgCount, smartScrollToBottom, setGeneratingState, showGenerationError, _renderMsgBodyContent, _refreshSwipeBars, appendMsgEl } from './ui/ui-chat.js';
 import { getDisplayContent, extractToolCallPlaceholders, renderMarkdown, postProcessHTMLBlocks } from './ui/ui-chat.js'; 
@@ -24,14 +25,19 @@ function sanitizeToolCallsForSave(toolCalls) {
     return (toolCalls || []).map(tc => ({ ...tc }));
 }
 
-async function notePortrayAutoTrigger(turn) {
+export async function notePortrayAutoTrigger(turn, opts = {}) {
     const { considerAutoTriggerPortray } = await import('./portray.js');
-    await considerAutoTriggerPortray(turn);
+    await considerAutoTriggerPortray(turn, opts);
 }
 
-async function flushPortrayAutoTrigger() {
+export async function flushPortrayAutoTrigger() {
     const { flushPendingAutoPortray } = await import('./portray.js');
     await flushPendingAutoPortray();
+}
+
+function visibleAssistantText(text) {
+    const raw = typeof text === 'string' ? text : '';
+    return stripMemoryBlock(splitPortraySignal(raw).visible);
 }
 
 export async function buildSystemContent(settings) {
@@ -90,8 +96,9 @@ export async function buildSystemContent(settings) {
 
     const memoryAIInstr = buildMemoryAIInstructions(settings).trim();
     const toolsBlock = buildToolCallsSystemBlock().trim();
+    const portraySignalBlock = buildPortraySignalBlock(settings).trim();
 
-    const modules = [memoryAIInstr, toolsBlock].filter(Boolean);
+    const modules = [memoryAIInstr, toolsBlock, portraySignalBlock].filter(Boolean);
     if (modules.length > 0) {
         parts.push(`\n\n<modules>\n${modules.join('\n\n')}\n</modules>`);
     }
@@ -742,7 +749,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
 
         if (streamContentEl) {
             let procReasoning = reasoning || '';
-            let procText = stripMemoryBlock(text);
+            let procText = visibleAssistantText(text);
             
             let tcIndex = 0;
             if (procReasoning) {
@@ -782,7 +789,6 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
         if (addUserMsg && userText) {
             const msgObj = addTurn(conversation, 'user', userText);
             appendMsgEl(msgObj);
-            await notePortrayAutoTrigger(msgObj);
         }
 
         const fullMessages = await assembleMessages(conversation, settings, userText || null);
@@ -806,7 +812,8 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
             toastr.warning('⚠ Generation failed: AI returned an empty response.', EXT_DISPLAY, { timeOut: 10000 });
         }
 
-        if (result !== null && settings.toolsEnabled && getEnabledTools().length > 0) {
+        if (result !== null && !splitPortraySignal(result.text || '').triggered
+            && settings.toolsEnabled && getEnabledTools().length > 0) {
             const maxRounds = settings.toolsMaxRounds ?? 5;
             let roundText = result.text || '';
             let roundReasoning = result.reasoning;
@@ -824,7 +831,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
                 }
                 
                 let procReasoning = combinedReasoning;
-                let procText = stripMemoryBlock(combinedText);
+                let procText = visibleAssistantText(combinedText);
                 let tcIndex = 0;
                 
                 if (procReasoning) {
@@ -888,7 +895,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
                     _updateLiveUI();
                 }
 
-                extraHistory.push({ role: 'assistant', content: stripMemoryBlock(roundText) });
+                extraHistory.push({ role: 'assistant', content: visibleAssistantText(roundText) });
                 const toolResultsText = roundEntries.map(e =>
                     `<tool_result name="${e.name}" status="${e.status}">\n${typeof e.result === 'string' ? e.result : JSON.stringify(e.result, null, 2)}\n</tool_result>`
                 ).join("\n");
@@ -939,8 +946,9 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
         if (result === null) {
             if (streamMsgId && isStreaming && streamAccumText) {
                 const msg = conversation.messages.find(m => m.id === streamMsgId);
-                if (msg) { msg.content = streamAccumText; msg.reasoning = streamAccumReasoning || null; saveConversation(); }
-                if (streamContentEl) { streamContentEl.innerHTML = renderMarkdown(streamAccumText); postProcessHTMLBlocks(streamContentEl); }
+                const visible = visibleAssistantText(streamAccumText);
+                if (msg) { msg.content = visible; msg.reasoning = streamAccumReasoning || null; saveConversation(); }
+                if (streamContentEl) { streamContentEl.innerHTML = renderMarkdown(visible); postProcessHTMLBlocks(streamContentEl); }
             } else if (streamMsgId) {
                 const idx = conversation.messages.findIndex(m => m.id === streamMsgId);
                 if (idx >= 0 && !conversation.messages[idx].content) {
@@ -953,9 +961,10 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
         }
 
         const { text: rawFullText, reasoning: fullReasoning } = result;
-        const rawNormalized = normalizeCharNamesInBlock(rawFullText); 
+        const rawNormalized = normalizeCharNamesInBlock(rawFullText);
+        const { triggered } = splitPortraySignal(rawNormalized);
         processMemoryUpdates(rawNormalized, streamMsgId);
-        const fullText = stripMemoryBlock(rawNormalized);
+        const fullText = visibleAssistantText(rawNormalized);
 
         const savedToolCalls = state.activeToolCalls.length ? sanitizeToolCallsForSave(JSON.parse(JSON.stringify(state.activeToolCalls))) : undefined;
 
@@ -983,7 +992,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
             appendMsgEl(newMsg);
             completedAssistant = newMsg;
         }
-        if (completedAssistant) await notePortrayAutoTrigger(completedAssistant);
+        if (completedAssistant) await notePortrayAutoTrigger(completedAssistant, { triggered });
 
         _refreshSwipeBars(conversation);
         state.activeToolCalls = [];
@@ -1121,7 +1130,7 @@ export async function runContinue(conversation, targetMsgId) {
 
         const { text: rawContinuation, isMaxTokens } = result;
         processMemoryUpdates(rawContinuation, targetMsgId);
-        const continuation = stripMemoryBlock(rawContinuation);
+        const continuation = visibleAssistantText(rawContinuation);
         const combined = _joinContinuation(originalContent, continuation);
         
         if (isMaxTokens) {

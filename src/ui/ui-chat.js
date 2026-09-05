@@ -7,6 +7,7 @@ import { getCharInfo } from '../utils/util-st.js';
 
 import { normalizeCharNamesInBlock } from '../utils/util-text.js';
 import { stripMemoryBlock } from '../features/feature-memory.js';
+import { splitPortraySignal } from '../portray-signal.js';
 import { parseToolCallsFromText } from '../features/feature-tools-engine.js';
 import { postProcessToolCalls } from '../features/feature-tools-ui.js';
 
@@ -411,7 +412,7 @@ export function _renderMsgBodyContent(msgEl, msg) {
     const settings = getSettings();
     msgEl.querySelectorAll('.iv-tool-call-item').forEach(c => c.remove());
 
-    const cleanContent = stripMemoryBlock(msg.content);
+    const cleanContent = stripMemoryBlock(splitPortraySignal(msg.content).visible);
     let displayText = cleanContent;
     let reasoning = msg.reasoning !== undefined ? (msg.reasoning || null) : null;
 
@@ -756,7 +757,7 @@ export async function _runSwipeRegen(conversation, msgId, wrapEl) {
         }
         if (streamContentEl) {
             let procReasoning = reasoning || '';
-            let procText = stripMemoryBlock(text);
+            let procText = stripMemoryBlock(splitPortraySignal(text).visible);
             let tcIndex = 0;
             
             if (procReasoning) {
@@ -806,7 +807,9 @@ export async function _runSwipeRegen(conversation, msgId, wrapEl) {
         }
 
         const { text: rawText, reasoning: fullReasoning } = result;
-        const fullText = normalizeCharNamesInBlock(rawText);
+        const rawNormalized = normalizeCharNamesInBlock(rawText);
+        const { visible, triggered } = splitPortraySignal(rawNormalized);
+        const fullText = stripMemoryBlock(visible);
 
         msgData.swipes[msgData.swipeIndex] = { content: fullText, reasoning: fullReasoning || null };
         msgData.content = fullText;
@@ -818,6 +821,7 @@ export async function _runSwipeRegen(conversation, msgId, wrapEl) {
 
         updateMsgCount(conversation);
         if (uiWdgMod) uiWdgMod.playCompletionSound();
+        if (triggered) await apiMod.notePortrayAutoTrigger(msgData, { triggered: true });
 
     } catch(err) {
         cleanupCursor();
@@ -834,6 +838,7 @@ export async function _runSwipeRegen(conversation, msgId, wrapEl) {
     } finally {
         state.generating = false;
         setGeneratingState(false);
+        if (apiMod) await apiMod.flushPortrayAutoTrigger();
     }
 }
 

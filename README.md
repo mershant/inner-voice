@@ -19,8 +19,9 @@ hide (issue #6), and portray (issues #7 / #8 / #13 / #17 / #18) are in. Portray 
 main-chat input as an action answering the present scene. Text already in the extension's
 think box is performed as that turn and does not become an exchange. By default the result
 lands in the main-chat input box;
-immediate send and auto-trigger are independent opt-in switches. Auto-trigger conclusions are
-judged semantically by the Inner Voice connection rather than matched against phrases.
+immediate send and auto-trigger are independent opt-in switches. When auto-trigger is on, the
+ordinary {{user}} reply also decides whether the completed exchange should portray, so a
+triggered exchange costs two model requests and an untriggered one costs one.
 Remaining product behavior — the drawer cleanup — lands in a later issue.
 
 ## Development
