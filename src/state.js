@@ -11,6 +11,7 @@ export const state = {
     searchWholeWord: false,
     searchHotkeyHandler: null,
     lastChatLen: -1,
+    currentSegmentAnchor: null,
     userScrolledUp: false,
     savedScrollTop: 0,
     abortController: null,

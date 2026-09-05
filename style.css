@@ -182,8 +182,12 @@
     padding: 6px 10px;
     background: var(--iv-toolbar-bg);
     border-bottom: var(--iv-border);
-    overflow: visible;
+    overflow: hidden;
     white-space: nowrap;
+}
+.iv-seg-nav {
+    display: flex; align-items: center; gap: 2px;
+    flex-shrink: 0;
 }
 @keyframes iv-panel-in {
     from { opacity: 0; transform: translateY(-6px) scale(0.98); }
@@ -265,6 +269,8 @@
     flex: 1; overflow-y: auto;
     padding: 10px 10px 4px;
     display: flex; flex-direction: column; gap: 2px;
+    /* The inner life reads on its own surface: never over the story. */
+    background: color-mix(in srgb, var(--iv-bg) 55%, rgba(0,0,0,0.55));
 }
 
 /* ── Empty State ─────────────────────────────────────────────── */
@@ -293,45 +299,114 @@
     font-family: var(--iv-font-mono); font-size: 10px;
 }
 
-/* ── Exchange hide ───────────────────────────────────────────── */
+/* ── Exchange segments ──────────────────────────────────────────
+   The inner conversation is one continuous scroll, segmented by
+   anchor markers: each exchange sits under a hairline rule that
+   names the main-chat message it happened under. Markers are the
+   jump handles — click to move between segments. The hide control
+   lives on the marker, where its exchange is. Past exchanges
+   present as closed: readable, never extendable. */
 
-.iv-exchange-bar {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 8px 10px 2px;
+.iv-segment {
+    position: relative;
+    scroll-margin-top: 6px;
 }
-.iv-exchange-hidden-label {
-    font-size: 10px;
+.iv-anchor {
+    position: relative;
+    display: flex; align-items: center; gap: 8px;
+    margin: 10px 0 3px;
+    padding: 4px 8px 4px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+/* The checkpoint rule: a hairline spanning the row, broken by the node. */
+.iv-anchor::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; top: 50%;
+    height: 1px;
+    background: rgba(255,255,255,0.15);
+    pointer-events: none;
+}
+.iv-anchor:hover::before { background: rgba(255,255,255,0.24); }
+.iv-segment:first-child .iv-anchor { margin-top: 2px; }
+.iv-anchor:hover { background: var(--iv-accent-bg); }
+.iv-anchor:focus { outline: none; }
+.iv-anchor:focus-visible {
+    outline: 1px solid var(--iv-accent-dim);
+    outline-offset: -1px;
+}
+.iv-anchor-mark {
+    flex-shrink: 0;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--iv-bg);
+    border: 1px solid var(--iv-accent-dim);
+    box-shadow: 0 0 0 1px var(--iv-bg);
+}
+.iv-anchor-label {
+    flex: 1; min-width: 0;
+    font-size: 10.5px; font-weight: 500;
     color: var(--iv-text-muted);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    letter-spacing: 0.01em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    transition: color 0.15s;
+    /* Keep the label readable over the rule. */
+    position: relative; z-index: 1;
+    background: var(--iv-bg);
+    border-radius: 3px;
+    padding: 0 4px;
+    margin-left: -2px;
+    margin-right: 2px;
 }
+.iv-anchor:hover .iv-anchor-label { color: var(--iv-text); }
+/* A whisper of a rule tying the marker to the exchange beneath it. */
+.iv-anchor::after {
+    content: '';
+    position: absolute;
+    left: 12px; bottom: -10px;
+    width: 1px; height: 8px;
+    background: linear-gradient(rgba(255,255,255,0.14), transparent);
+    pointer-events: none;
+}
+/* The hide control sits on the marker above its own exchange. */
 .iv-hide-toggle {
-    background: none;
+    position: relative; z-index: 1;
+    flex-shrink: 0;
+    background: var(--iv-bg);
     border: 1px solid rgba(255,255,255,0.12);
     color: var(--iv-text-muted);
     cursor: pointer;
     font-family: var(--iv-font);
-    font-size: 11px;
-    border-radius: 5px;
-    padding: 2px 8px;
-    height: 22px;
+    font-size: 10px;
+    font-weight: 600;
     line-height: 1;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border-radius: 4px;
+    padding: 3px 7px;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
 .iv-hide-toggle:hover:not(:disabled) {
     color: var(--iv-accent);
     background: var(--iv-accent-bg);
     border-color: var(--iv-accent-dim);
 }
+.iv-hide-toggle.active {
+    color: var(--iv-accent);
+    background: var(--iv-accent-bg);
+    border-color: var(--iv-accent-dim);
+}
 .iv-hide-toggle:disabled {
-    opacity: 0.45;
+    opacity: 0.4;
     cursor: default;
 }
-.iv-msg.iv-exchange-hidden {
-    opacity: 0.62;
-}
+/* Past segments read quieter; hidden ones quieter still. */
+.iv-msg.iv-segment-closed { opacity: 0.85; }
+.iv-segment.iv-segment-hidden .iv-msg { opacity: 0.60; }
+.iv-segment.iv-segment-hidden .iv-msg .iv-msg-actions { display: none; }
 
 /* ── Single Message ──────────────────────────────────────────── */
 
@@ -503,8 +578,9 @@
 /* ── Actions Bar ─────────────────────────────────────────────── */
 
 .iv-actions-bar {
-    flex-shrink: 0; display: flex; align-items: center; gap: 6px;
-    padding: 5px 10px; background: var(--iv-toolbar-bg); border-top: var(--iv-border);
+    flex-shrink: 0; display: flex; align-items: center; gap: 5px;
+    padding: 6px 10px; background: var(--iv-toolbar-bg); border-top: var(--iv-border);
+    flex-wrap: wrap; white-space: nowrap;
 }
 .iv-action-btn {
     display: flex; align-items: center; gap: 5px; padding: 3px 9px;
@@ -512,6 +588,7 @@
     background: none; border: var(--iv-border); color: var(--iv-text-muted);
     font-family: var(--iv-font); transition: all 0.15s;
     line-height: 1; overflow: visible; box-sizing: border-box;
+    flex-shrink: 0;
 }
 .iv-action-btn.active {
     color: var(--iv-accent);
@@ -521,17 +598,41 @@
 .iv-action-btn:hover { color: var(--iv-accent); background: var(--iv-accent-bg); border-color: var(--iv-accent-dim); }
 .iv-action-btn:disabled { opacity: 0.3; cursor: default; pointer-events: none; }
 .iv-action-btn svg { overflow: visible; flex-shrink: 0; }
+.iv-action-sep {
+    width: 1px; height: 18px; background: rgba(255,255,255,0.08);
+    flex-shrink: 0; margin: 0 2px;
+}
 .iv-portray-controls {
     display: flex; align-items: center; gap: 4px; min-width: 0;
 }
 .iv-portray-select {
-    max-width: 88px; height: 22px; padding: 0 4px;
+    max-width: 76px; min-width: 0; height: 22px; padding: 0 3px;
     border-radius: 5px; font-size: 10px; font-family: var(--iv-font);
     background: var(--iv-input-bg); color: var(--iv-text-muted);
     border: var(--iv-border); outline: none;
+    text-overflow: ellipsis;
 }
 .iv-portray-select:focus { color: var(--iv-text); border-color: var(--iv-accent-dim); }
-.iv-flex-grow { flex: 1; }
+/* The one press that matters: portray carries the accent. */
+.iv-portray-btn {
+    color: var(--iv-accent);
+    border-color: var(--iv-accent-dim);
+    background: var(--iv-accent-bg);
+}
+.iv-portray-btn:hover {
+    color: #fff;
+    background: var(--iv-accent);
+    border-color: var(--iv-accent);
+    box-shadow: 0 0 10px var(--iv-accent-dim);
+}
+.iv-flex-grow { flex: 1; min-width: 4px; }
+/* Counts tuck into one quiet meta cluster; they describe, never compete. */
+.iv-actions-meta {
+    display: flex; align-items: center; gap: 8px;
+    flex-shrink: 0; min-width: 0;
+    font-variant-numeric: tabular-nums;
+}
+.iv-actions-meta:empty { display: none; }
 .iv-msg-count { font-size: 10px; color: var(--iv-text-muted); }
 
 /* ── Input Row ───────────────────────────────────────────────── */
@@ -895,10 +996,11 @@
     border: 1px solid rgba(255,255,255,0.1); background: transparent;
 }
 .iv-theme-var-input {
-    flex: 1; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.1);
+    flex: 1; min-width: 0; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.1);
     border-radius: 5px; color: var(--SmartThemeBodyColorText, #e2e2e6);
     font-size: 11px; font-family: var(--monospaceFontFamily, monospace);
     padding: 4px 8px; outline: none; transition: border-color 0.15s;
+    text-overflow: ellipsis;
 }
 .iv-theme-var-input:focus { border-color: rgba(124,109,250,0.5); }
 .iv-theme-var-reset {
@@ -995,7 +1097,7 @@
     border-top: 1px solid rgba(255, 255, 255, 0.03) !important;
 }
 
-.iv-token-count { font-size: 10px; color: var(--iv-accent); opacity: 0.8; margin-right: 6px; }
+.iv-token-count { font-size: 10px; color: var(--iv-accent); opacity: 0.8; }
 
 /* ── Chat Search Bar ─────────────────────────────────────────── */
 
@@ -2531,6 +2633,9 @@ details.iv-cl-entry[open] .iv-cl-entry-summary::before { transform: rotate(90deg
     user-select: none;
     pointer-events: none;
     line-height: 1;
+    /* Center under the 28px avatar without widening its column. */
+    width: 28px;
+    align-self: center;
 }
 
 /* ── Swipes ───────────────────────────────────────────────────── */

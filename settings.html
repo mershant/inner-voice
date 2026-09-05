@@ -7,9 +7,9 @@
         <div class="inline-drawer-content" style="padding-top:10px;">
             <div class="flex-container flexFlowColumn gap-1">
 
-                <!-- ── General ─────────────────────────────────── -->
+                <!-- ── Window ─────────────────────────────────── -->
                 <div class="iv-settings-flat-section">
-                    <div class="iv-settings-flat-title"><i class="fa-solid fa-sliders"></i> General</div>
+                    <div class="iv-settings-flat-title"><i class="fa-solid fa-sliders"></i> Window</div>
                     <label class="checkbox_label">
                         <input id="iv-enabled" type="checkbox" />
                         <span>Enable Inner Voice</span>
@@ -55,6 +55,45 @@
                     <input id="iv-exchange-depth" type="number" class="text_pole" min="0" max="50" placeholder="1" />
                 </div>
 
+                <!-- ── Inner connection ────────────────────────── -->
+                <div class="inline-drawer iv-settings-drawer">
+                    <div class="inline-drawer-toggle inline-drawer-header">
+                        <b><i class="fa-solid fa-plug" style="margin-right:6px"></i>Inner connection</b>
+                        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+                    </div>
+                    <div class="inline-drawer-content">
+                        <select id="iv-conn-source" class="text_pole">
+                            <option value="default">Use Currently Selected API</option>
+                            <option value="profile">Use Specific Profile</option>
+                            <option value="custom">Custom Endpoint</option>
+                        </select>
+                        <div id="iv-profile-group" style="display:none; margin-top:8px">
+                            <label style="font-size:11px; color:#888; display:block; margin-bottom:4px">Connection Profile</label>
+                            <select id="iv-conn-profile" class="text_pole">
+                                <option value="">-- Select Profile --</option>
+                            </select>
+                        </div>
+                        <div id="iv-custom-profile-group" style="display:none; margin-top:8px">
+                            <label style="font-size:11px; color:#888; display:block; margin-bottom:4px">Endpoint URL</label>
+                            <input id="iv-custom-url" type="text" class="text_pole" placeholder="http://localhost:5000/v1" />
+                            <label style="font-size:11px; color:#888; display:block; margin-top:6px; margin-bottom:4px">API Key (optional)</label>
+                            <input id="iv-custom-key" type="password" class="text_pole" placeholder="sk-..." />
+                            <label style="font-size:11px; color:#888; display:block; margin-top:6px; margin-bottom:4px">Model Name</label>
+                            <input id="iv-custom-model" type="text" class="text_pole" placeholder="e.g. llama3" />
+                        </div>
+                        <label style="margin-top:10px; font-size:11px; color:#888; display:block; margin-bottom:4px">Max Response Tokens</label>
+                        <input id="iv-max-tokens" type="number" class="text_pole" placeholder="2048" min="64" max="32768" />
+                        <div style="margin-top:10px">
+                            <label style="font-size:11px; color:#888; display:block; margin-bottom:6px">Streaming Mode</label>
+                            <div style="display:flex;gap:4px">
+                                <button class="iv-action-btn iv-stream-btn" data-stream="auto" id="iv-st-stream-auto">Auto</button>
+                                <button class="iv-action-btn iv-stream-btn" data-stream="on" id="iv-st-stream-on">Force On</button>
+                                <button class="iv-action-btn iv-stream-btn" data-stream="off" id="iv-st-stream-off">Force Off</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- ── Portray form ────────────────────────────── -->
                 <div class="iv-settings-flat-section">
                     <div class="iv-settings-flat-title"><i class="fa-solid fa-pen"></i> Portray form</div>
@@ -63,8 +102,8 @@
                     </label>
                     <label style="font-size:11px; display:block; margin-bottom:4px">Style</label>
                     <select id="iv-portray-style" class="text_pole">
-                        <option value="rp">RP-style</option>
-                        <option value="summary">Written summary</option>
+                        <option value="rp">RP-style (actual dialogue and action)</option>
+                        <option value="summary">Written summary (the feeling, no quoted speech)</option>
                     </select>
                     <label style="font-size:11px; display:block; margin:8px 0 4px">Person</label>
                     <select id="iv-portray-person" class="text_pole">
@@ -72,7 +111,12 @@
                         <option value="second">Second person</option>
                         <option value="third">Third person</option>
                     </select>
-                    <label class="checkbox_label" style="margin-top:10px">
+                </div>
+
+                <!-- ── Portray trigger ─────────────────────────── -->
+                <div class="iv-settings-flat-section">
+                    <div class="iv-settings-flat-title"><i class="fa-solid fa-bolt"></i> Portray trigger</div>
+                    <label class="checkbox_label">
                         <input id="iv-portray-immediate-send" type="checkbox" />
                         <span>Send portray immediately</span>
                     </label>
@@ -81,7 +125,7 @@
                         <span>Auto-trigger portray when a thought concludes</span>
                     </label>
                     <label style="font-size:11px; color:#888; display:block; margin-top:4px">
-                        Auto-trigger still only drafts into the input box unless send-immediately is also on.
+                        Firing and landing are independent: auto-trigger alone still only drafts into the input box. Both on is the hands-off mode.
                     </label>
                 </div>
 
@@ -99,7 +143,7 @@
                         <div>
                             <label class="checkbox_label">
                                 <input id="iv-search-hotkey-enabled" type="checkbox" />
-                                <span>Chat Search</span>
+                                <span>Search Thoughts</span>
                             </label>
                             <input id="iv-search-hotkey" type="text" class="text_pole" placeholder="e.g. Ctrl+F" style="margin-top:5px" />
                         </div>
@@ -157,49 +201,10 @@
                     </div>
                 </div>
 
-                <!-- ── Connection ──────────────────────────────── -->
+                <!-- ── Inner memory payload ────────────────────── -->
                 <div class="inline-drawer iv-settings-drawer">
                     <div class="inline-drawer-toggle inline-drawer-header">
-                        <b><i class="fa-solid fa-plug" style="margin-right:6px"></i>Connection</b>
-                        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-                    </div>
-                    <div class="inline-drawer-content">
-                        <select id="iv-conn-source" class="text_pole">
-                            <option value="default">Use Currently Selected API</option>
-                            <option value="profile">Use Specific Profile</option>
-                            <option value="custom">Custom Endpoint</option>
-                        </select>
-                        <div id="iv-profile-group" style="display:none; margin-top:8px">
-                            <label style="font-size:11px; color:#888; display:block; margin-bottom:4px">Connection Profile</label>
-                            <select id="iv-conn-profile" class="text_pole">
-                                <option value="">-- Select Profile --</option>
-                            </select>
-                        </div>
-                        <div id="iv-custom-profile-group" style="display:none; margin-top:8px">
-                            <label style="font-size:11px; color:#888; display:block; margin-bottom:4px">Endpoint URL</label>
-                            <input id="iv-custom-url" type="text" class="text_pole" placeholder="http://localhost:5000/v1" />
-                            <label style="font-size:11px; color:#888; display:block; margin-top:6px; margin-bottom:4px">API Key (optional)</label>
-                            <input id="iv-custom-key" type="password" class="text_pole" placeholder="sk-..." />
-                            <label style="font-size:11px; color:#888; display:block; margin-top:6px; margin-bottom:4px">Model Name</label>
-                            <input id="iv-custom-model" type="text" class="text_pole" placeholder="e.g. llama3" />
-                        </div>
-                        <label style="margin-top:10px; font-size:11px; color:#888; display:block; margin-bottom:4px">Max Response Tokens</label>
-                        <input id="iv-max-tokens" type="number" class="text_pole" placeholder="2048" min="64" max="32768" />
-                        <div style="margin-top:10px">
-                            <label style="font-size:11px; color:#888; display:block; margin-bottom:6px">Streaming Mode</label>
-                            <div style="display:flex;gap:4px">
-                                <button class="iv-action-btn iv-stream-btn" data-stream="auto" id="iv-st-stream-auto">Auto</button>
-                                <button class="iv-action-btn iv-stream-btn" data-stream="on" id="iv-st-stream-on">Force On</button>
-                                <button class="iv-action-btn iv-stream-btn" data-stream="off" id="iv-st-stream-off">Force Off</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ── Context Payload ────────────────────────── -->
-                <div class="inline-drawer iv-settings-drawer">
-                    <div class="inline-drawer-toggle inline-drawer-header">
-                        <b><i class="fa-solid fa-box-archive" style="margin-right:6px"></i>Context Payload</b>
+                        <b><i class="fa-solid fa-box-archive" style="margin-right:6px"></i>Inner memory payload</b>
                         <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
                     </div>
                     <div class="inline-drawer-content">
@@ -210,7 +215,7 @@
                             <label class="checkbox_label"><input id="iv-include-hidden-msgs" type="checkbox" /><span>Include hidden messages in context</span></label>
                             <label class="checkbox_label"><input id="iv-include-alt-swipes" type="checkbox" /><span>Include alternate swipes of the last message</span></label>
                         </div>
-                        <label style="margin-top:10px; font-size:11px; color:#888; display:block; margin-bottom:4px">Conversation History Depth Limit</label>
+                        <label style="margin-top:10px; font-size:11px; color:#888; display:block; margin-bottom:4px">Main Chat Context Depth Limit</label>
                         <input id="iv-history-limit" type="number" class="text_pole" placeholder="50" min="1" max="500" />
                         <div style="margin-top:14px; border-top:1px solid rgba(255,255,255,.06); padding-top:12px">
                             <b style="font-size:12px">Response String Trimming</b>
@@ -287,16 +292,16 @@
                     <div class="inline-drawer-content" id="iv-theme-section"></div>
                 </div>
 
-                <!-- ── Memory ─────────────────────────────────── -->
+                <!-- ── Persistent memory ───────────────────────── -->
                 <div class="iv-settings-flat-section">
-                    <div class="iv-settings-flat-title"><i class="fa-solid fa-brain"></i> Persistent Memory</div>
+                    <div class="iv-settings-flat-title"><i class="fa-solid fa-brain"></i> Persistent memory</div>
                     <label class="checkbox_label">
                         <input id="iv-memory-enabled" type="checkbox" />
                         <span>Enable persistent memory</span>
                     </label>
                     <label class="checkbox_label" style="margin-top:6px">
                         <input id="iv-memory-inject" type="checkbox" />
-                        <span>Inject memory into AI context</span>
+                        <span>Inject memory into the Voice's context</span>
                     </label>
                     <div style="margin-top:12px; border-top:1px solid rgba(255,255,255,.06); padding-top:10px">
                         <button id="iv-open-memory-settings" class="menu_button interactable" style="width:100%">
@@ -310,7 +315,7 @@
                     <div class="iv-settings-flat-title"><i class="fa-solid fa-screwdriver-wrench"></i> Tool Calls</div>
                     <label class="checkbox_label">
                         <input id="iv-tools-enabled" type="checkbox" />
-                        <span>Enable tool calls for the Inner Voice</span>
+                        <span>Let the Inner Voice use tools</span>
                     </label>
                     <div style="margin-top:8px">
                         <button id="iv-open-tools-settings" class="menu_button interactable" style="width:100%">

@@ -32,7 +32,7 @@
       <div class="iv-sp-tab-pane" id="iv-sp-pane-global">
 
         <div class="iv-sp-group">
-          <div class="iv-sp-group-title"><i class="fa-solid fa-sliders"></i> General</div>
+          <div class="iv-sp-group-title"><i class="fa-solid fa-sliders"></i> Window</div>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-enabled"><span>Enable Inner Voice</span></label>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-icon-persistent"><span>Always show floating icon</span></label>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-wobble-window"><span>Wobbly window drag <span class="iv-sp-hint">(jelly physics on move)</span></span></label>
@@ -55,7 +55,7 @@
             <input type="text" class="iv-sp-input" id="iv-sp-hotkey" placeholder="Alt+Shift+C" style="flex:1">
           </div>
           <div class="iv-sp-row" style="gap:8px;margin-bottom:6px">
-            <label class="iv-sp-check" style="flex:0 0 120px"><input type="checkbox" id="iv-sp-search-hotkey-enabled"><span>Chat Search</span></label>
+            <label class="iv-sp-check" style="flex:0 0 120px"><input type="checkbox" id="iv-sp-search-hotkey-enabled"><span>Search Thoughts</span></label>
             <input type="text" class="iv-sp-input" id="iv-sp-search-hotkey" placeholder="Ctrl+F" style="flex:1">
           </div>
           <div class="iv-sp-row" style="gap:8px">
@@ -99,7 +99,7 @@
         </div>
 
         <div class="iv-sp-group">
-          <div class="iv-sp-group-title"><i class="fa-solid fa-plug"></i> Connection</div>
+          <div class="iv-sp-group-title"><i class="fa-solid fa-plug"></i> Inner connection</div>
           <select class="iv-sp-select" id="iv-sp-conn-source">
             <option value="default">Use Current API</option>
             <option value="profile">Use Specific Profile</option>
@@ -154,8 +154,8 @@
           <div class="iv-sp-field">
             <label class="iv-sp-label">Style</label>
             <select class="iv-sp-input" id="iv-sp-portray-style">
-              <option value="rp">RP-style</option>
-              <option value="summary">Written summary</option>
+              <option value="rp">RP-style (actual dialogue and action)</option>
+              <option value="summary">Written summary (the feeling, no quoted speech)</option>
             </select>
           </div>
           <div class="iv-sp-field">
@@ -166,27 +166,31 @@
               <option value="third">Third person</option>
             </select>
           </div>
-          <label class="iv-sp-check" style="margin-top:8px"><input type="checkbox" id="iv-sp-portray-immediate-send"><span>Send portray immediately</span></label>
-          <label class="iv-sp-check" style="margin-top:4px"><input type="checkbox" id="iv-sp-portray-auto-trigger"><span>Auto-trigger portray when a thought concludes</span></label>
-          <div class="iv-sp-hint" style="margin-top:4px">Auto-trigger still only drafts into the input box unless send-immediately is also on.</div>
         </div>
 
         <div class="iv-sp-group">
-          <div class="iv-sp-group-title"><i class="fa-solid fa-box-archive"></i> Context Payload</div>
+          <div class="iv-sp-group-title"><i class="fa-solid fa-bolt"></i> Portray trigger</div>
+          <label class="iv-sp-check" style="margin-top:8px"><input type="checkbox" id="iv-sp-portray-immediate-send"><span>Send portray immediately</span></label>
+          <label class="iv-sp-check" style="margin-top:4px"><input type="checkbox" id="iv-sp-portray-auto-trigger"><span>Auto-trigger portray when a thought concludes</span></label>
+          <div class="iv-sp-hint" style="margin-top:4px">Firing and landing are independent: auto-trigger alone still only drafts into the input box. Both on is the hands-off mode.</div>
+        </div>
+
+        <div class="iv-sp-group">
+          <div class="iv-sp-group-title"><i class="fa-solid fa-box-archive"></i> Inner memory payload</div>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-include-sysprompt"><span>Include ST System Prompt</span></label>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-include-persona"><span>Include User Persona</span></label>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-auto-expand-macros"><span>Auto-expand macros in user input</span></label>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-include-hidden-msgs"><span>Include hidden messages in context</span></label>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-include-alt-swipes"><span>Include alternate swipes of the last message</span></label>
           <div class="iv-sp-field" style="margin-top:8px">
-            <label class="iv-sp-label">Main Chat Depth</label>
+            <label class="iv-sp-label">Main Chat Context Depth</label>
             <div class="iv-sp-row">
               <input type="range" class="iv-slider" id="iv-sp-depth-slider" min="0" max="100" style="flex:1">
               <span class="iv-depth-val" id="iv-sp-depth-val" style="cursor:default">15</span>
             </div>
           </div>
           <div class="iv-sp-field">
-            <label class="iv-sp-label">Conversation History Limit</label>
+            <label class="iv-sp-label">Main Chat History Limit</label>
             <input type="number" class="iv-sp-input" id="iv-sp-history-limit" placeholder="50" min="1" max="500">
           </div>
           <div class="iv-sp-field">
@@ -330,7 +334,7 @@
         </div>
 
         <div class="iv-sp-group">
-          <div class="iv-sp-group-title"><i class="fa-solid fa-box-archive"></i> Context Payload</div>
+          <div class="iv-sp-group-title"><i class="fa-solid fa-box-archive"></i> Inner memory payload</div>
           <div class="iv-sp-ov-check-row">
             <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-include-sysprompt"><span>Include ST System Prompt</span></label>
             <button class="iv-sp-ov-clear" data-ovkey="includeSystemPrompt" title="Clear override" disabled>↺</button>
@@ -351,7 +355,7 @@
               </div>
           </div>
           <div class="iv-sp-field" style="margin-top:8px">
-            <label class="iv-sp-ov-label iv-sp-label" data-ovkey="contextDepth">Main Chat Depth</label>
+            <label class="iv-sp-ov-label iv-sp-label" data-ovkey="contextDepth">Main Chat Context Depth</label>
             <div class="iv-sp-ov-wrap">
               <input type="range" class="iv-slider" id="iv-sp-ov-depth-slider" min="0" max="100" style="flex:1">
               <span class="iv-depth-val" id="iv-sp-ov-depth-val" style="cursor:default">15</span>
@@ -390,7 +394,7 @@
       <!-- ══ MEMORY TAB ══ -->
       <div class="iv-sp-tab-pane" id="iv-sp-pane-memory" style="display:none">
         <div class="iv-sp-group">
-          <div class="iv-sp-group-title"><i class="fa-solid fa-brain"></i> Memory Settings</div>
+          <div class="iv-sp-group-title"><i class="fa-solid fa-brain"></i> Persistent memory</div>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-memory-enabled"><span>Enable persistent memory</span></label>
           <label class="iv-sp-check" style="margin-top:4px"><input type="checkbox" id="iv-sp-memory-notify"><span>Show toast notification when memory is saved</span></label>
           
@@ -418,7 +422,7 @@
       <div class="iv-sp-tab-pane" id="iv-sp-pane-tools" style="display:none">
         <div class="iv-sp-group">
           <div class="iv-sp-group-title"><i class="fa-solid fa-screwdriver-wrench"></i> Tool Calls</div>
-          <label class="iv-sp-check"><input type="checkbox" id="iv-sp-tools-enabled"><span>Enable tool calls for the Inner Voice</span></label>
+          <label class="iv-sp-check"><input type="checkbox" id="iv-sp-tools-enabled"><span>Let the Inner Voice use tools</span></label>
           <div class="iv-sp-field" style="margin-top:8px">
             <label class="iv-sp-label">Max tool call rounds per generation</label>
             <input type="number" class="iv-sp-input" id="iv-sp-tools-max-rounds" min="1" max="10" placeholder="5" style="width:64px">

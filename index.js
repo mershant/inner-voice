@@ -449,7 +449,7 @@ const I = {
         minus: `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
         x: `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
         plus: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
-        bot: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7" /><ellipse cx="12" cy="12" rx="11" ry="3" transform="rotate(-25 12 12)" /><circle cx="21.5" cy="7.5" r="1.5" fill="currentColor" stroke="none" /></svg>`,
+        bot: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><g transform="translate(12 13.2) scale(1.32) translate(-12 -13.2)"><path d="M3.6 12.2 c0-2.4 1.1-4.7 2.9-6.3 q-1.5 2.2-1.4 4.7 c 1.8-.2 3 1 3 2.7 a2.7 2.7 0 0 1-2.8 2.8 q-1.7 0-1.7-1.9 Z"/><path d="M14 12.2 c0-2.4 1.1-4.7 2.9-6.3 q-1.5 2.2-1.4 4.7 c 1.8-.2 3 1 3 2.7 a2.7 2.7 0 0 1-2.8 2.8 q-1.7 0-1.7-1.9 Z"/></g></svg>`,
         user: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
         stop: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>`,
         opacity: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 0 20z" fill="currentColor"/></svg>`,
@@ -462,6 +462,8 @@ const I = {
         continueArrow: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>`,
         chevronLeft: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>`,
         chevronRight: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>`,
+        chevronUp: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="18 15 12 9 6 15"/></svg>`,
+        chevronDown: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`,
     };
 
 const QP_ICON_POOL = [
@@ -486,6 +488,7 @@ const state = {
     searchWholeWord: false,
     searchHotkeyHandler: null,
     lastChatLen: -1,
+    currentSegmentAnchor: null,
     userScrolledUp: false,
     savedScrollTop: 0,
     abortController: null,
@@ -3778,6 +3781,53 @@ Promise.resolve().then(function () { return uiWidgets; }).then(m => uiWdgMod = m
 let uiSetMod = null;
 Promise.resolve().then(function () { return uiSettings; }).then(m => uiSetMod = m);
 
+// ─── Segments ────────────────────────────────────────────────────────────────
+// The window renders one continuous inner conversation, segmented by anchor:
+// every exchange presents under a marker naming the main-chat message it
+// happened under. These helpers are pure conversation → view-model mapping so
+// the designed rendering stays thin.
+
+function segmentTurns(conversation) {
+    return getExchanges(conversation);
+}
+
+// A human label for an exchange's anchor: who spoke in the main chat and the
+// opening words of that message. Falls back when the anchor is unanchored
+// (pre-story) or no longer resolvable (main chat has moved on).
+function segmentAnchorLabel(anchorIndex) {
+    if (anchorIndex === null || anchorIndex === undefined) return 'Unanchored';
+    let chat = [];
+    try { chat = SillyTavern.getContext().chat || []; } catch (_) {}
+    const msg = chat[anchorIndex];
+    if (!msg) return `Main chat · message ${anchorIndex + 1}`;
+    const who = msg.is_user ? 'You' : (msg.name || 'Char');
+    const text = String(msg.mes || '').replace(/\s+/g, ' ').trim();
+    if (!text) return `${who} · (no text)`;
+    const excerpt = text.length > 28 ? `${text.slice(0, 28).trimEnd()}…` : text;
+    return `${who} · ${excerpt}`;
+}
+
+// An exchange is closed once its anchor is no longer the live edge — the
+// story has moved on, so the segment reads but never grows.
+function isSegmentClosed(conversation, anchorIndex) {
+    const anchor = anchorIndex === undefined ? null : anchorIndex;
+    return anchor !== getLiveEdgeIndex();
+}
+
+function nearestSegmentAbove(conversation, anchorIndex) {
+    const segments = segmentTurns(conversation);
+    const idx = segments.findIndex(s => s.anchorIndex === anchorIndex);
+    if (idx <= 0) return null;
+    return segments[idx - 1].anchorIndex;
+}
+
+function nearestSegmentBelow(conversation, anchorIndex) {
+    const segments = segmentTurns(conversation);
+    const idx = segments.findIndex(s => s.anchorIndex === anchorIndex);
+    if (idx === -1 || idx === segments.length - 1) return null;
+    return segments[idx + 1].anchorIndex;
+}
+
 // ─── Text Render and Markdown ────────────────────────────────────────────────
 
 function renderMarkdown(text) {
@@ -4196,6 +4246,8 @@ function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
     wrap.dataset.id = msg.id;
     wrap.dataset.anchorIndex = encodeAnchor(msg.anchorIndex);
     if (isExchangeHidden(getConversation(), msg.anchorIndex)) wrap.classList.add('iv-exchange-hidden');
+    const closed = isSegmentClosed(getConversation(), msg.anchorIndex);
+    if (closed) wrap.classList.add('iv-segment-closed');
 
     const avatarWrap = document.createElement('div');
     avatarWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:2px;flex-shrink:0';
@@ -4239,7 +4291,9 @@ function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
     actions.appendChild(makeBtn(I.refresh, 'Regen', '', () => onRegen(wrap, msg)));
     actions.appendChild(makeBtn(I.trash, 'Delete', 'iv-msg-btn-danger', () => onDelete(wrap, msg)));
 
-    if (!isUser) {
+    // Continue only exists on the live edge: a turn whose anchor has fallen
+    // behind the story presents as closed — past exchanges never extend.
+    if (!isUser && !closed) {
         const continueBtn = makeBtn(I.continueArrow, 'Continue response', 'iv-msg-btn-continue', () => {
             if (apiMod) apiMod.runContinue(getConversation(), msg.id);
         });
@@ -4542,6 +4596,7 @@ function _refreshSwipeBars(conversation) {
     if (!lastId) return;
     const lastEl = c.querySelector(`.iv-msg[data-id="${lastId}"]`);
     if (!lastEl) return;
+    if (lastEl.classList.contains('iv-segment-closed')) return;
     const swipeBar = lastEl.querySelector('.iv-swipe-bar');
     if (!swipeBar) return;
     updateSwipeBar(lastEl, conversation, lastId);
@@ -4553,7 +4608,8 @@ function _refreshContinueBtns() {
     if (!c) return;
     c.querySelectorAll('.iv-msg-last-assistant').forEach(el => el.classList.remove('iv-msg-last-assistant'));
     if (state.generating) return;
-    const all = [...c.querySelectorAll('.iv-msg-assistant')];
+    // Only live-edge turns are extendable; closed segments get no Continue.
+    const all = [...c.querySelectorAll('.iv-msg-assistant:not(.iv-segment-closed)')];
     if (all.length) all[all.length - 1].classList.add('iv-msg-last-assistant');
 }
 
@@ -4796,41 +4852,51 @@ function decodeAnchor(value) {
     return Number.isFinite(n) ? n : null;
 }
 
-function paintHideToggle(bar, conversation, anchorIndex) {
+function paintHideControl(segment, conversation, anchorIndex) {
     const hidden = isExchangeHidden(conversation, anchorIndex);
     const locked = isAnchorHiddenInMainChat(anchorIndex) && !isExchangeManuallyHidden(conversation, anchorIndex);
-    bar.classList.toggle('iv-exchange-hidden', hidden);
-    const label = bar.querySelector('.iv-exchange-hidden-label');
-    if (label) label.style.display = hidden ? '' : 'none';
-    const btn = bar.querySelector('.iv-hide-toggle');
-    if (btn) {
-        btn.textContent = hidden ? 'Show' : 'Hide';
-        btn.disabled = locked;
-        btn.title = locked
-            ? 'Hidden because its main-chat message is hidden'
-            : hidden ? 'Show this exchange' : 'Hide this exchange';
-    }
+    segment.classList.toggle('iv-segment-hidden', hidden);
+    const btn = segment.querySelector('.iv-hide-toggle');
+    if (!btn) return;
+    btn.textContent = hidden ? 'Show' : 'Hide';
+    btn.classList.toggle('active', hidden);
+    btn.disabled = locked;
+    btn.title = locked
+        ? 'Hidden because its main-chat message is hidden'
+        : hidden ? 'Show this exchange' : 'Hide this exchange';
 }
 
 function lastRenderedAnchor(container) {
-    const bars = container.querySelectorAll('.iv-exchange-bar');
-    const lastBar = bars.length ? bars[bars.length - 1] : null;
-    return lastBar ? decodeAnchor(lastBar.dataset.anchorIndex) : Symbol('none');
+    const segments = container.querySelectorAll('.iv-segment');
+    const last = segments.length ? segments[segments.length - 1] : null;
+    return last ? decodeAnchor(last.dataset.anchorIndex) : Symbol('none');
 }
 
-function appendExchangeBarIfNew(container, conversation, anchorIndex) {
+function appendSegmentIfNew(container, conversation, anchorIndex) {
     if (lastRenderedAnchor(container) === anchorIndex) return;
-    container.appendChild(createExchangeBar(conversation, anchorIndex));
+    const segment = createSegment(conversation, anchorIndex);
+    const next = container.querySelector(`.iv-segment[data-anchor-index="${encodeAnchor(anchorIndex)}"]`);
+    if (next) container.insertBefore(segment, next);
+    else container.appendChild(segment);
 }
 
-function createExchangeBar(conversation, anchorIndex) {
-    const bar = document.createElement('div');
-    bar.className = 'iv-exchange-bar';
-    bar.dataset.anchorIndex = encodeAnchor(anchorIndex);
+function createSegment(conversation, anchorIndex) {
+    const seg = document.createElement('section');
+    seg.className = 'iv-segment';
+    seg.dataset.anchorIndex = encodeAnchor(anchorIndex);
+
+    const header = document.createElement('div');
+    header.className = 'iv-anchor';
+    header.title = 'Inner exchange under this main-chat message — click to jump';
+
+    const mark = document.createElement('span');
+    mark.className = 'iv-anchor-mark';
+    mark.setAttribute('aria-hidden', 'true');
 
     const label = document.createElement('span');
-    label.className = 'iv-exchange-hidden-label';
-    label.textContent = 'Hidden';
+    label.className = 'iv-anchor-label';
+    label.textContent = segmentAnchorLabel(anchorIndex);
+    label.title = segmentAnchorLabel(anchorIndex);
 
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -4842,31 +4908,98 @@ function createExchangeBar(conversation, anchorIndex) {
         syncExchangeHiddenUi(conv);
     });
 
-    bar.appendChild(label);
-    bar.appendChild(btn);
-    paintHideToggle(bar, conversation, anchorIndex);
-    return bar;
+    header.appendChild(mark);
+    header.appendChild(label);
+    header.appendChild(btn);
+    seg.appendChild(header);
+
+    paintHideControl(seg, conversation, anchorIndex);
+    return seg;
 }
 
 function syncExchangeHiddenUi(conversation = getConversation()) {
     const c = document.getElementById('iv-messages');
     if (!c) return;
-    c.querySelectorAll('.iv-exchange-bar').forEach(bar => {
-        paintHideToggle(bar, conversation, decodeAnchor(bar.dataset.anchorIndex));
+    c.querySelectorAll('.iv-segment').forEach(seg => {
+        paintHideControl(seg, conversation, decodeAnchor(seg.dataset.anchorIndex));
     });
     c.querySelectorAll('.iv-msg').forEach(el => {
         el.classList.toggle('iv-exchange-hidden', isExchangeHidden(conversation, decodeAnchor(el.dataset.anchorIndex)));
     });
+    // Closing the live-edge segment hides its Continue too.
+    if (!state.generating) _refreshContinueBtns();
 }
 
-function pruneExchangeBars() {
+function pruneSegments() {
     const c = document.getElementById('iv-messages');
     if (!c) return;
-    for (const el of [...c.children]) {
-        if (!el.classList?.contains('iv-exchange-bar')) continue;
-        const next = el.nextElementSibling;
-        if (!next || !next.classList?.contains('iv-msg')) el.remove();
+    for (const seg of [...c.children]) {
+        if (!seg.classList?.contains('iv-segment')) continue;
+        if (!seg.querySelector('.iv-msg')) seg.remove();
     }
+}
+
+function jumpToSegment(anchorIndex) {
+    const c = document.getElementById('iv-messages');
+    if (!c) return;
+    const seg = c.querySelector(`.iv-segment[data-anchor-index="${encodeAnchor(anchorIndex)}"]`);
+    if (!seg) return;
+    seg.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
+function setupSegmentJumpNav(container) {
+    if (!container) return;
+    container.addEventListener('click', e => {
+        const header = e.target.closest?.('.iv-anchor');
+        if (!header) return;
+        const seg = header.closest('.iv-segment');
+        if (!seg) return;
+        jumpToSegment(decodeAnchor(seg.dataset.anchorIndex));
+    });
+    container.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            const header = e.target.closest?.('.iv-anchor');
+            if (!header) return;
+            e.preventDefault();
+            const seg = header.closest('.iv-segment');
+            if (!seg) return;
+            jumpToSegment(decodeAnchor(seg.dataset.anchorIndex));
+        }
+    });
+}
+
+function jumpToPrevSegment() {
+    jumpToSegment(nearestSegmentAbove(getConversation(), state.currentSegmentAnchor ?? getLiveEdgeIndex()));
+}
+
+function jumpToNextSegment() {
+    jumpToSegment(nearestSegmentBelow(getConversation(), state.currentSegmentAnchor ?? getLiveEdgeIndex()));
+}
+
+// The segment that owns the message now on screen.
+function currentSegmentIndex(conversation) {
+    const c = document.getElementById('iv-messages');
+    if (!c) return state.currentSegmentAnchor ?? getLiveEdgeIndex();
+    const msgs = [...c.querySelectorAll('.iv-msg')];
+    if (!msgs.length) return getLiveEdgeIndex();
+    let active = msgs.find(m => m.dataset.anchorIndex !== 'none');
+    for (const m of msgs) {
+        const r = m.getBoundingClientRect();
+        if (r.height && r.bottom > c.getBoundingClientRect().top) { active = m; break; }
+    }
+    return active ? decodeAnchor(active.dataset.anchorIndex) : getLiveEdgeIndex();
+}
+
+function setupSegmentScrollTracking(container) {
+    if (!container) return;
+    let raf = null;
+    container.addEventListener('scroll', () => {
+        if (raf) return;
+        raf = requestAnimationFrame(() => {
+            raf = null;
+            state.currentSegmentAnchor = currentSegmentIndex(getConversation());
+        });
+    }, { passive: true });
 }
 
 function setupMainChatHideListener() {
@@ -4893,7 +5026,7 @@ function renderConversation(conversation) {
         c.innerHTML = `
             <div class="iv-empty-state">
                 <div class="iv-empty-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7" /><ellipse cx="12" cy="12" rx="11" ry="3" transform="rotate(-25 12 12)" /><circle cx="21.5" cy="7.5" r="1.5" fill="currentColor" stroke="none" /></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="currentColor" stroke="none"><g transform="translate(12 13.2) scale(1.32) translate(-12 -13.2)"><path d="M3.6 12.2 c0-2.4 1.1-4.7 2.9-6.3 q-1.5 2.2-1.4 4.7 c 1.8-.2 3 1 3 2.7 a2.7 2.7 0 0 1-2.8 2.8 q-1.7 0-1.7-1.9 Z"/><path d="M14 12.2 c0-2.4 1.1-4.7 2.9-6.3 q-1.5 2.2-1.4 4.7 c 1.8-.2 3 1 3 2.7 a2.7 2.7 0 0 1-2.8 2.8 q-1.7 0-1.7-1.9 Z"/></g></svg>
                 </div>
                 <div class="iv-empty-title">Inner Voice</div>
                 <div class="iv-empty-sub">A private space to think, plan, and talk with yourself. Nothing here enters the scene.</div>
@@ -4903,7 +5036,7 @@ function renderConversation(conversation) {
     }
     for (const msg of conversation.messages) {
         const anchor = msg.anchorIndex === undefined ? null : msg.anchorIndex;
-        appendExchangeBarIfNew(c, conversation, anchor);
+        appendSegmentIfNew(c, conversation, anchor);
         const el = createMsgEl(msg, handleCopy, handleEdit, handleDelete, handleMessageRegen);
         c.appendChild(el);
     }
@@ -4920,7 +5053,7 @@ function appendMsgEl(msg, isStreamInit = false) {
 
     const conversation = getConversation();
     const anchor = msg.anchorIndex === undefined ? null : msg.anchorIndex;
-    appendExchangeBarIfNew(c, conversation, anchor);
+    appendSegmentIfNew(c, conversation, anchor);
 
     const el = createMsgEl(msg, handleCopy, handleEdit, handleDelete, handleMessageRegen);
     c.appendChild(el);
@@ -4946,7 +5079,7 @@ function removeMsgEl(msgId) {
     const el = document.querySelector(`.iv-msg[data-id="${msgId}"]`);
     if (!el) return;
     el.remove();
-    pruneExchangeBars();
+    pruneSegments();
     _refreshContinueBtns();
     _refreshSwipeBars(getConversation());
 }
@@ -4958,7 +5091,7 @@ function removeMsgElAndBelow(msgId) {
         if (el.dataset.id === msgId) found = true;
         if (found) el.remove();
     }
-    pruneExchangeBars();
+    pruneSegments();
     _refreshContinueBtns();
     _refreshSwipeBars(getConversation());
 }
@@ -4970,7 +5103,7 @@ function removeMsgElAfter(msgId) {
         if (found) el.remove();
         if (el.dataset.id === msgId) found = true;
     }
-    pruneExchangeBars();
+    pruneSegments();
     _refreshContinueBtns();
     _refreshSwipeBars(getConversation());
 }
@@ -5702,8 +5835,13 @@ var uiChat = /*#__PURE__*/Object.freeze({
     handleDelete: handleDelete,
     handleEdit: handleEdit,
     handleMessageRegen: handleMessageRegen,
+    isSegmentClosed: isSegmentClosed,
+    jumpToNextSegment: jumpToNextSegment,
+    jumpToPrevSegment: jumpToPrevSegment,
     navigateSearch: navigateSearch,
     navigateSwipe: navigateSwipe,
+    nearestSegmentAbove: nearestSegmentAbove,
+    nearestSegmentBelow: nearestSegmentBelow,
     onChatChanged: onChatChanged,
     openChatPicker: openChatPicker,
     openSearch: openSearch,
@@ -5719,6 +5857,8 @@ var uiChat = /*#__PURE__*/Object.freeze({
     restoreScrollPosition: restoreScrollPosition,
     saveScrollPosition: saveScrollPosition,
     scrollToBottom: scrollToBottom,
+    segmentAnchorLabel: segmentAnchorLabel,
+    segmentTurns: segmentTurns,
     setGeneratingState: setGeneratingState,
     setPickedChatIndices: setPickedChatIndices,
     setupChatPickerListeners: setupChatPickerListeners,
@@ -5726,6 +5866,8 @@ var uiChat = /*#__PURE__*/Object.freeze({
     setupMainChatHideListener: setupMainChatHideListener,
     setupMessagesScrollTracking: setupMessagesScrollTracking,
     setupSearchHotkey: setupSearchHotkey,
+    setupSegmentJumpNav: setupSegmentJumpNav,
+    setupSegmentScrollTracking: setupSegmentScrollTracking,
     showGenerationError: showGenerationError,
     smartScrollToBottom: smartScrollToBottom,
     syncExchangeHiddenUi: syncExchangeHiddenUi,
@@ -9229,6 +9371,8 @@ function attachWindowListeners() {
 
     document.getElementById('iv-search-btn')?.addEventListener('click', () => { state.searchOpen ? closeSearch() : openSearch(); });
     document.getElementById('iv-pick-btn')?.addEventListener('click', () => openChatPicker());
+    document.getElementById('iv-seg-prev-btn')?.addEventListener('click', () => jumpToPrevSegment());
+    document.getElementById('iv-seg-next-btn')?.addEventListener('click', () => jumpToNextSegment());
 
     document.getElementById('iv-qp-toggle-btn')?.addEventListener('click', () => {
         const s = getSettings(); s.quickPromptsVisible = !s.quickPromptsVisible; saveSettings();
@@ -9394,6 +9538,8 @@ async function init() {
     setupGhostHotkey();
     setupHotkey();
     setupMessagesScrollTracking();
+    setupSegmentJumpNav(document.getElementById('iv-messages'));
+    setupSegmentScrollTracking(document.getElementById('iv-messages'));
     setupMainChatHideListener();
 
     const s = getSettings();
