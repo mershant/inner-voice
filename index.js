@@ -862,6 +862,7 @@ function getSettings() {
         toolsEnabled_get_recent_messages: true,
         includeSummaryception: true,
         includeLorebook: true,
+        includeCharacterCard: true,
         useAspectEvolutia: true,
         autoExpandMacros: false,
         includeHiddenMessages: false,
@@ -1520,29 +1521,32 @@ var utilDom = /*#__PURE__*/Object.freeze({
     showCustomDialog: showCustomDialog
 });
 
-function getCharInfo() {
+function getCharInfo(char) {
     const ctx = SillyTavern.getContext();
-    const char = ctx.characters?.[ctx.characterId];
-    if (!char) return null;
-    
-    const d = char.data || {};
-    const ov = ctx.chatMetadata?.character_overrides || {};
-    
+    const target = char || ctx.characters?.[ctx.characterId];
+    if (!target) return null;
+
+    const current = ctx.characters?.[ctx.characterId];
+    const isCurrent = !char || target === current || (!!target.avatar && target.avatar === current?.avatar);
+
+    const d = target.data || {};
+    const ov = isCurrent ? (ctx.chatMetadata?.character_overrides || {}) : {};
+
     const get = (field, macro) => {
         if (ov[field]) return ov[field];
-        if (macro) {
+        if (macro && isCurrent) {
             try { const r = expandMacros(macro); if (r && r !== macro) return r; } catch(_) {}
         }
-        return d[field] || char[field] || '';
+        return d[field] || target[field] || '';
     };
 
     const getCharNote = () => {
         if (ov.depth_prompt && ov.depth_prompt.prompt) return ov.depth_prompt.prompt;
-        return d.extensions?.depth_prompt?.prompt || char.extensions?.depth_prompt?.prompt || '';
+        return d.extensions?.depth_prompt?.prompt || target.extensions?.depth_prompt?.prompt || '';
     };
 
     return {
-        name: char.name || 'Unknown',
+        name: target.name || 'Unknown',
         description: get('description', '{{description}}'),
         personality: get('personality', '{{personality}}'),
         scenario: get('scenario', '{{scenario}}'),
@@ -1587,6 +1591,11 @@ function getUserPersona() {
     } catch (_) {}
 
     return ctx.persona || ctx.userPersona || ctx.user_persona || '';
+}
+
+function getAuthorsNote() {
+    const ctx = SillyTavern.getContext();
+    return ctx.chatMetadata?.note_prompt || ctx.authorsNote || ctx.authors_note || '';
 }
 
 function genMemoryId() { 
@@ -2459,6 +2468,7 @@ const _SETTINGS_DEF = [
     { key: 'changelogAutoShow',    stId: null, spId: 'iv-sp-changelog-auto', type: 'checkbox' },
     { key: 'includeSummaryception', stId: 'iv-include-summaryception', spId: 'iv-sp-include-summaryception', type: 'checkbox', fromSetting: s => s.includeSummaryception !== false },
     { key: 'includeLorebook', stId: 'iv-include-lorebook', spId: 'iv-sp-include-lorebook', type: 'checkbox', fromSetting: s => s.includeLorebook !== false, updCtx: true },
+    { key: 'includeCharacterCard', stId: 'iv-include-character-card', spId: 'iv-sp-include-character-card', type: 'checkbox', fromSetting: s => s.includeCharacterCard !== false, updCtx: true },
     { key: 'useAspectEvolutia',    stId: 'iv-use-aspect-evolutia',    spId: 'iv-sp-use-aspect-evolutia',    type: 'checkbox', fromSetting: s => s.useAspectEvolutia !== false },
     { key: 'autoExpandMacros',     stId: 'iv-auto-expand-macros',     spId: 'iv-sp-auto-expand-macros',     type: 'checkbox' },
     { key: 'includeHiddenMessages', stId: 'iv-include-hidden-msgs',   spId: 'iv-sp-include-hidden-msgs',    type: 'checkbox', updCtx: true },
@@ -7048,6 +7058,75 @@ async function buildLorebookContextBlock(settings) {
     return block;
 }
 
+function cardFieldXml(info) {
+    if (!info) return '';
+    const parts = [];
+    for (const key of ['description', 'personality', 'scenario', 'mes_example', 'character_note', 'creator_notes']) {
+        const val = String(info[key] || '').trim();
+        if (val) parts.push(`<${key}>\n${val}\n</${key}>`);
+    }
+    return parts.join('\n');
+}
+
+function authorsNoteXml() {
+    const note = String(getAuthorsNote() || '').trim();
+    if (!note) return '';
+    return `<authors_note>\n${note}\n</authors_note>`;
+}
+
+const ESTABLISHED_FRAME = 'Established knowledge about the people in the scene. These are not events from the current scene.';
+
+function getGroupMemberCharacters() {
+    const ctx = SillyTavern.getContext();
+    const seen = new Set();
+    const list = [];
+    const push = char => {
+        if (!char) return;
+        const id = char.avatar || char.name;
+        if (seen.has(id)) return;
+        seen.add(id);
+        list.push(char);
+    };
+
+    const group = (ctx.groups || []).find(g => g.id === ctx.groupId);
+    for (const member of group?.members || []) {
+        const avatarId = typeof member === 'string' ? member : (member?.avatar || member?.id);
+        push((ctx.characters || []).find(c => c.avatar === avatarId));
+    }
+    return list;
+}
+
+function joinParts(parts) {
+    return parts.filter(Boolean).join('\n');
+}
+
+function buildSingleCharacterBlock(char) {
+    const info = getCharInfo(char);
+    const body = joinParts([cardFieldXml(info), authorsNoteXml()]);
+    if (!body) return '';
+    const name = escHtml(info?.name || char.name || 'Unknown');
+    return `<character name="${name}">\n${body}\n</character>`;
+}
+
+function buildCharacterInformationBlock(settings) {
+    const ctx = SillyTavern.getContext();
+    const includeCard = !settings || settings.includeCharacterCard !== false;
+
+    if (ctx.groupId) {
+        if (!includeCard) return '';
+        const blocks = getGroupMemberCharacters().map(buildSingleCharacterBlock).filter(Boolean);
+        if (!blocks.length) return '';
+        return `\n\n<characters>\n${ESTABLISHED_FRAME}\n${blocks.join('\n\n')}\n</characters>`;
+    }
+
+    const charInfo = getCharInfo();
+    const name = charInfo ? charInfo.name : (ctx.name2 || 'Character');
+    const fields = includeCard ? joinParts([cardFieldXml(charInfo), authorsNoteXml()]) : '';
+    let inner = includeCard ? `${ESTABLISHED_FRAME}\nName: ${name}` : `Name: ${name}`;
+    if (fields) inner += `\n${fields}`;
+    return `\n\n<character_information>\n${inner}\n</character_information>`;
+}
+
 function sanitizeToolCallsForSave(toolCalls) {
     return (toolCalls || []).map(tc => ({ ...tc }));
 }
@@ -7065,7 +7144,6 @@ async function flushPortrayAutoTrigger() {
 async function buildSystemContent(settings) {
     let sysPromptRaw = (typeof settings.systemPrompt === 'string' && settings.systemPrompt.trim()) ? settings.systemPrompt : DEFAULT_SYSTEM_PROMPT;
     const parts = [_ensureWrapped(sysPromptRaw, 'system_prompt')];
-    const charInfo = getCharInfo();
     const ctx = SillyTavern.getContext();
 
     if (settings.includeSystemPrompt) {
@@ -7092,9 +7170,8 @@ async function buildSystemContent(settings) {
     const lorebookBlock = await buildLorebookContextBlock(settings);
     if (lorebookBlock) parts.push(lorebookBlock);
 
-    if (!ctx.groupId) {
-        parts.push(`\n\n<character_information>\nName: ${charInfo ? charInfo.name : (ctx.name2 || 'Character')}\n</character_information>`);
-    }
+    const characterBlock = buildCharacterInformationBlock(settings);
+    if (characterBlock) parts.push(characterBlock);
 
     {
         const userName = ctx.name1 || 'User';

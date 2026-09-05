@@ -12,6 +12,7 @@ import { applyRegexIfEnabled } from './integrations/integ-regex.js';
 
 import { buildMemoryContextBlock, buildMemoryAIInstructions, processMemoryUpdates, stripMemoryBlock } from './features/feature-memory.js';
 import { buildLorebookContextBlock } from './features/feature-lorebook.js';
+import { buildCharacterInformationBlock } from './features/feature-characters.js';
 import { buildToolCallsSystemBlock, parseToolCallsFromText, executeTool, getEnabledTools } from './features/feature-tools-engine.js';
 
 import { updateMsgCount, smartScrollToBottom, setGeneratingState, showGenerationError, _renderMsgBodyContent, _refreshSwipeBars, appendMsgEl } from './ui/ui-chat.js';
@@ -36,7 +37,6 @@ async function flushPortrayAutoTrigger() {
 export async function buildSystemContent(settings) {
     let sysPromptRaw = (typeof settings.systemPrompt === 'string' && settings.systemPrompt.trim()) ? settings.systemPrompt : DEFAULT_SYSTEM_PROMPT;
     const parts = [_ensureWrapped(sysPromptRaw, 'system_prompt')];
-    const charInfo = getCharInfo();
     const ctx = SillyTavern.getContext();
 
     if (settings.includeSystemPrompt) {
@@ -63,9 +63,8 @@ export async function buildSystemContent(settings) {
     const lorebookBlock = await buildLorebookContextBlock(settings);
     if (lorebookBlock) parts.push(lorebookBlock);
 
-    if (!ctx.groupId) {
-        parts.push(`\n\n<character_information>\nName: ${charInfo ? charInfo.name : (ctx.name2 || 'Character')}\n</character_information>`);
-    }
+    const characterBlock = buildCharacterInformationBlock(settings);
+    if (characterBlock) parts.push(characterBlock);
 
     {
         const userName = ctx.name1 || 'User';

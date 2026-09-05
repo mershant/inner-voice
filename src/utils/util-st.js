@@ -17,29 +17,32 @@ export function getTagsForCharacter(char) {
     }).filter(Boolean);
 }
 
-export function getCharInfo() {
+export function getCharInfo(char) {
     const ctx = SillyTavern.getContext();
-    const char = ctx.characters?.[ctx.characterId];
-    if (!char) return null;
-    
-    const d = char.data || {};
-    const ov = ctx.chatMetadata?.character_overrides || {};
-    
+    const target = char || ctx.characters?.[ctx.characterId];
+    if (!target) return null;
+
+    const current = ctx.characters?.[ctx.characterId];
+    const isCurrent = !char || target === current || (!!target.avatar && target.avatar === current?.avatar);
+
+    const d = target.data || {};
+    const ov = isCurrent ? (ctx.chatMetadata?.character_overrides || {}) : {};
+
     const get = (field, macro) => {
         if (ov[field]) return ov[field];
-        if (macro) {
+        if (macro && isCurrent) {
             try { const r = expandMacros(macro); if (r && r !== macro) return r; } catch(_) {}
         }
-        return d[field] || char[field] || '';
+        return d[field] || target[field] || '';
     };
 
     const getCharNote = () => {
         if (ov.depth_prompt && ov.depth_prompt.prompt) return ov.depth_prompt.prompt;
-        return d.extensions?.depth_prompt?.prompt || char.extensions?.depth_prompt?.prompt || '';
+        return d.extensions?.depth_prompt?.prompt || target.extensions?.depth_prompt?.prompt || '';
     };
 
     return {
-        name: char.name || 'Unknown',
+        name: target.name || 'Unknown',
         description: get('description', '{{description}}'),
         personality: get('personality', '{{personality}}'),
         scenario: get('scenario', '{{scenario}}'),

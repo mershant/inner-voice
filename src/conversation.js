@@ -134,6 +134,7 @@ export function getSettings() {
         toolsEnabled_get_recent_messages: true,
         includeSummaryception: true,
         includeLorebook: true,
+        includeCharacterCard: true,
         useAspectEvolutia: true,
         autoExpandMacros: false,
         includeHiddenMessages: false,
