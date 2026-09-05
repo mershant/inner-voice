@@ -91,6 +91,10 @@ const _SETTINGS_DEF = [
     { key: 'includeAlternateSwipes', stId: 'iv-include-alt-swipes', spId: 'iv-sp-include-alt-swipes', type: 'checkbox', updCtx: true, profileKey: true },
     { key: 'applyRegexToContext', stId: 'iv-apply-regex', spId: 'iv-sp-apply-regex', type: 'checkbox', updCtx: true, profileKey: true },
     { key: 'reasoningTrimStrings', stId: 'iv-reasoning-trim', spId: 'iv-sp-reasoning-trim', type: 'textarea', profileKey: true },
+    { key: 'postHistoryText', stId: 'iv-post-history-text', spId: 'iv-sp-post-history-text', type: 'textarea', updCtx: true },
+    { key: 'postHistoryRole', stId: 'iv-post-history-role', spId: 'iv-sp-post-history-role', type: 'select',
+      fromSetting: s => (s.postHistoryRole === 'system' || s.postHistoryRole === 'assistant') ? s.postHistoryRole : 'user',
+      updCtx: true },
 
     // ── Prompts ───────────────────────────────────────────────────────────────
     { key: 'systemPrompt', stId: 'iv-sysprompt', spId: 'iv-sp-sysprompt', type: 'textarea', updCtx: true, profileKey: true,

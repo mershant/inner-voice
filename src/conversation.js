@@ -138,6 +138,8 @@ export function getSettings() {
         portrayPerson: 'first',
         portrayImmediateSend: false,
         portrayAutoTrigger: false,
+        postHistoryText: '',
+        postHistoryRole: 'user',
     };
     for (const [k, v] of Object.entries(defaults)) {
         if (s[k] === undefined) s[k] = v;

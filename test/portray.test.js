@@ -140,6 +140,21 @@ test('the portray request carries inner memory', async () => {
     assert.ok(text.includes('Fine. I am going to say it to her face.'));
 });
 
+test('portray carries a written post-history message the same way', async () => {
+    const conv = getConversation();
+    const settings = getEffectiveSettings();
+    settings.postHistoryText = 'Ready.';
+    settings.postHistoryRole = 'user';
+
+    const messages = await assemblePortrayMessages(conv, settings);
+    const mainIdx = messages.findIndex(m => typeof m.content === 'string' && m.content.includes('<main_chat'));
+    const afterMain = messages.slice(mainIdx + 1);
+    assert.equal(afterMain[0].role, 'user');
+    assert.equal(afterMain[0].content, 'Ready.');
+    assert.equal(afterMain[afterMain.length - 1].role, 'user');
+    assert.ok(afterMain[afterMain.length - 1].content.includes("Write {{user}}'s next turn"));
+});
+
 test('the portray request uses RP-style first person by default and stays {{user}}-only', async () => {
     const messages = await assemblePortrayMessages(getConversation(), getEffectiveSettings());
     const text = payloadText(messages);

@@ -186,7 +186,13 @@ export async function assembleMessages(conversation, settings, pendingUserText) 
                 role: 'user',
                 content: `<main_chat ${ctxAttr}>\n${summaryText}${block}\n\n</main_chat>`,
             });
-            messages.push({ role: 'assistant', content: 'Caught up. I remember all of it.' });
+            const postHistoryText = typeof settings.postHistoryText === 'string' ? settings.postHistoryText.trim() : '';
+            if (postHistoryText) {
+                const role = settings.postHistoryRole === 'system' || settings.postHistoryRole === 'assistant'
+                    ? settings.postHistoryRole
+                    : 'user';
+                messages.push({ role, content: postHistoryText });
+            }
         }
     }
     if (pendingUserText !== null && pendingUserText !== undefined && pendingUserText !== '') {

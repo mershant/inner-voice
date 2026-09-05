@@ -181,8 +181,12 @@ def main():
             if isinstance(m.get("content"), str)
             and m["content"] in ui_before
             and "<main_chat" not in m["content"]
-            and m["content"] != "Caught up. I remember all of it."
         ]
+        if any(
+            isinstance(m.get("content"), str) and m["content"] == "Caught up. I remember all of it."
+            for m in payload
+        ):
+            raise SystemExit("hardcoded Caught up line is still in the payload")
         if standalone:
             raise SystemExit(f"flat exchange-stream still present: {standalone[0]['content'][:80]!r}")
 

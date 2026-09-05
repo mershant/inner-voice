@@ -287,11 +287,75 @@ test('no flat exchange-stream section remains in the payload', async () => {
 
     const mainIdx = messages.findIndex(m => typeof m.content === 'string' && m.content.includes('<main_chat'));
     const afterMain = messages.slice(mainIdx + 1);
+    assert.equal(afterMain.length, 1);
+    assert.equal(afterMain[0].role, 'user');
+    assert.equal(afterMain[0].content, 'pending IV line');
+    assert.ok(messages[mainIdx].content.includes('only-in-block thought'));
+    assert.ok(!payloadText(messages).includes('Caught up. I remember all of it.'));
+});
+
+test('the default payload has no post-history message', async () => {
+    stub.chat = [mainMsg('scene')];
+    const conv = getConversation();
+    const messages = await assembleMessages(conv, getEffectiveSettings(), null);
+    const mainIdx = messages.findIndex(m => typeof m.content === 'string' && m.content.includes('<main_chat'));
+    assert.ok(mainIdx >= 0, 'payload has a main-chat slice');
+    assert.equal(messages.slice(mainIdx + 1).length, 0);
+    assert.ok(!payloadText(messages).includes('Caught up. I remember all of it.'));
+});
+
+test('a written post-history message sits after the main chat and before the pending thought', async () => {
+    stub.chat = [mainMsg('scene')];
+    const conv = getConversation();
+    const settings = getEffectiveSettings();
+    settings.postHistoryText = 'Ready when you are.';
+    settings.postHistoryRole = 'user';
+
+    const messages = await assembleMessages(conv, settings, 'pending IV line');
+    const mainIdx = messages.findIndex(m => typeof m.content === 'string' && m.content.includes('<main_chat'));
+    const afterMain = messages.slice(mainIdx + 1);
     assert.equal(afterMain.length, 2);
-    assert.equal(afterMain[0].content, 'Caught up. I remember all of it.');
+    assert.equal(afterMain[0].role, 'user');
+    assert.equal(afterMain[0].content, 'Ready when you are.');
     assert.equal(afterMain[1].role, 'user');
     assert.equal(afterMain[1].content, 'pending IV line');
-    assert.ok(messages[mainIdx].content.includes('only-in-block thought'));
+});
+
+test('a post-history message uses the selected role', async () => {
+    stub.chat = [mainMsg('scene')];
+    const conv = getConversation();
+    for (const role of ['system', 'user', 'assistant']) {
+        const settings = getEffectiveSettings();
+        settings.postHistoryText = 'transition';
+        settings.postHistoryRole = role;
+        const messages = await assembleMessages(conv, settings, null);
+        const mainIdx = messages.findIndex(m => typeof m.content === 'string' && m.content.includes('<main_chat'));
+        const afterMain = messages.slice(mainIdx + 1);
+        assert.equal(afterMain.length, 1, `${role} inserts one message`);
+        assert.equal(afterMain[0].role, role);
+        assert.equal(afterMain[0].content, 'transition');
+    }
+});
+
+test('clearing the post-history text removes it from the payload', async () => {
+    stub.chat = [mainMsg('scene')];
+    const conv = getConversation();
+    const settings = getEffectiveSettings();
+    settings.postHistoryText = 'transition';
+    settings.postHistoryRole = 'assistant';
+
+    let messages = await assembleMessages(conv, settings, null);
+    assert.equal(messages.filter(m => m.content === 'transition').length, 1);
+
+    settings.postHistoryText = '';
+    messages = await assembleMessages(conv, settings, null);
+    assert.equal(messages.filter(m => m.content === 'transition').length, 0);
+    const mainIdx = messages.findIndex(m => typeof m.content === 'string' && m.content.includes('<main_chat'));
+    assert.equal(messages.slice(mainIdx + 1).length, 0);
+
+    settings.postHistoryText = '   ';
+    messages = await assembleMessages(conv, settings, null);
+    assert.equal(messages.slice(mainIdx + 1).length, 0);
 });
 
 // ─── The system prompt (ticket #4 / ADR 0002) ─────────────────────────────────

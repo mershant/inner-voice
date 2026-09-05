@@ -218,6 +218,22 @@
                         <label style="margin-top:10px; font-size:11px; color:#888; display:block; margin-bottom:4px">Main Chat Context Depth Limit</label>
                         <input id="iv-history-limit" type="number" class="text_pole" placeholder="50" min="1" max="500" />
                         <div style="margin-top:14px; border-top:1px solid rgba(255,255,255,.06); padding-top:12px">
+                            <b style="font-size:12px">After the main-chat history</b>
+                            <label style="font-size:11px; color:#888; display:block; margin:6px 0 3px">
+                                Optional message inserted after the history, before the next Inner Voice line. Leave blank to insert nothing.
+                            </label>
+                            <textarea id="iv-post-history-text" class="text_pole" rows="3" style="font-size:12px"></textarea>
+                            <label style="font-size:11px; display:block; margin:8px 0 4px">Role</label>
+                            <select id="iv-post-history-role" class="text_pole">
+                                <option value="system">System</option>
+                                <option value="user">User</option>
+                                <option value="assistant">Assistant</option>
+                            </select>
+                            <label style="font-size:11px; color:#888; display:block; margin-top:6px">
+                                If the role is Assistant and this ends up as the last message (for example when regenerating with nothing new typed), it acts as a prefill. Not every backend accepts that.
+                            </label>
+                        </div>
+                        <div style="margin-top:14px; border-top:1px solid rgba(255,255,255,.06); padding-top:12px">
                             <b style="font-size:12px">Response String Trimming</b>
                             <label style="font-size:11px; color:#888; display:block; margin:6px 0 3px">
                                 Strings to remove from responses (one per line). Useful for empty reasoning blocks, e.g. <code style="font-size:10px;background:rgba(0,0,0,.3);padding:1px 4px;border-radius:3px">&lt;think&gt;&lt;/think&gt;</code>
