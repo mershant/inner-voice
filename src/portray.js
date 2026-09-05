@@ -51,14 +51,31 @@ function withoutToolModules(messages) {
     });
 }
 
+function readSendBoxText() {
+    const ta = document.getElementById('send_textarea');
+    return typeof ta?.value === 'string' ? ta.value.trim() : '';
+}
+
+function buildAuthoredConductBlock(text) {
+    return `<authored-conduct>
+{{user}} has already decided this conduct. The coming turn is that conduct performed in the scene — the same acts, in the same order, at the same size, in {{user}}'s established voice. Every word realizes this. Quoted words are spoken as written. An instruction to speak becomes speech, meaning kept, plain wording kept plain. A blocked or unfinished attempt stays an attempt. Private thinking only colors the manner of doing this.
+
+${text}
+</authored-conduct>`;
+}
+
 export async function assemblePortrayMessages(conversation, settings, formOverride) {
     const form = resolvePortrayForm(settings, formOverride);
-    const messages = await assembleMessages(
+    const messages = withoutToolModules(await assembleMessages(
         conversation,
         portrayRequestSettings(settings),
         buildPortrayInstruction(form),
-    );
-    return withoutToolModules(messages);
+    ));
+    const sendBox = readSendBoxText();
+    if (!sendBox) return messages;
+    const block = { role: 'user', content: buildAuthoredConductBlock(sendBox) };
+    const insertAt = Math.max(0, messages.length - 1);
+    return [...messages.slice(0, insertAt), block, ...messages.slice(insertAt)];
 }
 
 export function readFireTimePortrayForm() {

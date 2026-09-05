@@ -15,8 +15,9 @@ from this repository's history.
 ## Status
 
 Exchange spine (issue #3), inner memory (issue #4 / #12), simulation view (issue #5),
-hide (issue #6), and portray (issues #7 / #8 / #17) are in. Portray writes {{user}}'s next
-main-chat input as an action answering the present scene. By default it lands in the input box;
+hide (issue #6), and portray (issues #7 / #8 / #17 / #18) are in. Portray writes {{user}}'s next
+main-chat input as an action answering the present scene. Text already in the send box is
+performed as that turn. By default it lands in the input box;
 immediate send and auto-trigger are independent opt-in switches.
 Remaining product behavior — the drawer cleanup — lands in a later issue.
 
