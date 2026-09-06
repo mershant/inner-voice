@@ -133,7 +133,12 @@ export function getSettings() {
         toolsEnabled_get_chat_stats: true,
         toolsEnabled_get_recent_messages: true,
         includeSummaryception: true,
-        includeLorebook: true,
+        lorebookAutoKeyword: true,
+        lorebookSelectedBooks: [],
+        lorebookEntryOverrides: {},
+        lorebookSTScanDepth: 5,
+        lorebookCopilotScanDepth: 6,
+        lorebookExcludedBooks: [],
         includeCharacterCard: true,
         charEditFields: {
             tags: true, description: true, personality: true,

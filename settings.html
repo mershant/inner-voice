@@ -219,7 +219,14 @@
                             <label class="checkbox_label"><input id="iv-auto-expand-macros" type="checkbox" /><span>Auto-expand macros in user input</span></label>
                             <label class="checkbox_label"><input id="iv-include-hidden-msgs" type="checkbox" /><span>Include hidden messages in context</span></label>
                             <label class="checkbox_label"><input id="iv-include-alt-swipes" type="checkbox" /><span>Include alternate swipes of the last message</span></label>
-                            <label class="checkbox_label" title="Add every enabled entry from active lorebooks as established world knowledge. Keyword matching is not used."><input id="iv-include-lorebook" type="checkbox" /><span>Include active lorebook entries</span></label>
+                            <label class="checkbox_label"><input id="iv-lb-auto-kw" type="checkbox" /><span>Auto-Keywords</span></label>
+                        </div>
+                        <div style="margin-top:14px; border-top:1px solid rgba(255,255,255,.06); padding-top:12px">
+                            <b style="font-size:12px">Keyword Scan Depth</b>
+                            <label style="font-size:11px; color:#888; display:block; margin:8px 0 3px">Main chat keytriggers scan depth</label>
+                            <input id="iv-lb-st-scan-depth" type="number" class="text_pole" placeholder="5" min="0" max="200" />
+                            <label style="font-size:11px; color:#888; display:block; margin:8px 0 3px">Copilot keytriggers scan depth</label>
+                            <input id="iv-lb-copilot-scan-depth" type="number" class="text_pole" placeholder="6" min="0" max="200" />
                         </div>
                         <div style="margin-top:14px; border-top:1px solid rgba(255,255,255,.06); padding-top:12px; display:flex; flex-direction:column; gap:4px">
                             <b style="font-size:12px; margin-bottom:2px">Character fields sent to AI context:</b>
