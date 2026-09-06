@@ -187,6 +187,7 @@
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-auto-expand-macros"><span>Auto-expand macros in user input</span></label>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-include-hidden-msgs"><span>Include hidden messages in context</span></label>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-include-alt-swipes"><span>Include alternate swipes of the last message</span></label>
+          <label class="iv-sp-check"><input type="checkbox" id="iv-sp-lb-ai-enabled"><span>Enable AI Lorebook Editing</span></label>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-lb-auto-kw"><span>Auto-Keywords <span class="iv-sp-hint">(inject entries matching chat keywords)</span></span></label>
           <div class="iv-sp-field">
             <label class="iv-sp-label">Main chat keytriggers scan depth</label>
@@ -195,6 +196,11 @@
           <div class="iv-sp-field">
             <label class="iv-sp-label">Copilot keytriggers scan depth</label>
             <input type="number" class="iv-sp-input" id="iv-sp-lb-copilot-scan-depth" placeholder="6" min="0" max="200">
+          </div>
+          <div class="iv-sp-field">
+            <label class="iv-sp-label">AI Edit Prompt <span class="iv-sp-hint">macros: {{lorebook_output}}, {{active_lorebooks}}</span></label>
+            <textarea class="iv-sp-textarea" id="iv-sp-lb-manage-prompt" rows="4" style="font-family:monospace;font-size:11px"></textarea>
+            <button class="iv-action-btn" id="iv-sp-reset-lb-prompt" style="margin-top:4px">${I.refresh}<span>Reset to Default</span></button>
           </div>
           <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:5px">
             <div class="iv-sp-label" style="margin-bottom:2px">Character fields sent to AI context</div>
@@ -433,6 +439,22 @@
             </div>
             <div id="iv-sp-ov-ce-alt-greetings-picker" style="display:none;margin-top:4px;padding-left:14px"></div>
           </div>
+          <div class="iv-sp-ov-check-row">
+            <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-lb-ai-enabled"><span>Lorebook AI Edits</span></label>
+            <button class="iv-sp-ov-clear" data-ovkey="lorebookAIManageEnabled" title="Clear override" disabled>↺</button>
+          </div>
+          <div class="iv-sp-ov-check-row">
+            <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-lb-auto-kw"><span>Auto-Keywords</span></label>
+            <button class="iv-sp-ov-clear" data-ovkey="lorebookAutoKeyword" title="Clear override" disabled>↺</button>
+          </div>
+          <div class="iv-sp-ov-label-row" style="margin-top:4px">
+            <label class="iv-sp-ov-label iv-sp-label" data-ovkey="lorebookManagePrompt">Lorebook Edit Prompt</label>
+            <button class="iv-sp-ov-clear" data-ovkey="lorebookManagePrompt" title="Clear override" disabled>↺</button>
+          </div>
+          <div style="margin-bottom:8px">
+            <div id="iv-sp-ov-lb-preset-manager"></div>
+          </div>
+          <textarea class="iv-sp-textarea" id="iv-sp-ov-lb-manage-prompt" rows="3" placeholder="Use global..."></textarea>
           <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:5px">
               <div class="iv-sp-label" style="margin-bottom:2px">Third-party Extension Support</div>
               <div class="iv-sp-ov-check-row">

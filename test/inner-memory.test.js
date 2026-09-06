@@ -376,12 +376,15 @@ test('the extension-authored payload says simulation, never roleplay', async () 
 
     // The system prompt itself carries the simulation framing.
     const sys = await buildSystemContent(settings);
-    assert.ok(/simulation/i.test(sys));
-    assert.ok(!/role-?play/i.test(sys));
+    const sysWithoutLbManage = sys.replace(/<lorebook_management>[\s\S]*?<\/lorebook_management>/g, '');
+    assert.ok(/simulation/i.test(sysWithoutLbManage));
+    assert.ok(!/role-?play/i.test(sysWithoutLbManage));
 
     // And no extension-authored part of the payload says roleplay. Main-chat
-    // content is story text, so keep it neutral here.
-    const text = payloadText(await assembleMessages(conv, settings, null));
+    // content is story text, so keep it neutral here. The restored lorebook
+    // AI-manage prompt is Copilot wording and keeps its own "roleplay".
+    const text = payloadText(await assembleMessages(conv, settings, null))
+        .replace(/<lorebook_management>[\s\S]*?<\/lorebook_management>/g, '');
     assert.ok(!/role-?play/i.test(text));
 });
 

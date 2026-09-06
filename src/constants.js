@@ -172,6 +172,62 @@ Process: Output \`tool_call\` JSON block -> Receive result -> Finalize response.
 </output_format>`;
 export const TOOL_CALL_FORMAT_BLOCK = `\`\`\`tool_call\n{"name": "tool_name","input": {"parameter_name": "value"}}\n\`\`\``;
 
+export const DEFAULT_LB_MANAGE_PROMPT = `<context>
+A Lorebook (or World Info) is a dynamic memory system used in roleplay to store and seamlessly retrieve facts about the world, characters, locations, items, and lore. When specific keywords (\`triggers\`) are mentioned in the chat, the system secretly injects the corresponding \`content\` into the AI's prompt.
+</context>
+
+<system_mechanics>
+After you generate a proposal, a background script extracts your \`lorebook-changes\` block for the user's UI. Once the user makes a decision, the system AUTOMATICALLY DELETES the code block from your message history to save context tokens.
+</system_mechanics>
+
+<content_standards>
+- Style: Token-dense, encyclopedic, objective.
+- Anchor Rule: Content MUST start with "[Subject Name] is/was". No pronouns/articles at the start.
+- Anti-Cliché: R Actively reject statistically overused LLM names (e.g., Elara, Kael, Lyra). Invent highly original, phonetically distinct names strictly grounded in the specific setting's culture.
+</content_standards>
+
+<outlet_entries_info>
+Outlet entries (position=5) are reusable content blocks injected wherever {{outlet::outlet_name}} macro appears in other prompts or scenarios. They are NOT directly added to context.
+To create an outlet entry: use "add" action with "outlet":true and "outlet_name":"your_outlet_name".
+To convert an existing entry to outlet: use "edit" with "outlet":true and "outlet_name":"your_outlet_name".
+Active outlet entries are listed in lorebook_context under "Outlet Entries" (if exists).
+</outlet_entries_info>
+
+<modification_protocol>
+- \`add\` / \`delete\`: entry from lorebook.
+- \`prepend\` / \`append\`: Insert text EXACTLY BEFORE or AFTER existing entry content.
+- \`edit\`: Total rewrite (<300 words entries only).
+- \`patch\`: Default for entries. 
+   - Triggers: Use specific nouns.
+   - Boundary Syntax: "First 3 words || Last 3 words" (string-string match). 
+     * BAD: "The ancient castle was built in 1240 by a grumpy dwarf."
+     * GOOD: "The ancient castle || grumpy dwarf."
+</modification_protocol>
+
+<output_requirement>
+MANDATORY: Proposals MUST be contained in a \`lorebook-changes\` block at the absolute end.
+Active lorebooks (use sctrict-strict match): {{active_lorebooks}}
+
+Explain reasoning to the Human briefly, then provide the block: 
+{{lorebook_output}}
+</output_requirement>`;
+
+export const LB_FORMAT_BLOCK = `\`\`\`lorebook-changes
+{"changes":[
+  {"action":"add","worldName":"BookName","name":"EntryName","triggers":["keyword"],"content":"Entry content","constant":false},
+  {"action":"add","worldName":"BookName","name":"OutletEntry","content":"Outlet content here","outlet":true,"outlet_name":"my_outlet_name"},
+  {"action":"delete","worldName":"BookName","uid":123,"name":"EntryName"}
+  {"action":"prepend","worldName":"BookName","uid":123,"content":"Text to add at the start"},
+  {"action":"append","worldName":"BookName","uid":123,"content":"Text to add at the end"},
+  {"action":"edit","worldName":"BookName","uid":123,"name":"NewName","triggers":null | ["newKw"],"content":"New content","constant":false},
+  {"action":"patch","worldName":"BookName","uid":123,"triggers":null | ["newKw"],"patches":[{"anchor":"first || last","replace":"replacement"}]},
+]}
+\`\`\`
+
+Triggers field rules:
+- Omit or set \`null\` to keep the original triggers unchanged (preferred for patches, appends and partial edits)
+- Provide an array to set new triggers`;
+
     // ─── Changelog Data ──────────────────────────────────────────────────────────
 export const CHANGELOG = [
     {
@@ -407,6 +463,44 @@ export const TOOL_DEFINITIONS = [
                 required: ['queries'],
             },
         },
+        {
+            id: 'search_lorebook',
+            name: 'search_lorebook_entry',
+            label: 'Search Lorebook Entries',
+            icon: 'fa-book',
+            description: 'Search for entries in active lorebooks by name, keyword, or content. Supports fuzzy matching and regex. Can filter by constant or outlet type.',
+            settingKey: 'toolsEnabled_search_lorebook',
+            schema: {
+                type: 'object',
+                properties: {
+                    queries: { 
+                        type: 'array', 
+                        items: { type: 'string' }, 
+                        description: 'One or more text queries or regexes to search for in entry names, keys, and content (prefix with / for regex, e.g. ["/elf.*/i", "elve"]). Returns matches if ANY query matches.' 
+                    },
+                    book_name: { type: 'string', description: 'Specific lorebook name to search (optional)' },
+                    search_in: { type: 'string', enum: ['all', 'name', 'keys', 'content'], description: 'Where to search (default: all)' },
+                    only_constant: { type: 'boolean', description: 'If true, return only constant (always-active) entries' },
+                    only_outlet: { type: 'boolean', description: 'If true, return only outlet entries (injected via {{outlet::name}} macro)' },
+                },
+                required: ['queries'],
+            },
+        },
+        {
+            id: 'get_lorebooks',
+            name: 'get_lorebooks',
+            label: 'Get Lorebooks',
+            icon: 'fa-book-open',
+            description: 'Get all active lorebook names. Optionally list entry names and types for each book.',
+            settingKey: 'toolsEnabled_get_lorebooks',
+            schema: {
+                type: 'object',
+                properties: {
+                    include_entries: { type: 'boolean', description: 'If true, include entry names/types for each lorebook' },
+                    book_name: { type: 'string', description: 'When include_entries is true, limit to this specific lorebook (optional)' },
+                },
+            },
+        },
                         {
             id: 'ask_user',
             name: 'ask_user',
@@ -464,6 +558,7 @@ export const I = {
         bot: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><g transform="translate(12 13.2) scale(1.32) translate(-12 -13.2)"><path d="M3.6 12.2 c0-2.4 1.1-4.7 2.9-6.3 q-1.5 2.2-1.4 4.7 c 1.8-.2 3 1 3 2.7 a2.7 2.7 0 0 1-2.8 2.8 q-1.7 0-1.7-1.9 Z"/><path d="M14 12.2 c0-2.4 1.1-4.7 2.9-6.3 q-1.5 2.2-1.4 4.7 c 1.8-.2 3 1 3 2.7 a2.7 2.7 0 0 1-2.8 2.8 q-1.7 0-1.7-1.9 Z"/></g></svg>`,
         user: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
         stop: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>`,
+        book: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`,
         opacity: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 0 20z" fill="currentColor"/></svg>`,
         check: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
         gear: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
@@ -476,6 +571,8 @@ export const I = {
         chevronRight: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>`,
         chevronUp: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="18 15 12 9 6 15"/></svg>`,
         chevronDown: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`,
+        chevron: `<svg class="iv-sess-chevron" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`,
+        menu: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>`,
     };
 
 export const QP_ICON_POOL = [

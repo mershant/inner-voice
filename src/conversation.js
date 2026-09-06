@@ -8,6 +8,7 @@ import {
     LEGACY_TOOLS_PROMPTS,
     DEFAULT_PORTRAY_PROMPT,
     LEGACY_PORTRAY_PROMPTS,
+    DEFAULT_LB_MANAGE_PROMPT,
     THEME_PRESETS
 } from './constants.js';
 import { _dbgAdd, _dbgDiffSettings } from './utils/util-debug.js';
@@ -132,6 +133,8 @@ export function getSettings() {
         toolsEnabled_ask_user: true,
         toolsEnabled_get_chat_stats: true,
         toolsEnabled_get_recent_messages: true,
+        toolsEnabled_search_lorebook: true,
+        toolsEnabled_get_lorebooks: true,
         includeSummaryception: true,
         lorebookAutoKeyword: true,
         lorebookSelectedBooks: [],
@@ -139,6 +142,8 @@ export function getSettings() {
         lorebookSTScanDepth: 5,
         lorebookCopilotScanDepth: 6,
         lorebookExcludedBooks: [],
+        lorebookAIManageEnabled: true,
+        lorebookManagePrompt: DEFAULT_LB_MANAGE_PROMPT,
         includeCharacterCard: true,
         charEditFields: {
             tags: true, description: true, personality: true,

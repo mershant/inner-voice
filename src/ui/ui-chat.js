@@ -10,6 +10,8 @@ import { stripMemoryBlock } from '../features/feature-memory.js';
 import { splitPortraySignal } from '../portray-signal.js';
 import { parseToolCallsFromText } from '../features/feature-tools-engine.js';
 import { postProcessToolCalls } from '../features/feature-tools-ui.js';
+import { parseLBChangesFromText, stripLBChangesBlock } from '../features/feature-lorebook.js';
+import { renderProposalCard, appendLBHistoryEl } from '../features/feature-lorebook-ui.js';
 
 let apiMod = null;
 import('../api.js').then(m => apiMod = m);
@@ -411,6 +413,8 @@ export function extractToolCallPlaceholders(text, startIndex = 0) {
 export function _renderMsgBodyContent(msgEl, msg) {
     const settings = getSettings();
     msgEl.querySelectorAll('.iv-tool-call-item').forEach(c => c.remove());
+    msgEl.querySelectorAll('.iv-lb-proposal-card').forEach(c => c.remove());
+    msgEl.querySelectorAll('.iv-msg-hist-wrap').forEach(c => c.remove());
 
     const cleanContent = stripMemoryBlock(splitPortraySignal(msg.content).visible);
     let displayText = cleanContent;
@@ -456,8 +460,30 @@ export function _renderMsgBodyContent(msgEl, msg) {
     const contentEl = msgEl.querySelector('.iv-msg-content');
 
     if (contentEl) {
-        contentEl.innerHTML = renderMarkdown(getDisplayContent(displayText, settings).content);
-        postProcessHTMLBlocks(contentEl);
+        const lbChanges = parseLBChangesFromText(msg.content);
+        if (lbChanges?.length) {
+            const stripped = stripLBChangesBlock(displayText);
+            contentEl.innerHTML = renderMarkdown(getDisplayContent(stripped, settings).content);
+            postProcessHTMLBlocks(contentEl);
+            renderProposalCard(lbChanges, msgEl);
+        } else {
+            contentEl.innerHTML = renderMarkdown(getDisplayContent(displayText, settings).content);
+            postProcessHTMLBlocks(contentEl);
+        }
+    }
+
+    const currentSwipe = msg.swipes?.[msg.swipeIndex || 0];
+    if (currentSwipe?.historyLines?.length) {
+        const hw = document.createElement('div');
+        hw.className = 'iv-msg-hist-wrap';
+        const cEl = document.createElement('div');
+        cEl.className = 'iv-msg-content iv-lb-history-content';
+        cEl.style.cssText = 'margin-top:10px; padding:8px 12px; background:var(--iv-accent-bg); border:1px solid var(--iv-accent-dim); border-radius:6px;';
+        import('../features/feature-lorebook-ui.js').then(m => m.renderLBHistoryContent({ appliedLines: currentSwipe.historyLines }, cEl));
+        hw.appendChild(cEl);
+        const swipeBar = body.querySelector('.iv-swipe-bar');
+        if (swipeBar) body.insertBefore(hw, swipeBar);
+        else body.appendChild(hw);
     }
 
     _updateMsgTokenCount(msgEl, msg.content, true);
@@ -928,6 +954,51 @@ export function setupMessagesScrollTracking() {
 
 // ─── Message List and Handlers ──────────────────────────────────────────
 
+export function addHistoryToSwipe(msgId, newLines, charName = null) {
+    if (!msgId) return false;
+    const conversation = getConversation();
+    const msg = conversation.messages.find(m => m.id === msgId);
+    if (!msg) return false;
+    if (!msg.swipes) msg.swipes = [{ content: msg.content, reasoning: msg.reasoning }];
+    const currentSwipe = msg.swipes[msg.swipeIndex || 0];
+    if (!currentSwipe.historyLines) currentSwipe.historyLines = [];
+    currentSwipe.historyLines.push(...newLines);
+    if (charName && !currentSwipe._charName) currentSwipe._charName = charName;
+    saveConversation();
+
+    const msgEl = document.querySelector(`.iv-msg[data-id="${msgId}"]`);
+    if (msgEl) {
+        let body = msgEl.querySelector('.iv-msg-body');
+        if (body) {
+            let histWrap = body.querySelector('.iv-msg-hist-wrap');
+            if (!histWrap) {
+                histWrap = document.createElement('div');
+                histWrap.className = 'iv-msg-hist-wrap';
+                body.appendChild(histWrap);
+            }
+            const dummyMsg = { appliedLines: currentSwipe.historyLines };
+            const contentEl = document.createElement('div');
+            contentEl.className = 'iv-msg-content iv-lb-history-content';
+            contentEl.style.marginTop = '10px';
+            contentEl.style.padding = '8px 12px';
+            contentEl.style.background = 'var(--iv-accent-bg)';
+            contentEl.style.border = '1px solid var(--iv-accent-dim)';
+            contentEl.style.borderRadius = '6px';
+
+            import('../features/feature-lorebook-ui.js').then(m => {
+                m.renderLBHistoryContent(dummyMsg, contentEl);
+                histWrap.innerHTML = '';
+                histWrap.appendChild(contentEl);
+            });
+
+            const swipeBar = body.querySelector('.iv-swipe-bar');
+            if (swipeBar) body.insertBefore(histWrap, swipeBar);
+            else body.appendChild(histWrap);
+        }
+    }
+    return true;
+}
+
 export function handleCopy(msg) { copyText(msg.content); }
 
 export function handleEdit(wrapEl, msg) {
@@ -973,8 +1044,15 @@ export function handleEdit(wrapEl, msg) {
         const nc = document.createElement('div');
         nc.className = 'iv-msg-content';
 
+        const lbChanges = parseLBChangesFromText(textToRender);
+        let stripped = textToRender;
+        if (lbChanges?.length) {
+            stripped = stripLBChangesBlock(stripped);
+            renderProposalCard(lbChanges, wrapEl);
+        } else document.querySelector(`.iv-lb-proposal-card[data-for="${msg.id}"]`)?.remove();
+
         let tcIndex = 0;
-        const resR = extractToolCallPlaceholders(textToRender, tcIndex);
+        const resR = extractToolCallPlaceholders(stripped, tcIndex);
         const displayString = getDisplayContent(resR.text, getSettings()).content;
 
         nc.innerHTML = renderMarkdown(displayString);
@@ -1290,6 +1368,10 @@ export function renderConversation(conversation) {
         return;
     }
     for (const msg of conversation.messages) {
+        if (msg.isLBHistory) {
+            appendLBHistoryEl(msg);
+            continue;
+        }
         const anchor = msg.anchorIndex === undefined ? null : msg.anchorIndex;
         const segment = ensureSegment(c, conversation, anchor);
         const el = createMsgEl(msg, handleCopy, handleEdit, handleDelete, handleMessageRegen);
@@ -1333,6 +1415,7 @@ export function appendMsgEl(msg, isStreamInit = false) {
 export function removeMsgEl(msgId) {
     const el = document.querySelector(`.iv-msg[data-id="${msgId}"]`);
     if (!el) return;
+    document.querySelector(`.iv-lb-proposal-card[data-for="${msgId}"]`)?.remove();
     el.remove();
     pruneSegments();
     _refreshContinueBtns();
@@ -1344,7 +1427,10 @@ export function removeMsgElAndBelow(msgId) {
     let found = false;
     for (const el of [...c.querySelectorAll('.iv-msg')]) {
         if (el.dataset.id === msgId) found = true;
-        if (found) el.remove();
+        if (found) {
+            document.querySelector(`.iv-lb-proposal-card[data-for="${el.dataset.id}"]`)?.remove();
+            el.remove();
+        }
     }
     pruneSegments();
     _refreshContinueBtns();
@@ -1355,7 +1441,10 @@ export function removeMsgElAfter(msgId) {
     const c = document.getElementById('iv-messages'); if (!c) return;
     let found = false;
     for (const el of [...c.querySelectorAll('.iv-msg')]) {
-        if (found) el.remove();
+        if (found) {
+            document.querySelector(`.iv-lb-proposal-card[data-for="${el.dataset.id}"]`)?.remove();
+            el.remove();
+        }
         if (el.dataset.id === msgId) found = true;
     }
     pruneSegments();

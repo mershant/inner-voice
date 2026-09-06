@@ -391,7 +391,8 @@ export function applyCustomTheme(theme) {
         windowEl, 
         iconEl, 
         document.getElementById('iv-settings-overlay'), 
-        document.getElementById('iv-picker-overlay')
+        document.getElementById('iv-picker-overlay'),
+        document.getElementById('iv-lb-overlay')
     ].filter(Boolean);
     const s = getSettings();
     

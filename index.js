@@ -172,6 +172,62 @@ Process: Output \`tool_call\` JSON block -> Receive result -> Finalize response.
 </output_format>`;
 const TOOL_CALL_FORMAT_BLOCK = `\`\`\`tool_call\n{"name": "tool_name","input": {"parameter_name": "value"}}\n\`\`\``;
 
+const DEFAULT_LB_MANAGE_PROMPT = `<context>
+A Lorebook (or World Info) is a dynamic memory system used in roleplay to store and seamlessly retrieve facts about the world, characters, locations, items, and lore. When specific keywords (\`triggers\`) are mentioned in the chat, the system secretly injects the corresponding \`content\` into the AI's prompt.
+</context>
+
+<system_mechanics>
+After you generate a proposal, a background script extracts your \`lorebook-changes\` block for the user's UI. Once the user makes a decision, the system AUTOMATICALLY DELETES the code block from your message history to save context tokens.
+</system_mechanics>
+
+<content_standards>
+- Style: Token-dense, encyclopedic, objective.
+- Anchor Rule: Content MUST start with "[Subject Name] is/was". No pronouns/articles at the start.
+- Anti-Cliché: R Actively reject statistically overused LLM names (e.g., Elara, Kael, Lyra). Invent highly original, phonetically distinct names strictly grounded in the specific setting's culture.
+</content_standards>
+
+<outlet_entries_info>
+Outlet entries (position=5) are reusable content blocks injected wherever {{outlet::outlet_name}} macro appears in other prompts or scenarios. They are NOT directly added to context.
+To create an outlet entry: use "add" action with "outlet":true and "outlet_name":"your_outlet_name".
+To convert an existing entry to outlet: use "edit" with "outlet":true and "outlet_name":"your_outlet_name".
+Active outlet entries are listed in lorebook_context under "Outlet Entries" (if exists).
+</outlet_entries_info>
+
+<modification_protocol>
+- \`add\` / \`delete\`: entry from lorebook.
+- \`prepend\` / \`append\`: Insert text EXACTLY BEFORE or AFTER existing entry content.
+- \`edit\`: Total rewrite (<300 words entries only).
+- \`patch\`: Default for entries. 
+   - Triggers: Use specific nouns.
+   - Boundary Syntax: "First 3 words || Last 3 words" (string-string match). 
+     * BAD: "The ancient castle was built in 1240 by a grumpy dwarf."
+     * GOOD: "The ancient castle || grumpy dwarf."
+</modification_protocol>
+
+<output_requirement>
+MANDATORY: Proposals MUST be contained in a \`lorebook-changes\` block at the absolute end.
+Active lorebooks (use sctrict-strict match): {{active_lorebooks}}
+
+Explain reasoning to the Human briefly, then provide the block: 
+{{lorebook_output}}
+</output_requirement>`;
+
+const LB_FORMAT_BLOCK = `\`\`\`lorebook-changes
+{"changes":[
+  {"action":"add","worldName":"BookName","name":"EntryName","triggers":["keyword"],"content":"Entry content","constant":false},
+  {"action":"add","worldName":"BookName","name":"OutletEntry","content":"Outlet content here","outlet":true,"outlet_name":"my_outlet_name"},
+  {"action":"delete","worldName":"BookName","uid":123,"name":"EntryName"}
+  {"action":"prepend","worldName":"BookName","uid":123,"content":"Text to add at the start"},
+  {"action":"append","worldName":"BookName","uid":123,"content":"Text to add at the end"},
+  {"action":"edit","worldName":"BookName","uid":123,"name":"NewName","triggers":null | ["newKw"],"content":"New content","constant":false},
+  {"action":"patch","worldName":"BookName","uid":123,"triggers":null | ["newKw"],"patches":[{"anchor":"first || last","replace":"replacement"}]},
+]}
+\`\`\`
+
+Triggers field rules:
+- Omit or set \`null\` to keep the original triggers unchanged (preferred for patches, appends and partial edits)
+- Provide an array to set new triggers`;
+
     // ─── Changelog Data ──────────────────────────────────────────────────────────
 const CHANGELOG = [
     {
@@ -407,6 +463,44 @@ const TOOL_DEFINITIONS = [
                 required: ['queries'],
             },
         },
+        {
+            id: 'search_lorebook',
+            name: 'search_lorebook_entry',
+            label: 'Search Lorebook Entries',
+            icon: 'fa-book',
+            description: 'Search for entries in active lorebooks by name, keyword, or content. Supports fuzzy matching and regex. Can filter by constant or outlet type.',
+            settingKey: 'toolsEnabled_search_lorebook',
+            schema: {
+                type: 'object',
+                properties: {
+                    queries: { 
+                        type: 'array', 
+                        items: { type: 'string' }, 
+                        description: 'One or more text queries or regexes to search for in entry names, keys, and content (prefix with / for regex, e.g. ["/elf.*/i", "elve"]). Returns matches if ANY query matches.' 
+                    },
+                    book_name: { type: 'string', description: 'Specific lorebook name to search (optional)' },
+                    search_in: { type: 'string', enum: ['all', 'name', 'keys', 'content'], description: 'Where to search (default: all)' },
+                    only_constant: { type: 'boolean', description: 'If true, return only constant (always-active) entries' },
+                    only_outlet: { type: 'boolean', description: 'If true, return only outlet entries (injected via {{outlet::name}} macro)' },
+                },
+                required: ['queries'],
+            },
+        },
+        {
+            id: 'get_lorebooks',
+            name: 'get_lorebooks',
+            label: 'Get Lorebooks',
+            icon: 'fa-book-open',
+            description: 'Get all active lorebook names. Optionally list entry names and types for each book.',
+            settingKey: 'toolsEnabled_get_lorebooks',
+            schema: {
+                type: 'object',
+                properties: {
+                    include_entries: { type: 'boolean', description: 'If true, include entry names/types for each lorebook' },
+                    book_name: { type: 'string', description: 'When include_entries is true, limit to this specific lorebook (optional)' },
+                },
+            },
+        },
                         {
             id: 'ask_user',
             name: 'ask_user',
@@ -464,6 +558,7 @@ const I = {
         bot: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><g transform="translate(12 13.2) scale(1.32) translate(-12 -13.2)"><path d="M3.6 12.2 c0-2.4 1.1-4.7 2.9-6.3 q-1.5 2.2-1.4 4.7 c 1.8-.2 3 1 3 2.7 a2.7 2.7 0 0 1-2.8 2.8 q-1.7 0-1.7-1.9 Z"/><path d="M14 12.2 c0-2.4 1.1-4.7 2.9-6.3 q-1.5 2.2-1.4 4.7 c 1.8-.2 3 1 3 2.7 a2.7 2.7 0 0 1-2.8 2.8 q-1.7 0-1.7-1.9 Z"/></g></svg>`,
         user: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`,
         stop: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>`,
+        book: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`,
         opacity: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 1 0 20z" fill="currentColor"/></svg>`,
         check: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
         gear: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
@@ -476,6 +571,8 @@ const I = {
         chevronRight: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>`,
         chevronUp: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="18 15 12 9 6 15"/></svg>`,
         chevronDown: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`,
+        chevron: `<svg class="iv-sess-chevron" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>`,
+        menu: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>`,
     };
 
 const QP_ICON_POOL = [
@@ -499,6 +596,10 @@ const state = {
     searchOpen: false,
     searchWholeWord: false,
     searchHotkeyHandler: null,
+    lbActiveBook: null,
+    lbSearchQuery: '',
+    lbEntryDetailEntry: null,
+    lbEntryDetailBook: null,
     lastChatLen: -1,
     currentSegmentAnchor: null,
     userScrolledUp: false,
@@ -679,13 +780,13 @@ function dbgDownload() {
 }
 
 var utilDebug = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    _dbgAdd: _dbgAdd,
-    _dbgDiffSettings: _dbgDiffSettings,
-    _dbgSetupGlobalErrorHandlers: _dbgSetupGlobalErrorHandlers,
-    _dbgSnapshotSettings: _dbgSnapshotSettings,
-    _dbgStrip: _dbgStrip,
-    dbgDownload: dbgDownload
+  __proto__: null,
+  _dbgAdd: _dbgAdd,
+  _dbgDiffSettings: _dbgDiffSettings,
+  _dbgSetupGlobalErrorHandlers: _dbgSetupGlobalErrorHandlers,
+  _dbgSnapshotSettings: _dbgSnapshotSettings,
+  _dbgStrip: _dbgStrip,
+  dbgDownload: dbgDownload
 });
 
 function _repairJSON(raw) {
@@ -727,6 +828,164 @@ function normalizeCharNamesInBlock(text) {
         }
         return r;
     });
+}
+
+function applySearchReplaceToField(fieldContent, searchText, replaceText) {
+    if (!fieldContent) return { result: replaceText || '', matched: true };
+    const src = fieldContent;
+    const srch = searchText || '';
+    const repl = replaceText || '';
+
+    function levenshtein(a, b) {
+        if (a === b) return 0;
+        let l1 = a.length, l2 = b.length;
+        if (l1 === 0) return l2;
+        if (l2 === 0) return l1;
+        let prev = new Int32Array(l2 + 1);
+        let curr = new Int32Array(l2 + 1);
+        for (let j = 0; j <= l2; j++) prev[j] = j;
+        for (let i = 1; i <= l1; i++) {
+            curr[0] = i;
+            for (let j = 1; j <= l2; j++) {
+                let cost = (a.charAt(i - 1) === b.charAt(j - 1)) ? 0 : 1;
+                curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+            }
+            let temp = prev; prev = curr; curr = temp;
+        }
+        return prev[l2];
+    }
+
+    function getTokenSimilarity(t1, t2) {
+        if (t1 === t2) return 1.0;
+        if (t1.length >= 3 && t2.length >= 3) {
+            if (t1.startsWith(t2) || t2.startsWith(t1)) return 0.85;
+        }
+        const dist = levenshtein(t1, t2);
+        return 1 - (dist / Math.max(t1.length, t2.length));
+    }
+
+    function getTokensWithOffsets(text) {
+        const tokens = [];
+        const re = /[a-zA-Z0-9\u00C0-\u00FF]+/g;
+        let match;
+        while ((match = re.exec(text)) !== null) {
+            tokens.push({ text: match[0].toLowerCase(), start: match.index, end: re.lastIndex });
+        }
+        return tokens;
+    }
+
+    function findFuzzyRange(srcText, queryText, minScore = 0.72) {
+        const srcTokens = getTokensWithOffsets(srcText);
+        const queryTokens = queryText.toLowerCase().match(/[a-zA-Z0-9\u00C0-\u00FF]+/g) || [];
+
+        if (!queryTokens.length) {
+            const litIdx = srcText.indexOf(queryText.trim());
+            if (litIdx !== -1) return { start: litIdx, end: litIdx + queryText.trim().length, score: 1.0 };
+            return null;
+        }
+        if (!srcTokens.length) return null;
+
+        let bestScore = 0;
+        let bestStartIdx = -1;
+        let bestEndIdx = -1;
+
+        const minWinSize = Math.max(1, queryTokens.length - 1);
+        const maxWinSize = queryTokens.length + 1;
+
+        for (let winSize = minWinSize; winSize <= maxWinSize; winSize++) {
+            for (let i = 0; i <= srcTokens.length - winSize; i++) {
+                const windowTokens = srcTokens.slice(i, i + winSize);
+                let totalSim = 0;
+                const compareCount = Math.max(queryTokens.length, windowTokens.length);
+                for (let j = 0; j < compareCount; j++) {
+                    const qT = queryTokens[j];
+                    const wT = windowTokens[j]?.text;
+                    if (qT && wT) totalSim += getTokenSimilarity(qT, wT);
+                }
+                const score = totalSim / compareCount;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestStartIdx = i;
+                    bestEndIdx = i + winSize - 1;
+                }
+            }
+        }
+
+        if (bestScore >= minScore) {
+            let startPos = srcTokens[bestStartIdx].start;
+            let endPos = srcTokens[bestEndIdx].end;
+
+            const qLower = queryText.toLowerCase();
+            const lastQTok = queryTokens[queryTokens.length - 1];
+            const lastTokIdx = qLower.lastIndexOf(lastQTok);
+            if (lastTokIdx !== -1) {
+                const trailMatch = queryText.slice(lastTokIdx + lastQTok.length).match(/^[^a-zA-Z0-9\u00C0-\u00FF]+/);
+                if (trailMatch && srcText.slice(endPos, endPos + trailMatch[0].length) === trailMatch[0]) {
+                    endPos += trailMatch[0].length;
+                }
+            }
+
+            const firstQTok = queryTokens[0];
+            const firstTokIdx = qLower.indexOf(firstQTok);
+            if (firstTokIdx > 0) {
+                const leadMatch = queryText.slice(0, firstTokIdx).match(/[^a-zA-Z0-9\u00C0-\u00FF]+$/);
+                if (leadMatch && srcText.slice(startPos - leadMatch[0].length, startPos) === leadMatch[0]) {
+                    startPos -= leadMatch[0].length;
+                }
+            }
+
+            return { start: startPos, end: endPos, score: bestScore };
+        }
+        return null;
+    }
+
+    if (srch.trim()) {
+        const exactIdx = src.indexOf(srch.trim());
+        if (exactIdx !== -1) {
+            return {
+                result: src.slice(0, exactIdx) + repl + src.slice(exactIdx + srch.trim().length),
+                matched: true
+            };
+        }
+    }
+
+    let sepIdx = srch.indexOf(' || ');
+    let sepLen = 4;
+    if (sepIdx === -1) { sepIdx = srch.indexOf('||'); sepLen = 2; }
+    if (sepIdx === -1) { sepIdx = srch.indexOf('...'); sepLen = 3; }
+
+    if (sepIdx !== -1 && sepIdx > 0 && srch.length - sepIdx - sepLen > 0) {
+        const startPart = srch.slice(0, sepIdx).trim();
+        const endPart = srch.slice(sepIdx + sepLen).trim();
+
+        if (startPart && endPart) {
+            const startMatch = findFuzzyRange(src, startPart);
+            if (startMatch) {
+                const remainingSrc = src.slice(startMatch.end);
+                const endMatch = findFuzzyRange(remainingSrc, endPart);
+                if (endMatch) {
+                    const absoluteEnd = startMatch.end + endMatch.end;
+                    return {
+                        result: src.slice(0, startMatch.start) + repl + src.slice(absoluteEnd),
+                        matched: true
+                    };
+                }
+            }
+        }
+    }
+
+    if (srch.trim()) {
+        const match = findFuzzyRange(src, srch);
+        if (match) {
+            return {
+                result: src.slice(0, match.start) + repl + src.slice(match.end),
+                matched: true
+            };
+        }
+    }
+
+    _dbgAdd('LB_PATCH_FUZZY_MATCH_FAILED', { search: srch, srcLength: src.length });
+    return { result: src, matched: false };
 }
 
 function _ensureWrapped(text, tag) {
@@ -860,6 +1119,8 @@ function getSettings() {
         toolsEnabled_ask_user: true,
         toolsEnabled_get_chat_stats: true,
         toolsEnabled_get_recent_messages: true,
+        toolsEnabled_search_lorebook: true,
+        toolsEnabled_get_lorebooks: true,
         includeSummaryception: true,
         lorebookAutoKeyword: true,
         lorebookSelectedBooks: [],
@@ -867,6 +1128,8 @@ function getSettings() {
         lorebookSTScanDepth: 5,
         lorebookCopilotScanDepth: 6,
         lorebookExcludedBooks: [],
+        lorebookAIManageEnabled: true,
+        lorebookManagePrompt: DEFAULT_LB_MANAGE_PROMPT,
         includeCharacterCard: true,
         charEditFields: {
             tags: true, description: true, personality: true,
@@ -1383,37 +1646,37 @@ function expandMacros(text) {
 }
 
 var conversation = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    addTurn: addTurn,
-    addTurnAt: addTurnAt,
-    clearAllConversationOverrides: clearAllConversationOverrides,
-    commitConversation: commitConversation,
-    deleteMsg: deleteMsg,
-    expandMacros: expandMacros,
-    genId: genId,
-    getBindingKey: getBindingKey,
-    getConversation: getConversation,
-    getConversationOverrides: getConversationOverrides,
-    getEffectiveSettings: getEffectiveSettings,
-    getExchangeAt: getExchangeAt,
-    getExchanges: getExchanges,
-    getLiveEdgeIndex: getLiveEdgeIndex,
-    getLiveExchange: getLiveExchange,
-    getSettings: getSettings,
-    getVisibleTurns: getVisibleTurns,
-    hasConversationOverrides: hasConversationOverrides,
-    initConversation: initConversation,
-    isAnchorHiddenInMainChat: isAnchorHiddenInMainChat,
-    isExchangeHidden: isExchangeHidden,
-    isExchangeManuallyHidden: isExchangeManuallyHidden,
-    loadConversationFile: loadConversationFile,
-    saveConversation: saveConversation,
-    saveConversationFile: saveConversationFile,
-    saveSettings: saveSettings,
-    setConversationOverride: setConversationOverride,
-    setExchangeHidden: setExchangeHidden,
-    truncateAfter: truncateAfter,
-    truncateFrom: truncateFrom
+  __proto__: null,
+  addTurn: addTurn,
+  addTurnAt: addTurnAt,
+  clearAllConversationOverrides: clearAllConversationOverrides,
+  commitConversation: commitConversation,
+  deleteMsg: deleteMsg,
+  expandMacros: expandMacros,
+  genId: genId,
+  getBindingKey: getBindingKey,
+  getConversation: getConversation,
+  getConversationOverrides: getConversationOverrides,
+  getEffectiveSettings: getEffectiveSettings,
+  getExchangeAt: getExchangeAt,
+  getExchanges: getExchanges,
+  getLiveEdgeIndex: getLiveEdgeIndex,
+  getLiveExchange: getLiveExchange,
+  getSettings: getSettings,
+  getVisibleTurns: getVisibleTurns,
+  hasConversationOverrides: hasConversationOverrides,
+  initConversation: initConversation,
+  isAnchorHiddenInMainChat: isAnchorHiddenInMainChat,
+  isExchangeHidden: isExchangeHidden,
+  isExchangeManuallyHidden: isExchangeManuallyHidden,
+  loadConversationFile: loadConversationFile,
+  saveConversation: saveConversation,
+  saveConversationFile: saveConversationFile,
+  saveSettings: saveSettings,
+  setConversationOverride: setConversationOverride,
+  setExchangeHidden: setExchangeHidden,
+  truncateAfter: truncateAfter,
+  truncateFrom: truncateFrom
 });
 
 function escHtml(str) {
@@ -1526,13 +1789,13 @@ async function _fileToDataUrl(file) {
 }
 
 var utilDom = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    _fileToDataUrl: _fileToDataUrl,
-    autoResize: autoResize,
-    copyText: copyText,
-    escHtml: escHtml,
-    fallbackCopy: fallbackCopy,
-    showCustomDialog: showCustomDialog
+  __proto__: null,
+  _fileToDataUrl: _fileToDataUrl,
+  autoResize: autoResize,
+  copyText: copyText,
+  escHtml: escHtml,
+  fallbackCopy: fallbackCopy,
+  showCustomDialog: showCustomDialog
 });
 
 function getTagsForCharacter(char) {
@@ -2136,24 +2399,24 @@ function setupMemorySettingsUI() {
 }
 
 var featureMemory = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    addMemory: addMemory,
-    buildMemoryAIInstructions: buildMemoryAIInstructions,
-    buildMemoryContextBlock: buildMemoryContextBlock,
-    clearAllMemories: clearAllMemories,
-    deleteMemory: deleteMemory,
-    editMemoryDialog: editMemoryDialog,
-    genMemoryId: genMemoryId,
-    getMemories: getMemories,
-    getVisibleMemories: getVisibleMemories,
-    parseMemoryBlockFromText: parseMemoryBlockFromText,
-    processMemoryUpdates: processMemoryUpdates,
-    renderMemoryList: renderMemoryList,
-    setupMemorySettingsUI: setupMemorySettingsUI,
-    showMemoryToast: showMemoryToast,
-    stripMemoryBlock: stripMemoryBlock,
-    updateMemory: updateMemory,
-    updateMemoryDot: updateMemoryDot
+  __proto__: null,
+  addMemory: addMemory,
+  buildMemoryAIInstructions: buildMemoryAIInstructions,
+  buildMemoryContextBlock: buildMemoryContextBlock,
+  clearAllMemories: clearAllMemories,
+  deleteMemory: deleteMemory,
+  editMemoryDialog: editMemoryDialog,
+  genMemoryId: genMemoryId,
+  getMemories: getMemories,
+  getVisibleMemories: getVisibleMemories,
+  parseMemoryBlockFromText: parseMemoryBlockFromText,
+  processMemoryUpdates: processMemoryUpdates,
+  renderMemoryList: renderMemoryList,
+  setupMemorySettingsUI: setupMemorySettingsUI,
+  showMemoryToast: showMemoryToast,
+  stripMemoryBlock: stripMemoryBlock,
+  updateMemory: updateMemory,
+  updateMemoryDot: updateMemoryDot
 });
 
 const PORTRAY_SIGNAL_PROMPT = `After the thought, if and only if the completed exchange — the latest Inner Voice line together with this thought — has become one settled course that should be acted in the scene now, append this hidden marker and end the reply:
@@ -2176,6 +2439,907 @@ function buildPortraySignalBlock(settings) {
     if (!settings?.portrayAutoTrigger) return '';
     return '\n\n' + _ensureWrapped(PORTRAY_SIGNAL_PROMPT, 'scene_now');
 }
+
+const EMBEDDED_BOOK_KEY = '__char_embedded__';
+
+const wiCache = {};
+const wiPromises = {};
+let lastActiveEntries = [];
+
+let _worldInfoMod = false;
+let _utilsMod = false;
+let _wiExternalListenerBound = false;
+
+async function loadWorldInfoMod() {
+    if (_worldInfoMod !== false) return _worldInfoMod;
+    try {
+        _worldInfoMod = await import('/scripts/world-info.js');
+    } catch (_) {
+        _worldInfoMod = null;
+    }
+    return _worldInfoMod;
+}
+
+async function loadUtilsMod() {
+    if (_utilsMod !== false) return _utilsMod;
+    try {
+        _utilsMod = await import('/scripts/utils.js');
+    } catch (_) {
+        _utilsMod = null;
+    }
+    return _utilsMod;
+}
+
+function charaFilename(character) {
+    const avatar = character?.avatar;
+    if (!avatar) return null;
+    return String(avatar).replace(/\.[^/.]+$/, '');
+}
+
+function getEmbeddedCharBook() {
+    const ctx = SillyTavern.getContext();
+    const char = ctx.characters?.[ctx.characterId];
+    const book = char?.data?.character_book;
+    if (!book?.entries?.length) return null;
+
+    const data = { entries: {}, _embedded: true };
+    (book.entries || []).forEach((e, idx) => {
+        const uid = e.id ?? e.uid ?? idx;
+        const keys = Array.isArray(e.keys) ? e.keys : (e.key || []);
+        const outlet = e.automation_id || e.automationId || e.extensions?.outlet_name || e.outletName || e.outlet_name || e.outlet || '';
+        const isOutlet = Boolean(outlet);
+        const isForceConstant = e.selective === false;
+        const disabled = e.enabled === false || e.disable === true;
+        data.entries[uid] = {
+            uid,
+            key: keys,
+            keysecondary: [],
+            content: e.content || '',
+            comment: e.comment || e.name || '',
+            disable: disabled,
+            selective: true,
+            constant: !isOutlet && (e.constant === true || isForceConstant),
+            position: isOutlet ? 7 : (e.position ?? 0),
+            displayIndex: uid,
+            automation_id: outlet,
+            outletName: outlet,
+            outlet: e.outlet || e.outlet_name || e.outletName || '',
+            group: e.group || (isOutlet ? outlet : ''),
+            role: null,
+            extensions: { outlet_name: outlet },
+            order: e.order ?? 100,
+            probability: e.probability ?? 100,
+            groupWeight: e.groupWeight ?? 100,
+            depth: 4,
+            useProbability: true,
+            addMemo: true,
+            groupOverride: false,
+            sticky: 0,
+            cooldown: 0,
+            delay: 0,
+            excludeRecursion: false,
+            preventRecursion: false,
+            delayUntilRecursion: false,
+            ignoreBudget: false,
+            vectorized: false,
+            scanDepth: null,
+            caseSensitive: null,
+            matchWholeWords: null,
+            useGroupScoring: null,
+            matchPersonaDescription: false,
+            matchCharacterDescription: false,
+            matchCharacterPersonality: false,
+            matchCharacterDepthPrompt: false,
+            matchScenario: false,
+            matchCreatorNotes: false,
+        };
+    });
+    return data;
+}
+
+function setupExternalWIChangeListener() {
+    if (_wiExternalListenerBound) return;
+    _wiExternalListenerBound = true;
+    const ctx = SillyTavern.getContext();
+    const es = ctx.eventSource || window.eventSource;
+    const et = ctx.event_types || window.event_types || {};
+    if (!es) return;
+    es.on(et.WORLDINFO_UPDATED || 'worldinfo_updated', (name) => {
+        if (name) delete wiCache[name];
+    });
+    es.on(et.WORLDINFO_SETTINGS_UPDATED || 'worldinfo_settings_updated', () => {
+        for (const key of Object.keys(wiCache)) delete wiCache[key];
+    });
+}
+
+async function fetchWorldInfoBook(name) {
+    if (name === EMBEDDED_BOOK_KEY) return getEmbeddedCharBook();
+
+    if (wiCache[name] && Date.now() - (wiCache[name]._ts || 0) < 30000) return wiCache[name];
+    if (wiPromises[name]) return wiPromises[name];
+
+    const ctx = SillyTavern.getContext();
+
+    wiPromises[name] = (async () => {
+        try {
+            let data = null;
+            if (typeof ctx.loadWorldInfo === 'function') {
+                data = await ctx.loadWorldInfo(name);
+            } else {
+                const res = await fetch('/api/worldinfo/get', {
+                    method: 'POST',
+                    headers: { ...ctx.getRequestHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name }),
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                data = await res.json();
+            }
+            if (!data) return null;
+            data._ts = Date.now();
+            wiCache[name] = data;
+            return data;
+        } catch (e) {
+            _dbgAdd('LB_LOAD_FILE_FAILED', { bookName: name, error: e.message });
+            return null;
+        } finally {
+            delete wiPromises[name];
+        }
+    })();
+
+    return wiPromises[name];
+}
+
+async function saveWorldInfoBook(name, data) {
+    if (data._embedded) { toastr.warning('Cannot save embedded character books directly.', EXT_DISPLAY); return; }
+    const ctx = SillyTavern.getContext();
+    const payload = { ...data };
+    delete payload._ts;
+    try {
+        if (typeof ctx.saveWorldInfo === 'function') {
+            await ctx.saveWorldInfo(name, payload);
+        } else {
+            const res = await fetch('/api/worldinfo/edit', {
+                method: 'POST',
+                headers: { ...ctx.getRequestHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, data: payload }),
+            });
+            if (!res.ok) {
+                const errText = await res.text().catch(() => res.statusText);
+                throw new Error(`HTTP ${res.status}: ${errText}`);
+            }
+        }
+    } catch (e) {
+        _dbgAdd('LB_SAVE_FILE_FAILED', { bookName: name, error: e.message });
+        console.error(`[${EXT_DISPLAY}] saveWorldInfoBook failed for "${name}":`, e);
+        throw e;
+    }
+    delete wiCache[name];
+
+    try {
+        if (typeof ctx.reloadWorldInfoEditor === 'function') {
+            ctx.reloadWorldInfoEditor(name, true);
+        }
+    } catch (_) {}
+}
+
+function wiEntriesToArray(data) {
+    if (!data?.entries) return [];
+    if (Array.isArray(data.entries)) return data.entries;
+    return Object.values(data.entries).sort((a, b) => (a.displayIndex ?? a.uid) - (b.displayIndex ?? b.uid));
+}
+
+function getDisplayName(name) {
+    if (name === EMBEDDED_BOOK_KEY) {
+        const ctx = SillyTavern.getContext();
+        const char = ctx.characters?.[ctx.characterId];
+        return `[${char?.name || 'Character'} Book]`;
+    }
+    return name;
+}
+
+async function getActiveLorebookNames() {
+    const ctx = SillyTavern.getContext();
+    const names = new Set();
+    const wi = await loadWorldInfoMod();
+    const utils = await loadUtilsMod();
+
+    const globalBooks = wi?.selected_world_info
+        || (typeof window !== 'undefined' && window.selected_world_info)
+        || [];
+    if (Array.isArray(globalBooks)) {
+        globalBooks.forEach(n => n && names.add(n));
+    }
+
+    const charId = ctx.characterId;
+    const character = ctx.characters?.[charId];
+    if (character) {
+        const baseWorldName = character.data?.extensions?.world || character.world;
+        if (baseWorldName && typeof baseWorldName === 'string') names.add(baseWorldName);
+
+        let fileName = charaFilename(character);
+        if (utils && typeof utils.getCharaFilename === 'function') {
+            try { fileName = utils.getCharaFilename(charId) || fileName; } catch (_) {}
+        }
+        const charLoreList = wi?.world_info?.charLore
+            || (typeof window !== 'undefined' && window.world_info?.charLore);
+        if (fileName && Array.isArray(charLoreList)) {
+            const extraCharLore = charLoreList.find(e => e.name === fileName);
+            if (extraCharLore && Array.isArray(extraCharLore.extraBooks)) {
+                extraCharLore.extraBooks.forEach(book => book && names.add(book));
+            }
+        }
+
+        if (character.data?.character_book?.entries?.length) {
+            names.add(EMBEDDED_BOOK_KEY);
+        }
+    }
+
+    const wiKey = wi?.METADATA_KEY || (typeof window !== 'undefined' && window.WI_METADATA_KEY) || 'world_info';
+    const chatWorldName = ctx.chatMetadata?.[wiKey];
+    if (chatWorldName && typeof chatWorldName === 'string') names.add(chatWorldName);
+
+    const personaWorldName = ctx.powerUserSettings?.persona_description_lorebook;
+    if (personaWorldName && typeof personaWorldName === 'string') names.add(personaWorldName);
+
+    return [...names].filter(Boolean);
+}
+
+function keywordMatchEntry(keys, text) {
+    if (!keys?.length || !text) return false;
+    const lower = text.toLowerCase();
+    return keys.some(k => {
+        if (!k) return false;
+        try {
+            const m = k.match(/^\/(.+)\/([gimsuy]*)$/);
+            if (m) return new RegExp(m[1], m[2]).test(text);
+        } catch (_) {}
+        return lower.includes(k.toLowerCase());
+    });
+}
+
+function getKeywordTriggeredEntries(allBooksData, text1, text2) {
+    const scanText = [text1, text2].filter(Boolean).join('\n');
+    const results = {};
+    for (const [bookName, data] of Object.entries(allBooksData)) {
+        const entries = wiEntriesToArray(data);
+        const matched = entries.filter(e => !e.disable && (keywordMatchEntry(e.key, scanText) || keywordMatchEntry(e.keysecondary, scanText)));
+        if (matched.length) results[bookName] = matched;
+    }
+    return results;
+}
+
+function getEntryOverrideKey(bookName, entry) {
+    let entryName = String(entry.comment || entry.name || '').trim();
+    if (!entryName && entry.key && entry.key.length) {
+        entryName = entry.key.join('_').slice(0, 40);
+    }
+    entryName = String(entryName).replace(/[\r\n]+/g, ' ').trim();
+    return entryName ? `${bookName}_${entryName}` : `${bookName}_${entry.uid}`;
+}
+
+async function buildLorebookContextBlock(settings) {
+    lastActiveEntries = [];
+    const selectedBooks = settings.lorebookSelectedBooks || [];
+    const excludedBooks = new Set(settings.lorebookExcludedBooks || []);
+    const overrides = settings.lorebookEntryOverrides || {};
+    const loadedBooks = {};
+    const _activeNamesSet = new Set(await getActiveLorebookNames());
+
+    if (!_activeNamesSet.size) return '';
+
+    await Promise.all([..._activeNamesSet].map(async name => {
+        if (excludedBooks.has(name)) return;
+        const data = await fetchWorldInfoBook(name);
+        if (data) loadedBooks[name] = data;
+    }));
+
+    if (!Object.keys(loadedBooks).length) return '';
+
+    let keywordEntries = {};
+    if (settings.lorebookAutoKeyword) {
+        const ctx = SillyTavern.getContext();
+        const msgs = ctx.chat || [];
+        let lastUser = '', lastChar = '';
+
+        try {
+            const conv = getConversation();
+            const picked = conv.pickedChatIndices;
+            if (picked && picked.length > 0) {
+                const pickedMsgs = picked.filter(i => i >= 0 && i < msgs.length).map(i => msgs[i]);
+                lastUser = pickedMsgs.filter(m => m.is_user).map(m => m.mes).join('\n');
+                lastChar = pickedMsgs.filter(m => !m.is_user).map(m => m.mes).join('\n');
+            } else {
+                const stDepth = Math.max(1, settings.lorebookSTScanDepth ?? 5);
+                const recentMsgs = msgs.slice(-stDepth);
+                lastUser = recentMsgs.filter(m => m.is_user).map(m => m.mes).join('\n');
+                lastChar = recentMsgs.filter(m => !m.is_user).map(m => m.mes).join('\n');
+            }
+        } catch (_) {
+            const stDepth = Math.max(1, settings.lorebookSTScanDepth ?? 5);
+            const recentMsgs = msgs.slice(-stDepth);
+            lastUser = recentMsgs.filter(m => m.is_user).map(m => m.mes).join('\n');
+            lastChar = recentMsgs.filter(m => !m.is_user).map(m => m.mes).join('\n');
+        }
+
+        let copilotScanText = '';
+        try {
+            const conv = getConversation();
+            const copilotDepth = settings.lorebookCopilotScanDepth ?? 6;
+            copilotScanText = conv.messages
+                .filter(m => !m.isLBHistory)
+                .slice(-copilotDepth)
+                .map(m => m.content)
+                .join('\n');
+        } catch (_) {}
+
+        keywordEntries = getKeywordTriggeredEntries(loadedBooks, lastUser + '\n' + lastChar, copilotScanText);
+    }
+
+    const toInject = {};
+    const outletLines = [];
+    let overridesChanged = false;
+
+    for (const [bookName, data] of Object.entries(loadedBooks)) {
+        for (const entry of wiEntriesToArray(data)) {
+            if (!entry.content) continue;
+
+            const oldKey = `${bookName}_${entry.uid}`;
+            const newKey = getEntryOverrideKey(bookName, entry);
+
+            if (oldKey !== newKey && overrides[oldKey] !== undefined) {
+                overrides[newKey] = overrides[oldKey];
+                delete overrides[oldKey];
+                overridesChanged = true;
+            }
+
+            const override = overrides[newKey];
+            if (override === false) continue;
+
+            const isConstant = !!entry.constant && !entry.disable;
+            const manualInclude = selectedBooks.includes(bookName);
+            const keywordInclude = keywordEntries[bookName]?.some(e => e.uid === entry.uid);
+
+            if (override === true || isConstant || manualInclude || keywordInclude) {
+                const outletField = (entry.outlet || entry.outlet_name || entry.outletName || entry.automation_id || entry.automationId || '').trim();
+                const isOutletPos = String(entry.position).toLowerCase() === 'outlet' || String(entry.position) === '7';
+                const finalOutletName = outletField || (isOutletPos ? (entry.group || '').trim() : '');
+                const isOutlet = isOutletPos || finalOutletName !== '';
+
+                if (isOutlet) {
+                    if (!entry.disable) {
+                        outletLines.push(`### ${entry.comment || `Entry #${entry.uid}`} (uid: ${entry.uid}, book: "${getDisplayName(bookName)}") [outlet name: ${finalOutletName}]\n${entry.content}`);
+                        lastActiveEntries.push({
+                            bookName,
+                            displayName: getDisplayName(bookName),
+                            entryName: entry.comment || `#${entry.uid}`,
+                            uid: entry.uid,
+                        });
+                    }
+                    continue;
+                }
+
+                if (!toInject[bookName]) toInject[bookName] = [];
+                toInject[bookName].push(entry);
+            }
+        }
+    }
+
+    if (overridesChanged) saveSettings();
+
+    if (!Object.keys(toInject).length && !outletLines.length) return '';
+
+    let block = '\n\n<lorebook_context>\n';
+    for (const [bookName, entries] of Object.entries(toInject)) {
+        let hasValidEntries = false;
+        let bookBlock = `## ${getDisplayName(bookName)}\n`;
+
+        for (const e of entries) {
+            hasValidEntries = true;
+            bookBlock += `### ${e.comment || `Entry #${e.uid}`} (uid: ${e.uid})`;
+            if (e.key?.length) bookBlock += ` [keys: ${e.key.slice(0, 5).join(', ')}]`;
+            bookBlock += `\n${e.content}\n\n`;
+
+            lastActiveEntries.push({
+                bookName,
+                displayName: getDisplayName(bookName),
+                entryName: e.comment || `#${e.uid}`,
+                uid: e.uid,
+            });
+        }
+        if (hasValidEntries) block += bookBlock;
+    }
+
+    if (outletLines.length) {
+        block += `## Outlet Entries (injected only where an outlet::<name> macro is manually placed elsewhere, not directly)\n${outletLines.join('\n\n')}\n\n`;
+    }
+
+    if (block === '\n\n<lorebook_context>\n') return '';
+
+    block += '</lorebook_context>';
+    return block;
+}
+
+function buildLBAIInstructions(settings) {
+    if (!settings.lorebookAIManageEnabled) return '';
+    const excludedBooks = new Set(settings.lorebookExcludedBooks || []);
+    const activeBooks = [...new Set(lastActiveEntries.map(e => e.displayName || e.bookName))].filter(b => !excludedBooks.has(b));
+    const activeBooksStr = activeBooks.length > 0 ? activeBooks.map(b => `"${b}"`).join(', ') : 'None';
+
+    let rawPrompt = settings.lorebookManagePrompt || DEFAULT_LB_MANAGE_PROMPT;
+
+    if (!rawPrompt.includes('{{active_lorebooks}}')) {
+        if (rawPrompt.includes('Format requirment:')) {
+            rawPrompt = rawPrompt.replace('Format requirment:', `Active lorebooks: {{active_lorebooks}}\n\nFormat requirment:`);
+        } else {
+            rawPrompt = `Active lorebooks: {{active_lorebooks}}\n\n` + rawPrompt;
+        }
+    }
+
+    const prompt = rawPrompt
+        .replace('{{active_lorebooks}}', activeBooksStr)
+        .replace('{{lorebook_output}}', LB_FORMAT_BLOCK);
+
+    return `<lorebook_management>\n${prompt}\n</lorebook_management>`;
+}
+
+function _parseLBDiffPatch(str) {
+    const m = str.match(/<<<<<<< (?:SEARCH|ANCHOR)\r?\n([\s\S]*?)\r?\n=+\r?\n([\s\S]*?)\r?\n>>>>>>> REPLACE/);
+    return m ? { search: m[1], replace: m[2] } : null;
+}
+
+function _sanitizeLBChanges(changes) {
+    if (!Array.isArray(changes)) return null;
+    const valid = [];
+    for (const c of changes) {
+        if (!c || typeof c !== 'object') continue;
+        if (!['add', 'edit', 'patch', 'prepend', 'append', 'delete'].includes(c.action)) continue;
+        if (!c.worldName && !c.name && c.uid == null) continue;
+        if (c.triggers === 'original' || c.triggers === 'keep' || c.triggers === undefined || c.triggers === null) {
+            c.triggers = null;
+        } else if (!Array.isArray(c.triggers)) {
+            c.triggers = String(c.triggers).split(',').map(s => s.trim()).filter(Boolean);
+        }
+        if (c.constant !== undefined) c.constant = !!c.constant;
+        if (c.action === 'patch' && Array.isArray(c.patches)) {
+            c.patches = c.patches.map(p => {
+                if (typeof p === 'string') return _parseLBDiffPatch(p);
+                if (p && typeof p === 'object') {
+                    p.search = p.search || p.anchor;
+                    if (p.search !== undefined) return p;
+                }
+                return null;
+            }).filter(Boolean);
+        }
+        valid.push(c);
+    }
+    return valid.length ? valid : null;
+}
+
+function parseLBChangesFromText(text) {
+    let raw = null;
+    const strict = text.match(/```lorebook-changes\s*([\s\S]*?)```/);
+    if (strict) {
+        raw = strict[1].trim();
+    } else {
+        const open = text.match(/```lorebook-changes\s*([\s\S]*?)(?=```|$)/);
+        if (open) raw = open[1].trim();
+    }
+    if (!raw) return null;
+    try {
+        const data = JSON.parse(raw);
+        if (Array.isArray(data.changes)) return _sanitizeLBChanges(data.changes);
+    } catch (_) {}
+    try {
+        const repaired = _repairJSON(raw);
+        const data = JSON.parse(repaired);
+        if (Array.isArray(data.changes)) return _sanitizeLBChanges(data.changes);
+    } catch (_) {}
+    try {
+        const lines = raw.split('\n');
+        const fixed = lines.map(line => {
+            return line.replace(/("(?:content|name|comment|search|replace|triggers)":\s*)"((?:[^"\\]|\\.)*)"/, (match, prefix, val) => {
+                const escaped = val.replace(/(?<!\\)"/g, '\\"');
+                return `${prefix}"${escaped}"`;
+            });
+        }).join('\n');
+        const data = JSON.parse(fixed);
+        if (Array.isArray(data.changes)) return _sanitizeLBChanges(data.changes);
+    } catch (_) {}
+
+    if (raw) _dbgAdd('LB_PROPOSAL_PARSING_FAILED', { rawText: raw.slice(0, 300) + (raw.length > 300 ? '...' : '') });
+    return null;
+}
+
+function stripLBChangesBlock(text) {
+    return text
+        .replace(/```lorebook-changes[\s\S]*?```/g, '')
+        .replace(/```lorebook-changes[\s\S]*/g, '')
+        .trim();
+}
+
+async function bindNewLorebookToCharacter(bookName) {
+    try {
+        const ctx = SillyTavern.getContext();
+
+        const allBooks = window.world_names || [];
+        const isNew = !allBooks.includes(bookName);
+
+        if (isNew) {
+            if (typeof window.createNewWorldInfo === 'function') {
+                await window.createNewWorldInfo(bookName);
+            } else {
+                const payload = { entries: {}, extensions: {} };
+                await fetch('/api/worldinfo/edit', {
+                    method: 'POST',
+                    headers: { ...ctx.getRequestHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: bookName, data: payload }),
+                });
+                if (typeof ctx.updateWorldInfoList === 'function') await ctx.updateWorldInfoList();
+                else if (typeof window.loadWorldInfoList === 'function') await window.loadWorldInfoList();
+            }
+            toastr.success(`Lorebook "${bookName}" created successfully.`, EXT_DISPLAY);
+        }
+
+        delete wiCache[bookName];
+
+        const charId = ctx.characterId;
+        if (charId === undefined || charId === null) return;
+
+        let fileName = ctx.characters?.[charId]?.avatar;
+        if (typeof window.getCharaFilename === 'function') {
+            fileName = window.getCharaFilename(charId);
+        }
+        if (!fileName) return;
+
+        let wiSettings = window.world_info;
+        if (!wiSettings) return;
+
+        if (!Array.isArray(wiSettings.charLore)) wiSettings.charLore = [];
+
+        const charLoreList = wiSettings.charLore;
+        let extraCharLore = charLoreList.find(e => e.name === fileName);
+        if (!extraCharLore) {
+            extraCharLore = { name: fileName, extraBooks: [] };
+            charLoreList.push(extraCharLore);
+        }
+        if (!Array.isArray(extraCharLore.extraBooks)) extraCharLore.extraBooks = [];
+
+        if (!extraCharLore.extraBooks.includes(bookName)) {
+            extraCharLore.extraBooks.push(bookName);
+
+            if (typeof window.saveWorldInfoSettings === 'function') window.saveWorldInfoSettings();
+            if (typeof window.saveSettingsDebounced === 'function') window.saveSettingsDebounced();
+            if (typeof window.printWorldInfoCharacters === 'function') window.printWorldInfoCharacters();
+        }
+    } catch (e) {
+        _dbgAdd('LB_AUTO_BIND_NEW_BOOK_FAILED', { bookName, error: e.message });
+    }
+}
+
+async function resolveLBChangeTarget(change, strictBook = false) {
+    let bookName = change.worldName || '';
+    let targetUid = change.uid;
+
+    const fuzzyWorld = bookName.toLowerCase();
+    const fuzzyName = (change.originalName || change.name || '').toLowerCase();
+
+    if (fuzzyName && !strictBook) {
+        const activeMatch = lastActiveEntries.find(le => {
+            const wMatch = !fuzzyWorld || le.displayName.toLowerCase() === fuzzyWorld || le.bookName.toLowerCase() === fuzzyWorld;
+            const nMatch = le.entryName.toLowerCase() === fuzzyName || le.entryName.toLowerCase().includes(fuzzyName) || fuzzyName.includes(le.entryName.toLowerCase());
+            return wMatch && nMatch;
+        });
+        if (activeMatch) {
+            if (targetUid == null) targetUid = activeMatch.uid;
+            bookName = activeMatch.bookName;
+        }
+    }
+
+    if (bookName === getDisplayName(EMBEDDED_BOOK_KEY)) bookName = EMBEDDED_BOOK_KEY;
+
+    let data = await fetchWorldInfoBook(bookName);
+    if (!data && bookName && !strictBook) {
+        const allActive = await getActiveLorebookNames();
+        const match = allActive.find(n => n.toLowerCase() === fuzzyWorld || n.toLowerCase().includes(fuzzyWorld) || fuzzyWorld.includes(n.toLowerCase()));
+        if (match) {
+            bookName = match;
+            data = await fetchWorldInfoBook(bookName);
+        }
+    }
+
+    let origEntry = null;
+    if (data && data.entries) {
+        origEntry = Object.values(data.entries).find(en => {
+            if (targetUid != null && String(en.uid) === String(targetUid)) return true;
+            if (!fuzzyName) return false;
+            const cStr = (en.comment || `Entry #${en.uid}`).trim().toLowerCase();
+            if (cStr === fuzzyName) return true;
+            return cStr.includes(fuzzyName) || fuzzyName.includes(cStr);
+        });
+    }
+
+    if (!origEntry && /^\d+$/.test(fuzzyName) && data && data.entries[fuzzyName]) {
+        origEntry = data.entries[fuzzyName];
+    }
+
+    if (!origEntry && fuzzyName && !strictBook) {
+        for (const name of await getActiveLorebookNames()) {
+            if (name === bookName) continue;
+            const bd = await fetchWorldInfoBook(name);
+            if (!bd) continue;
+            origEntry = Object.values(bd.entries).find(en => {
+                const c = (en.comment || `Entry #${en.uid}`).trim().toLowerCase();
+                return c === fuzzyName || c.includes(fuzzyName) || fuzzyName.includes(c);
+            });
+            if (origEntry) { bookName = name; data = bd; break; }
+        }
+    }
+
+    if (!data) {
+        console.warn(`[${EXT_DISPLAY}] resolveLBChangeTarget: no book data found`, {
+            change, resolvedBookName: bookName, activeBooks: await getActiveLorebookNames(), cacheKeys: Object.keys(wiCache)
+        });
+    } else if (!origEntry && change.action !== 'add') {
+        console.warn(`[${EXT_DISPLAY}] resolveLBChangeTarget: entry not found`, {
+            fuzzyName, fuzzyWorld, targetUid,
+            entries: Object.values(data.entries || {}).map(e => ({ uid: e.uid, comment: e.comment, key: e.key?.slice(0, 3) }))
+        });
+    }
+    return { bookName, data, origEntry };
+}
+
+async function expandOutletsAsync(text, depth = 0) {
+    if (!text || typeof text !== 'string' || !text.includes('{{outlet::') || depth > 3) return text;
+
+    const outletRegex = /\{\{outlet::(.*?)\}\}/gi;
+    const matches = [...new Set([...text.matchAll(outletRegex)].map(m => m[1]))];
+
+    if (!matches.length) return text;
+
+    const activeNames = await getActiveLorebookNames();
+
+    if (!activeNames.includes(EMBEDDED_BOOK_KEY)) {
+        activeNames.push(EMBEDDED_BOOK_KEY);
+    }
+
+    const loadedBooks = [];
+    for (const name of activeNames) {
+        const data = await fetchWorldInfoBook(name);
+        if (data) loadedBooks.push(data);
+    }
+
+    let result = text;
+    for (const name of matches) {
+        const searchName = name.trim();
+        const matchedEntries = [];
+
+        for (const book of loadedBooks) {
+            const entries = Object.values(book.entries || {});
+            for (const e of entries) {
+                const outletField = (e.outlet || e.outlet_name || e.outletName || e.automation_id || e.automationId || '').trim();
+                const isOutletPos = String(e.position) === '7' || String(e.position).toLowerCase() === 'outlet';
+                const finalOutletName = outletField || (isOutletPos ? (e.group || '').trim() : '');
+
+                if (!e.disable && finalOutletName === searchName) {
+                    matchedEntries.push(e);
+                }
+            }
+        }
+
+        const replacementText = matchedEntries.map(e => expandMacros(e.content || '')).join('\n');
+
+        const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`\\{\\{outlet::${escapedName}\\}\\}`, 'g');
+
+        result = result.replace(regex, replacementText);
+    }
+
+    if (result.includes('{{outlet::')) {
+        result = await expandOutletsAsync(result, depth + 1);
+    }
+
+    return result;
+}
+
+async function applyLBChanges(changes, afterMsgId = null) {
+    console.log(`[${EXT_DISPLAY}] applyLBChanges: processing ${changes.length} change(s)`, JSON.parse(JSON.stringify(changes)));
+    const bookCache = {};
+    const successfulChanges = [];
+
+    for (const change of changes) {
+        let { bookName, data, origEntry } = await resolveLBChangeTarget(change);
+
+        if (change.worldName && change.action !== 'delete') {
+            const activeBooks = await getActiveLorebookNames();
+
+            if (!activeBooks.includes(change.worldName)) {
+                await bindNewLorebookToCharacter(change.worldName);
+
+                const resolved = await resolveLBChangeTarget(change);
+                bookName = resolved.bookName;
+                data = resolved.data;
+                origEntry = resolved.origEntry;
+            }
+        }
+
+        if (!data) {
+            const msg = `Lorebook not found: "${change.worldName || '(empty)'}" — is it active in this chat?`;
+            toastr.error(`[LB] ${msg}`, EXT_DISPLAY, { timeOut: 10000 });
+            console.error(`[${EXT_DISPLAY}] applyLBChanges: ${msg}`, change);
+            continue;
+        }
+        if (!bookName) {
+            toastr.error(`[LB] Could not resolve book name for change: "${change.name || change.uid || '?'}"`, EXT_DISPLAY, { timeOut: 10000 });
+            continue;
+        }
+
+        if (change.action === 'add' && data) {
+            const exists = Object.values(data.entries).find(e => e.comment && e.comment.toLowerCase() === (change.name || '').toLowerCase());
+            if (exists) {
+                _dbgAdd('LB_ADD_CONVERTED_TO_EDIT', { bookName, change, originalUid: exists.uid });
+                change.action = 'edit';
+                change.uid = exists.uid;
+                origEntry = exists;
+            }
+        }
+
+        if (change.action === 'add') {
+            const uids = Object.keys(data.entries).map(Number);
+            const newUid = uids.length ? Math.max(...uids) + 1 : 1;
+            const isOutlet = !!(change.outlet || change.outlet_name);
+            const outletName = (change.outlet_name || '').trim();
+            const addTriggers = isOutlet ? [] : (Array.isArray(change.triggers) ? change.triggers : []);
+            const autoConstant = !isOutlet && (addTriggers.length === 0) && change.constant !== false;
+            data.entries[newUid] = {
+                uid: newUid,
+                key: addTriggers,
+                keysecondary: [],
+                content: change.content || '',
+                comment: change.name || '',
+                disable: false,
+                selective: false,
+                constant: !isOutlet && (change.constant === true || autoConstant),
+                position: isOutlet ? 7 : (change.position ?? 0),
+                displayIndex: newUid,
+                automation_id: outletName,
+                outletName: outletName,
+                group: change.group || (isOutlet ? outletName : ''),
+                role: null,
+                extensions: {
+                    outlet_name: outletName
+                }
+            };
+            bookCache[bookName] = data;
+            wiCache[bookName] = data;
+            successfulChanges.push(change);
+        } else if (change.action === 'edit') {
+            if (!origEntry) {
+                toastr.error(`[LB] Entry not found for edit: "${change.name || change.uid || '?'}" in "${bookName}"`, EXT_DISPLAY, { timeOut: 10000 });
+                continue;
+            }
+            if (change.name !== undefined) origEntry.comment = change.name;
+            if (change.triggers !== null && change.triggers !== undefined) {
+                origEntry.key = change.triggers;
+                if (change.triggers.length === 0 && origEntry.key.length === 0 && change.constant !== false) origEntry.constant = true;
+            }
+            if (change.content !== undefined) origEntry.content = change.content;
+            if (change.constant !== undefined) origEntry.constant = !!change.constant;
+            if (change.outlet !== undefined || change.outlet_name !== undefined) {
+                const oName = (change.outlet_name || '').trim();
+                if (!origEntry.extensions) origEntry.extensions = {};
+                if (change.outlet || oName) {
+                    origEntry.position = 7;
+                    origEntry.automation_id = oName;
+                    origEntry.outletName = oName;
+                    origEntry.group = oName;
+                    origEntry.constant = false;
+                    origEntry.extensions.outlet_name = oName;
+                } else {
+                    origEntry.position = change.position ?? 0;
+                    origEntry.automation_id = '';
+                    origEntry.outletName = '';
+                    origEntry.group = '';
+                    origEntry.extensions.outlet_name = '';
+                }
+            }
+            bookCache[bookName] = data;
+            wiCache[bookName] = data;
+            successfulChanges.push(change);
+        } else if (change.action === 'patch') {
+            if (!origEntry) {
+                toastr.error(`[LB] Entry not found for patch: "${change.name || change.uid || '?'}" in "${bookName}"`, EXT_DISPLAY, { timeOut: 10000 });
+                continue;
+            }
+            let current = origEntry.content || '';
+            let allMatched = true;
+            for (const patch of (change.patches || [])) {
+                const { result, matched } = applySearchReplaceToField(current, patch.search || '', patch.replace || '');
+                if (!matched) {
+                    toastr.warning(`[LB] SEARCH not found in "${origEntry.comment}": "${(patch.search || '').slice(0, 60)}"`, EXT_DISPLAY, { timeOut: 8000 });
+                    allMatched = false;
+                    break;
+                }
+                current = result;
+            }
+            if (!allMatched) continue;
+            origEntry.content = current;
+            if (change.name !== undefined) origEntry.comment = change.name;
+            if (change.triggers !== null && change.triggers !== undefined) {
+                origEntry.key = change.triggers;
+                if (change.triggers.length === 0 && change.constant !== false) origEntry.constant = true;
+            }
+            if (change.constant !== undefined) origEntry.constant = !!change.constant;
+            bookCache[bookName] = data;
+            wiCache[bookName] = data;
+            successfulChanges.push(change);
+        } else if (change.action === 'prepend' || change.action === 'append') {
+            if (!origEntry) continue;
+            let current = origEntry.content || '';
+            origEntry.content = change.action === 'prepend' ? (change.content || '') + current : current + (change.content || '');
+            if (change.name !== undefined) origEntry.comment = change.name;
+            if (change.triggers !== null && change.triggers !== undefined) {
+                origEntry.key = change.triggers;
+                if (change.triggers.length === 0 && change.constant !== false) origEntry.constant = true;
+            }
+            if (change.constant !== undefined) origEntry.constant = !!change.constant;
+            bookCache[bookName] = data;
+            wiCache[bookName] = data;
+            successfulChanges.push(change);
+        } else if (change.action === 'delete') {
+            if (!origEntry) continue;
+            delete data.entries[origEntry.uid];
+            bookCache[bookName] = data;
+            wiCache[bookName] = data;
+            successfulChanges.push(change);
+        }
+    }
+
+    if (changes.length > 0 && !Object.keys(bookCache).length) {
+        toastr.warning('[LB] No changes were applied — see browser console (F12) for details', EXT_DISPLAY, { timeOut: 10000 });
+        return;
+    }
+
+    for (const [name, data] of Object.entries(bookCache)) {
+        try {
+            await saveWorldInfoBook(name, data);
+        } catch (e) {
+            toastr.error(`[LB] Save failed for "${name}": ${e.message}`, EXT_DISPLAY, { timeOut: 12000 });
+        }
+    }
+
+    if (successfulChanges.length > 0) {
+        const { logLBHistoryChanges } = await Promise.resolve().then(function () { return featureLorebookUi; });
+        logLBHistoryChanges(successfulChanges, 'Accepted', afterMsgId);
+    }
+}
+
+var featureLorebook = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  EMBEDDED_BOOK_KEY: EMBEDDED_BOOK_KEY,
+  _parseLBDiffPatch: _parseLBDiffPatch,
+  _sanitizeLBChanges: _sanitizeLBChanges,
+  applyLBChanges: applyLBChanges,
+  bindNewLorebookToCharacter: bindNewLorebookToCharacter,
+  buildLBAIInstructions: buildLBAIInstructions,
+  buildLorebookContextBlock: buildLorebookContextBlock,
+  expandOutletsAsync: expandOutletsAsync,
+  fetchWorldInfoBook: fetchWorldInfoBook,
+  getActiveLorebookNames: getActiveLorebookNames,
+  getDisplayName: getDisplayName,
+  getEmbeddedCharBook: getEmbeddedCharBook,
+  getEntryOverrideKey: getEntryOverrideKey,
+  getKeywordTriggeredEntries: getKeywordTriggeredEntries,
+  keywordMatchEntry: keywordMatchEntry,
+  get lastActiveEntries () { return lastActiveEntries; },
+  parseLBChangesFromText: parseLBChangesFromText,
+  resolveLBChangeTarget: resolveLBChangeTarget,
+  saveWorldInfoBook: saveWorldInfoBook,
+  setupExternalWIChangeListener: setupExternalWIChangeListener,
+  stripLBChangesBlock: stripLBChangesBlock,
+  wiCache: wiCache,
+  wiEntriesToArray: wiEntriesToArray,
+  wiPromises: wiPromises
+});
 
 function getEnabledTools() {
     const s = getSettings();
@@ -2230,6 +3394,118 @@ async function executeTool(toolName, toolInput) {
                 }
             }
             return { found: results.length, results, note: `Total messages searched: ${Math.min(msgs.length - 1, toIdx) - Math.max(0, fromIdx) + 1}` };
+        }
+        case 'search_lorebook_entry': {
+            const activeBooks = await getActiveLorebookNames();
+            let rawQueries = Array.isArray(toolInput.queries) ? toolInput.queries : (Array.isArray(toolInput.query) ? toolInput.query : [toolInput.query || '']);
+            const parsedQueries = rawQueries.map(q => {
+                const s = String(q);
+                const regexMatch = s.match(/^\/(.+)\/([gimsuy]*)$/);
+                if (regexMatch) {
+                    try { return { type: 'regex', re: new RegExp(regexMatch[1], regexMatch[2]) }; } catch(_) {}
+                }
+                return { type: 'text', lq: s.toLowerCase() };
+            });
+            
+            const targetBook = toolInput.book_name;
+            const searchIn = toolInput.search_in || 'all';
+            const onlyConstant = !!toolInput.only_constant;
+            const onlyOutlet = !!toolInput.only_outlet;
+            const results = [];
+            for (const bookName of activeBooks) {
+                if (targetBook && !bookName.toLowerCase().includes(targetBook.toLowerCase())) continue;
+                const data = await fetchWorldInfoBook(bookName).catch(() => null);
+                if (!data) continue;
+                for (const entry of wiEntriesToArray(data)) {
+                    const outletField = (entry.outlet || entry.outlet_name || entry.outletName || entry.automation_id || entry.automationId || '').trim();
+                    const isOutletPos = String(entry.position) === '5' || String(entry.position).toLowerCase() === 'outlet';
+                    const isEntryOutlet = isOutletPos || outletField !== '';
+                    if (onlyConstant && !entry.constant) continue;
+                    if (onlyOutlet && !isEntryOutlet) continue;
+                    
+                    const name = (entry.comment || '');
+                    const keys = (entry.key || []).join(' ');
+                    const text = (entry.content || '');
+                    
+                    let matched = false;
+                    for (const pq of parsedQueries) {
+                        if (pq.type === 'regex' && pq.re) {
+                            pq.re.lastIndex = 0;
+                            if (searchIn === 'all') {
+                                matched = pq.re.test(name) || pq.re.test(keys) || pq.re.test(text);
+                            } else if (searchIn === 'name') {
+                                matched = pq.re.test(name);
+                            } else if (searchIn === 'keys') {
+                                matched = pq.re.test(keys);
+                            } else if (searchIn === 'content') {
+                                matched = pq.re.test(text);
+                            }
+                        } else {
+                            const lq = pq.lq;
+                            const lname = name.toLowerCase();
+                            const lkeys = keys.toLowerCase();
+                            const ltext = text.toLowerCase();
+                            if (searchIn === 'all') {
+                                matched = lname.includes(lq) || lkeys.includes(lq) || ltext.includes(lq);
+                            } else if (searchIn === 'name') {
+                                matched = lname.includes(lq);
+                            } else if (searchIn === 'keys') {
+                                matched = lkeys.includes(lq);
+                            } else if (searchIn === 'content') {
+                                matched = ltext.includes(lq);
+                            }
+                        }
+                        if (matched) break;
+                    }
+                    
+                    if (matched) results.push({
+                        book: getDisplayName(bookName),
+                        uid: entry.uid,
+                        name: entry.comment || `Entry #${entry.uid}`,
+                        keys: entry.key || [],
+                        content_preview: (entry.content || '').slice(0, 200) + ((entry.content || '').length > 200 ? '...' : ''),
+                        is_constant: !!entry.constant,
+                        is_outlet: isEntryOutlet,
+                        outlet_name: outletField || null,
+                        disabled: !!entry.disable,
+                    });
+                    if (results.length >= 20) break;
+                }
+                if (results.length >= 20) break;
+            }
+            return { found: results.length, results };
+        }
+        case 'get_lorebooks': {
+            const activeBooks = await getActiveLorebookNames();
+            const includeEntries = !!toolInput.include_entries;
+            const specificBook = toolInput.book_name;
+            if (!includeEntries) {
+                return {
+                    lorebooks: activeBooks.map(name => ({ name: getDisplayName(name), internal_name: name })),
+                    total: activeBooks.length,
+                };
+            }
+            const booksToProcess = specificBook
+                ? activeBooks.filter(n => n === specificBook || getDisplayName(n) === specificBook)
+                : activeBooks;
+            const result = {};
+            for (const name of booksToProcess) {
+                const data = await fetchWorldInfoBook(name).catch(() => null);
+                if (!data) { result[getDisplayName(name)] = []; continue; }
+                result[getDisplayName(name)] = wiEntriesToArray(data).map(e => {
+                    const outletField = (e.outlet || e.outlet_name || e.outletName || e.automation_id || e.automationId || '').trim();
+                    const isOutletPos = String(e.position) === '5' || String(e.position).toLowerCase() === 'outlet';
+                    return {
+                        name: e.comment || `#${e.uid}`,
+                        uid: e.uid,
+                        is_constant: !!e.constant,
+                        is_outlet: isOutletPos || outletField !== '',
+                        outlet_name: outletField || null,
+                        disabled: !!e.disable,
+                    };
+                });
+            }
+            return { lorebooks: result };
         }
         case 'ask_user': {
             return { __ask_user: true, question: toolInput.question, context: toolInput.context };
@@ -2519,7 +3795,21 @@ const _SETTINGS_DEF = [
       onChange: () => Promise.resolve().then(function () { return uiWindow; }).then(m => m.setupGhostHotkey()) },
     { key: 'changelogAutoShow',    stId: null, spId: 'iv-sp-changelog-auto', type: 'checkbox' },
     { key: 'includeSummaryception', stId: 'iv-include-summaryception', spId: 'iv-sp-include-summaryception', type: 'checkbox', fromSetting: s => s.includeSummaryception !== false },
-    { key: 'lorebookAutoKeyword', stId: 'iv-lb-auto-kw', spId: 'iv-sp-lb-auto-kw', type: 'checkbox', profileKey: true, updCtx: true },
+    { key: 'lorebookAIManageEnabled', stId: 'iv-lb-ai-enabled-st', spId: 'iv-sp-lb-ai-enabled', type: 'checkbox', profileKey: true },
+    { key: 'lorebookAutoKeyword', stId: 'iv-lb-auto-kw', spId: 'iv-sp-lb-auto-kw', type: 'checkbox', profileKey: true, updCtx: true,
+      onChange: () => {
+          const s = getSettings();
+          Promise.resolve().then(function () { return featureLorebook; }).then(async m => {
+              await m.buildLorebookContextBlock(s);
+              Promise.resolve().then(function () { return featureLorebookUi; }).then(ui => {
+                  ui.updateLBFooterInfo();
+                  if (state.lbActiveBook) ui.renderEntryList(state.lbActiveBook, state.lbSearchQuery);
+              });
+          });
+      }
+    },
+    { key: 'lorebookManagePrompt', stId: 'iv-lb-manage-prompt', spId: 'iv-sp-lb-manage-prompt', type: 'textarea', profileKey: true,
+      fromSetting: s => s.lorebookManagePrompt || DEFAULT_LB_MANAGE_PROMPT },
     { key: 'lorebookSTScanDepth', stId: 'iv-lb-st-scan-depth', spId: 'iv-sp-lb-st-scan-depth', type: 'input', toVal: Number, profileKey: true, updCtx: true },
     { key: 'lorebookCopilotScanDepth', stId: 'iv-lb-copilot-scan-depth', spId: 'iv-sp-lb-copilot-scan-depth', type: 'input', toVal: Number, profileKey: true, updCtx: true },
     { key: 'useAspectEvolutia',    stId: 'iv-use-aspect-evolutia',    spId: 'iv-sp-use-aspect-evolutia',    type: 'checkbox', fromSetting: s => s.useAspectEvolutia !== false },
@@ -2610,6 +3900,8 @@ const _OV_EL_MAP = {
     connectionProfileId: ['iv-sp-ov-conn-profile'],
     includeSystemPrompt: ['iv-sp-ov-include-sysprompt'], includeUserPersonality: ['iv-sp-ov-include-persona'],
     includeAlternateSwipes: ['iv-sp-ov-include-alt-swipes'], applyRegexToContext: ['iv-sp-ov-apply-regex'],
+    lorebookAIManageEnabled: ['iv-sp-ov-lb-ai-enabled'], lorebookManagePrompt: ['iv-sp-ov-lb-manage-prompt'],
+    lorebookAutoKeyword: ['iv-sp-ov-lb-auto-kw'],
     charField_tags: ['iv-sp-ov-ce-tags'],                 charField_description: ['iv-sp-ov-ce-description'],
     charField_personality: ['iv-sp-ov-ce-personality'],   charField_scenario: ['iv-sp-ov-ce-scenario'],
     charField_first_mes: ['iv-sp-ov-ce-first-mes'],       charField_mes_example: ['iv-sp-ov-ce-mes-example'],
@@ -3210,6 +4502,9 @@ function syncSPFromSettings() {
 
     gC('iv-sp-ov-include-sysprompt', eff.includeSystemPrompt); gC('iv-sp-ov-include-persona', eff.includeUserPersonality);
     gC('iv-sp-ov-include-alt-swipes', eff.includeAlternateSwipes); gC('iv-sp-ov-apply-regex', eff.applyRegexToContext);
+    gC('iv-sp-ov-lb-ai-enabled', 'lorebookAIManageEnabled' in ov ? ov.lorebookAIManageEnabled : s.lorebookAIManageEnabled);
+    gC('iv-sp-ov-lb-auto-kw', 'lorebookAutoKeyword' in ov ? ov.lorebookAutoKeyword : s.lorebookAutoKeyword);
+    ovi('iv-sp-ov-lb-manage-prompt', 'lorebookManagePrompt');
 
     const ovStreamVal = eff.forceStreaming === true ? 'on' : (eff.forceStreaming === false ? 'auto' : (eff.forceStreaming || 'auto'));
     document.querySelectorAll('.iv-ov-stream-btn').forEach(b => {
@@ -3272,6 +4567,7 @@ function openSettingsPanel() {
             dictKey
         );
         mkPresetMgr('iv-sp-prompt-preset-manager',      'iv-sp-ov-sysprompt',       undefined);
+        mkPresetMgr('iv-sp-ov-lb-preset-manager',       'iv-sp-ov-lb-manage-prompt', 'lbEditPromptPresets');
     }).catch(() => {});
     Promise.resolve().then(function () { return featureCharacterUi; }).then(m => m.refreshAltGreetingsPickers());
     overlay.style.display = 'flex'; updateConversationOverrideIndicator();
@@ -3320,6 +4616,12 @@ function setupSettingsHandlers() {
     };
     document.getElementById('iv-reset-prompt')?.addEventListener('click', () => _resetPrompt('systemPrompt', DEFAULT_SYSTEM_PROMPT, 'iv-sysprompt', 'iv-sp-sysprompt', 'System Prompt'));
     document.getElementById('iv-reset-portray-prompt')?.addEventListener('click', () => _resetPrompt('portrayPrompt', DEFAULT_PORTRAY_PROMPT, 'iv-portray-prompt', 'iv-sp-portray-prompt', 'Portray Prompt'));
+    document.getElementById('iv-reset-lb-prompt')?.addEventListener('click', async () => {
+        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Lorebook Prompt', message: 'Reset to default?' }); if (!ok) return;
+        getSettings().lorebookManagePrompt = DEFAULT_LB_MANAGE_PROMPT; saveSettings();
+        ['iv-lb-manage-prompt', 'iv-sp-lb-manage-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_LB_MANAGE_PROMPT; });
+        toastr.success('Lorebook prompt reset.', EXT_DISPLAY);
+    });
     document.getElementById('iv-reset-memory-prompt')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Prompt', message: 'Reset memory prompt to default?' }); if (!ok) return;
         getSettings().memoryManagePrompt = DEFAULT_MEMORY_PROMPT; saveSettings();
@@ -3524,6 +4826,12 @@ function setupSettingsPanelListeners() {
         ['iv-sp-portray-prompt', 'iv-portray-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_PORTRAY_PROMPT; });
         toastr.success('Portray prompt reset.', EXT_DISPLAY);
     });
+    document.getElementById('iv-sp-reset-lb-prompt')?.addEventListener('click', async () => {
+        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Lorebook Prompt', message: 'Reset to default?' }); if (!ok) return;
+        getSettings().lorebookManagePrompt = DEFAULT_LB_MANAGE_PROMPT; saveSettings();
+        ['iv-sp-lb-manage-prompt', 'iv-lb-manage-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_LB_MANAGE_PROMPT; });
+        toastr.success('Lorebook prompt reset.', EXT_DISPLAY);
+    });
     document.getElementById('iv-sp-reset-memory-prompt')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Prompt', message: 'Reset memory prompt to default?' }); if (!ok) return;
         getSettings().memoryManagePrompt = DEFAULT_MEMORY_PROMPT; saveSettings();
@@ -3590,6 +4898,9 @@ function setupSettingsPanelListeners() {
     bindOv('iv-sp-ov-include-persona',    'includeUserPersonality',   true);
     bindOv('iv-sp-ov-include-alt-swipes', 'includeAlternateSwipes',   true);
     bindOv('iv-sp-ov-apply-regex',        'applyRegexToContext',      true);
+    bindOv('iv-sp-ov-lb-ai-enabled',      'lorebookAIManageEnabled',  true);
+    bindOv('iv-sp-ov-lb-auto-kw',         'lorebookAutoKeyword',      true);
+    bindOv('iv-sp-ov-lb-manage-prompt',   'lorebookManagePrompt');
 
     _CE_FIELDS_DEF.forEach(ceDef => {
         bindOv(ceDef.ovId, 'charField_' + ceDef.fk, true);
@@ -3754,36 +5065,36 @@ function buildQPSettingsUI(container) {
 }
 
 var uiSettings = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    _clearDirty: _clearDirty,
-    _markDirty: _markDirty,
-    _syncBgToOverlay: _syncBgToOverlay,
-    _takeProfileSnapshot: _takeProfileSnapshot,
-    _updateDirtyDots: _updateDirtyDots,
-    autoLoadBoundProfile: autoLoadBoundProfile,
-    buildBackgroundSettingsUI: buildBackgroundSettingsUI,
-    buildQPSettingsUI: buildQPSettingsUI,
-    buildThemeEditor: buildThemeEditor,
-    closeSettingsPanel: closeSettingsPanel,
-    deleteProfile: deleteProfile,
-    isConfigProfileDirty: isConfigProfileDirty,
-    isThemeDirty: isThemeDirty,
-    loadProfile: loadProfile,
-    openSettingsPanel: openSettingsPanel,
-    refreshProfilesDropdown: refreshProfilesDropdown,
-    refreshSPProfilesDropdown: refreshSPProfilesDropdown,
-    saveProfile: saveProfile,
-    setupSettingsHandlers: setupSettingsHandlers,
-    setupSettingsPanelListeners: setupSettingsPanelListeners,
-    syncOverlayUI: syncOverlayUI,
-    syncSPFromSettings: syncSPFromSettings,
-    updateBindingSection: updateBindingSection,
-    updateConversationOverrideIndicator: updateConversationOverrideIndicator,
-    updateProfilesList: updateProfilesList,
-    updateSPBindingSection: updateSPBindingSection,
-    updateSPConnProfileList: updateSPConnProfileList,
-    updateSPOverrideIndicators: updateSPOverrideIndicators,
-    updateSettingsUI: updateSettingsUI
+  __proto__: null,
+  _clearDirty: _clearDirty,
+  _markDirty: _markDirty,
+  _syncBgToOverlay: _syncBgToOverlay,
+  _takeProfileSnapshot: _takeProfileSnapshot,
+  _updateDirtyDots: _updateDirtyDots,
+  autoLoadBoundProfile: autoLoadBoundProfile,
+  buildBackgroundSettingsUI: buildBackgroundSettingsUI,
+  buildQPSettingsUI: buildQPSettingsUI,
+  buildThemeEditor: buildThemeEditor,
+  closeSettingsPanel: closeSettingsPanel,
+  deleteProfile: deleteProfile,
+  isConfigProfileDirty: isConfigProfileDirty,
+  isThemeDirty: isThemeDirty,
+  loadProfile: loadProfile,
+  openSettingsPanel: openSettingsPanel,
+  refreshProfilesDropdown: refreshProfilesDropdown,
+  refreshSPProfilesDropdown: refreshSPProfilesDropdown,
+  saveProfile: saveProfile,
+  setupSettingsHandlers: setupSettingsHandlers,
+  setupSettingsPanelListeners: setupSettingsPanelListeners,
+  syncOverlayUI: syncOverlayUI,
+  syncSPFromSettings: syncSPFromSettings,
+  updateBindingSection: updateBindingSection,
+  updateConversationOverrideIndicator: updateConversationOverrideIndicator,
+  updateProfilesList: updateProfilesList,
+  updateSPBindingSection: updateSPBindingSection,
+  updateSPConnProfileList: updateSPConnProfileList,
+  updateSPOverrideIndicators: updateSPOverrideIndicators,
+  updateSettingsUI: updateSettingsUI
 });
 
 function createToolCallEl(tc) {
@@ -3963,11 +5274,1349 @@ async function executeAskUser(input, msgEl) {
 }
 
 var featureToolsUi = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    createToolCallEl: createToolCallEl,
-    executeAskUser: executeAskUser,
-    postProcessToolCalls: postProcessToolCalls,
-    setupToolsSettingsUI: setupToolsSettingsUI
+  __proto__: null,
+  createToolCallEl: createToolCallEl,
+  executeAskUser: executeAskUser,
+  postProcessToolCalls: postProcessToolCalls,
+  setupToolsSettingsUI: setupToolsSettingsUI
+});
+
+function computeLCS(a, b) {
+    const m = a.length, n = b.length;
+    if (m === 0 || n === 0) return [];
+    const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+    for (let i = 1; i <= m; i++)
+        for (let j = 1; j <= n; j++)
+            dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1]);
+    const result =[];
+    let i = m, j = n;
+    while (i > 0 && j > 0) {
+        if (a[i-1] === b[j-1]) { result.unshift([i-1, j-1]); i--; j--; }
+        else if (dp[i-1][j] > dp[i][j-1]) i--;
+        else j--;
+    }
+    return result;
+}
+
+function computeLineDiff(original, modified) {
+    const a = original ? original.replace(/\r\n/g, '\n').split('\n') : [];
+    const b = modified ? modified.replace(/\r\n/g, '\n').split('\n') : [];
+    const lcs = computeLCS(a, b);
+    const result =[];
+    let ai = 0, bi = 0, li = 0;
+    while (ai < a.length || bi < b.length) {
+        if (li < lcs.length) {
+            while (ai < lcs[li][0]) result.push({ type: 'removed', text: a[ai++] });
+            while (bi < lcs[li][1]) result.push({ type: 'added', text: b[bi++] });
+            result.push({ type: 'unchanged', text: a[ai++] });
+            bi++; li++;
+        } else {
+            while (ai < a.length) result.push({ type: 'removed', text: a[ai++] });
+            while (bi < b.length) result.push({ type: 'added', text: b[bi++] });
+        }
+    }
+    return result;
+}
+
+function highlightInlineDiff(oldLine, newLine) {
+    const tokenize = s => s.match(/[\w]+|[^\w\s]+|\s+/g) || [];
+    const a = tokenize(oldLine);
+    const b = tokenize(newLine);
+    const lcs = computeLCS(a, b);
+    let ai = 0, bi = 0, li = 0;
+    let oldHtml = '', newHtml = '';
+    
+    const wrapSegment = (text, type) => {
+        if (!text) return '';
+        return `<span class="iv-diff-word-${type}">${escHtml(text)}</span>`;
+    };
+
+    while (ai < a.length || bi < b.length) {
+        if (li < lcs.length) {
+            let r = '', ad = '';
+            while (ai < lcs[li][0]) r += a[ai++];
+            while (bi < lcs[li][1]) ad += b[bi++];
+            
+            oldHtml += wrapSegment(r, 'rem');
+            newHtml += wrapSegment(ad, 'add');
+            
+            const match = escHtml(a[ai]);
+            oldHtml += match; newHtml += match;
+            ai++; bi++; li++;
+        } else {
+            let r = '', ad = '';
+            while (ai < a.length) r += a[ai++];
+            while (bi < b.length) ad += b[bi++];
+            
+            oldHtml += wrapSegment(r, 'rem');
+            newHtml += wrapSegment(ad, 'add');
+        }
+    }
+    return { oldHtml, newHtml };
+}
+
+function processDiffLinesForInline(diffLines) {
+    const result =[];
+    let i = 0;
+    while (i < diffLines.length) {
+        if (diffLines[i].type === 'removed') {
+            let remStart = i;
+            while (i < diffLines.length && diffLines[i].type === 'removed') i++;
+            let remEnd = i;
+            
+            let addStart = i;
+            while (i < diffLines.length && diffLines[i].type === 'added') i++;
+            let addEnd = i;
+            
+            const remLines = diffLines.slice(remStart, remEnd);
+            const addLines = diffLines.slice(addStart, addEnd);
+            
+            let maxLen = Math.max(remLines.length, addLines.length);
+            for (let j = 0; j < maxLen; j++) {
+                if (j < remLines.length && j < addLines.length) {
+                    const { oldHtml, newHtml } = highlightInlineDiff(remLines[j].text, addLines[j].text);
+                    result.push({ type: 'removed', html: oldHtml });
+                    result.push({ type: 'added', html: newHtml });
+                } else if (j < remLines.length) {
+                    result.push({ type: 'removed', html: escHtml(remLines[j].text) });
+                } else {
+                    result.push({ type: 'added', html: escHtml(addLines[j].text) });
+                }
+            }
+        } else if (diffLines[i].type === 'added') {
+            result.push({ type: 'added', html: escHtml(diffLines[i].text) });
+            i++;
+        } else {
+            result.push({ type: 'unchanged', html: escHtml(diffLines[i].text) });
+            i++;
+        }
+    }
+    return result;
+}
+
+function renderDiffUnified(diffLines) {
+    if (!diffLines.length) return '<div style="padding:20px;color:var(--iv-text-muted);text-align:center">No changes to display</div>';
+    const processed = processDiffLinesForInline(diffLines);
+    return `<div class="iv-diff-unified">${processed.map(l => {
+        const cls = l.type === 'added' ? 'iv-diff-add' : l.type === 'removed' ? 'iv-diff-rem' : 'iv-diff-ctx';
+        const pfx = l.type === 'added' ? '+' : l.type === 'removed' ? '-' : ' ';
+        return `<div class="${cls}"><span class="iv-diff-pfx">${pfx}</span>${l.html}</div>`;
+    }).join('')}</div>`;
+}
+
+function renderDiffSplit(original, modified) {
+    const a = original ? original.replace(/\r\n/g, '\n').split('\n') : [];
+    const b = modified ? modified.replace(/\r\n/g, '\n').split('\n') : [];
+    const lcs = computeLCS(a, b);
+    const rows =[];
+    let ai = 0, bi = 0, li = 0;
+    
+    const processMismatch = (startA, endA, startB, endB) => {
+        const remLines = [], addLines =[];
+        let currAi = startA, currBi = startB;
+        while (currAi < endA) remLines.push(a[currAi++]);
+        while (currBi < endB) addLines.push(b[currBi++]);
+        
+        const maxLen = Math.max(remLines.length, addLines.length);
+        for (let j = 0; j < maxLen; j++) {
+            let htmlA = '', htmlB = '', clsA = '', clsB = '';
+            if (j < remLines.length && j < addLines.length) {
+                const { oldHtml, newHtml } = highlightInlineDiff(remLines[j], addLines[j]);
+                htmlA = oldHtml; htmlB = newHtml;
+                clsA = 'iv-diff-rem'; clsB = 'iv-diff-add';
+            } else if (j < remLines.length) {
+                htmlA = escHtml(remLines[j]); clsA = 'iv-diff-rem';
+            } else if (j < addLines.length) {
+                htmlB = escHtml(addLines[j]); clsB = 'iv-diff-add';
+            }
+            rows.push(`<tr><td class="${clsA}">${htmlA}</td><td class="${clsB}">${htmlB}</td></tr>`);
+        }
+    };
+
+    while (ai < a.length || bi < b.length) {
+        if (li < lcs.length) {
+            processMismatch(ai, lcs[li][0], bi, lcs[li][1]);
+            ai = lcs[li][0]; bi = lcs[li][1];
+            rows.push(`<tr class="iv-diff-ctx"><td>${escHtml(a[ai++])}</td><td>${escHtml(b[bi++])}</td></tr>`);
+            li++;
+        } else {
+            processMismatch(ai, a.length, bi, b.length);
+            ai = a.length; bi = b.length;
+        }
+    }
+    return `<table class="iv-diff-split-table"><thead><tr><th>Original</th><th>Modified</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+}
+
+function openTextDiffModal(title, originalText, newText) {
+    _dbgAdd('LB_DIFF_MODAL_TOGGLE', { title });
+
+    const modal = document.getElementById('iv-diff-modal');
+    if (!modal) return;
+    
+    const diffLines = computeLineDiff(originalText, newText);
+    const titleEl = modal.querySelector('.iv-diff-modal-title');
+    if (titleEl) titleEl.textContent = title;
+
+    const body = document.getElementById('iv-diff-body');
+    if (body) body.innerHTML = renderDiffSplit(originalText, newText);
+
+    modal.querySelectorAll('[data-diff-tab]').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.diffTab === 'split');
+        tab.onclick = () => {
+            modal.querySelectorAll('[data-diff-tab]').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            if (body) {
+                body.innerHTML = tab.dataset.diffTab === 'split' 
+                    ? renderDiffSplit(originalText, newText) 
+                    : renderDiffUnified(diffLines);
+            }
+        };
+    });
+    modal.style.display = 'flex';
+    Promise.resolve().then(function () { return uiWindow; }).then(m => m.bringWindowToFront());
+}
+
+function reconstructLBChangesBlock(pendingChanges) {
+    if (!pendingChanges.length) return '';
+    return '```lorebook-changes\n{"changes": ' + JSON.stringify(pendingChanges, null, 2) + '}\n```';
+}
+
+function openDiffModal(change, originalEntry) {
+    const originalContent = originalEntry?.content || '';
+    let newContent = change.content || '';
+    
+    if (change.action === 'patch' && originalEntry) {
+        let current = originalContent;
+        for (const patch of (change.patches || [])) {
+            const { result } = applySearchReplaceToField(current, patch.search || patch.anchor || '', patch.replace || '');
+            current = result;
+        }
+        newContent = current;
+    } else if (change.action === 'prepend' && originalEntry) {
+        newContent = (change.content || '') + originalContent;
+    } else if (change.action === 'append' && originalEntry) {
+        newContent = originalContent + (change.content || '');
+    }
+    
+    const entryName = change.name || originalEntry?.comment || `Entry #${change.uid || '?'}`;
+    const title = `Diff: "${entryName}" in ${change.worldName || '?'}`;
+    openTextDiffModal(title, originalContent, newContent);
+}
+
+function renderLBHistoryContent(msg, contentEl) {
+    contentEl.innerHTML = '';
+    const lines = msg.appliedLines || [];
+    const accepted = lines.filter(l => l.includes('ACCEPTED')).length;
+    const rejected = lines.filter(l => l.includes('REJECTED')).length;
+    const dismissed = lines.filter(l => l.includes('DISMISSED')).length;
+
+    const summaryParts = [];
+    if (accepted) summaryParts.push(`${accepted} applied`);
+    if (rejected) summaryParts.push(`${rejected} rejected`);
+    if (dismissed) summaryParts.push(`${dismissed} dismissed`);
+    const summaryStr = summaryParts.length ? summaryParts.join(', ') : `${lines.length} change${lines.length !== 1 ? 's' : ''}`;
+
+    const summaryRow = document.createElement('div');
+    summaryRow.style.cssText = 'font-size:12px;font-weight:600;color:var(--iv-text);margin-bottom:4px';
+    summaryRow.textContent = `System Notification: ${summaryStr}`;
+    contentEl.appendChild(summaryRow);
+
+    if (lines.length) {
+        const details = document.createElement('details');
+        details.className = 'iv-hist-details';
+        const summary = document.createElement('summary');
+        summary.className = 'iv-hist-summary';
+        summary.textContent = 'Show details';
+        details.appendChild(summary);
+
+        const detailsBody = document.createElement('div');
+        detailsBody.className = 'iv-hist-body';
+        for (const line of lines) {
+            const stripped = line.replace(/\*\*/g, '').replace(/`/g, '');
+            const isAccepted = stripped.includes('ACCEPTED');
+            const isRejected = stripped.includes('REJECTED') && !stripped.includes('DISMISSED');
+            const dot = document.createElement('div');
+            dot.className = 'iv-hist-item';
+            dot.style.cssText = `display:flex;align-items:baseline;gap:6px;padding:2px 0;font-size:11px;color:${isAccepted ? 'var(--iv-success)' : isRejected ? 'var(--iv-danger)' : 'var(--iv-text-muted)'}`;
+            const marker = document.createElement('span');
+            marker.style.cssText = `width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0;margin-top:5px;display:inline-block`;
+            const text = document.createElement('span');
+            const m2 = stripped.match(/(?:ACCEPTED|REJECTED|DISMISSED[^:]*): (.+)/);
+            text.textContent = m2 ? m2[1] : stripped;
+            dot.appendChild(marker);
+            dot.appendChild(text);
+            detailsBody.appendChild(dot);
+        }
+        details.appendChild(detailsBody);
+        contentEl.appendChild(details);
+    }
+}
+
+function appendLBHistoryEl(msg, afterMsgId = null) {
+    const c = document.getElementById('iv-messages');
+    if (!c) return;
+    c.querySelector('.iv-empty-state')?.remove();
+
+    const wrap = document.createElement('div');
+    wrap.className = 'iv-msg iv-msg-lb-history';
+    wrap.dataset.id = msg.id;
+
+    const avatar = document.createElement('div');
+    avatar.className = 'iv-msg-avatar iv-msg-avatar-lb';
+    
+    if (msg.isCharEditHistory) {
+        avatar.innerHTML = '<i class="fa-solid fa-user-pen" style="font-size:14px; padding-left:1px;"></i>';
+    } else if (msg.isChatEditHistory) {
+        avatar.innerHTML = '<i class="fa-solid fa-comments" style="font-size:14px; padding-left:1px;"></i>';
+    } else {
+        avatar.innerHTML = I.book;
+    }
+
+    const body = document.createElement('div');
+    body.className = 'iv-msg-body';
+
+    const contentEl = document.createElement('div');
+    contentEl.className = 'iv-msg-content iv-lb-history-content';
+    renderLBHistoryContent(msg, contentEl);
+
+    const meta = document.createElement('div');
+    meta.className = 'iv-msg-meta';
+    meta.textContent = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'iv-msg-btn iv-lb-history-close';
+    closeBtn.innerHTML = I.x;
+    closeBtn.title = 'Dismiss notification';
+    closeBtn.addEventListener('click', () => {
+        const session = getConversation();
+        deleteMsg(session, msg.id);
+        wrap.remove();
+        updateMsgCount(session);
+    });
+
+    body.appendChild(contentEl);
+    body.appendChild(closeBtn);
+    body.appendChild(meta);
+    wrap.appendChild(avatar); wrap.appendChild(body);
+    
+    const anchor = afterMsgId
+        ? (c.querySelector(`.iv-lb-proposal-card[data-for="${afterMsgId}"]`) || c.querySelector(`.iv-msg[data-id="${afterMsgId}"]`))
+        : null;
+    if (anchor) anchor.after(wrap);
+    else c.appendChild(wrap);
+    updateMsgCount(getConversation());
+    if (!anchor) scrollToBottom();
+}
+
+function logLBHistoryChanges(changes, statusStr, afterMsgId = null) {
+    if (!changes || !changes.length) return;
+    try {
+        const session = getConversation();
+        const icons = { add: '✚', edit: '✎', patch: '✂', delete: '✕' };
+        const statusIcon = statusStr === 'Accepted' ? '✓' : (statusStr === 'Rejected' ? '✕' : '·');
+        const actionText = statusStr === 'Accepted' ? 'ACCEPTED' : (statusStr === 'Rejected' ? 'REJECTED' : 'DISMISSED (ignored)');
+
+        const newLines = changes.map(c => {
+            const act = (c.action || 'edit').toUpperCase();
+            return `${statusIcon} **${actionText}**: ${icons[c.action] || '·'} ${act} "${escHtml(c.name || c.originalName || `Entry #${c.uid || '?'}`)}" in \`${escHtml(c.worldName || '?')}\``;
+        });
+
+        if (afterMsgId && addHistoryToSwipe(afterMsgId, newLines)) return;
+
+        const histText = `**System Notification** — User interaction with proposed lorebook changes:\n${newLines.join('\n')}`;
+        const histMsg = addTurn(session, 'system', histText, { isLBHistory: true, appliedLines: [...newLines] });
+        appendLBHistoryEl(histMsg);
+    } catch (_) {}
+}
+
+async function renderProposalCard(changes, msgEl) {
+    if (!changes?.length) return;
+    _dbgAdd('LB_PROPOSAL_CARD_RENDER', { msgId: msgEl.dataset.id, changesCount: changes.length });
+
+    document.querySelector(`.iv-lb-proposal-card[data-for="${msgEl.dataset.id}"]`)?.remove();
+
+    const editableChanges = changes.map(c => ({ ...c }));
+    const itemStates = editableChanges.map(() => 'pending');
+    const actionLabels = { add: '+ Add', edit: '✎ Edit', patch: '✂ Patch', prepend: '⬆ Prepend', append: '⬇ Append', delete: '✕ Remove' };
+
+    const card = document.createElement('div');
+    card.className = 'iv-lb-proposal-card';
+    card.dataset.for = msgEl.dataset.id;
+    card.style.margin = '8px 0 0 0';
+
+    const syncBlockToMessage = () => {
+        const session = getConversation();
+        const msg = session.messages.find(m => m.id === card.dataset.for);
+        if (!msg) return;
+        const pending = editableChanges.filter((_, i) => itemStates[i] === 'pending');
+        const stripped = stripLBChangesBlock(msg.content);
+        if (pending.length === 0) {
+            msg.content = stripped;
+        } else {
+            msg.content = stripped + '\n\n' + reconstructLBChangesBlock(pending);
+        }
+        if (msg.swipes) msg.swipes[msg.swipeIndex || 0].content = msg.content;
+        saveConversation();
+    };
+
+    const getPendingCount = () => itemStates.filter(s => s === 'pending').length;
+    const getAppliedCount = () => itemStates.filter(s => s === 'applied').length;
+    const checkAllResolved = () => { if (getPendingCount() === 0) { syncBlockToMessage(); card.remove(); } };
+
+    const header = document.createElement('div');
+    header.className = 'iv-lb-proposal-header';
+    const headerLeft = document.createElement('div');
+    headerLeft.style.cssText = 'display:flex;align-items:center;gap:8px;flex:1;min-width:0';
+    headerLeft.innerHTML = `<span class="iv-lb-proposal-icon">${I.book}</span><span class="iv-lb-proposal-title">Proposed Lorebook Changes</span>`;
+
+    const countBadge = document.createElement('span');
+    countBadge.className = 'iv-lb-proposal-count';
+    countBadge.textContent = `${editableChanges.length} pending`;
+    headerLeft.appendChild(countBadge);
+
+    const dismissBtn = document.createElement('button');
+    dismissBtn.className = 'iv-lb-proposal-dismiss';
+    dismissBtn.innerHTML = I.x; dismissBtn.title = 'Dismiss';
+    dismissBtn.addEventListener('click', () => {
+        const dismissedChanges = editableChanges.filter((_, i) => itemStates[i] === 'pending');
+        _dbgAdd('LB_PROPOSAL_ACTION', { action: 'dismissed', msgId: card.dataset.for, dismissedCount: dismissedChanges.length });
+        if (dismissedChanges.length > 0) logLBHistoryChanges(dismissedChanges, 'Dismissed', card.dataset.for);
+        itemStates.forEach((s, i) => { if (s === 'pending') itemStates[i] = 'dismissed'; });
+        syncBlockToMessage(); card.remove();
+    });
+
+    header.appendChild(headerLeft); header.appendChild(dismissBtn);
+
+    const list = document.createElement('div');
+    list.className = 'iv-lb-proposal-list';
+    const itemEls = [];
+    const _sharedActiveBooks = await getActiveLorebookNames();
+
+    editableChanges.forEach((c, ci) => {
+        const item = document.createElement('div');
+        item.className = `iv-lb-proposal-item iv-lb-proposal-${c.action || 'edit'}`;
+
+        const itemHeader = document.createElement('div');
+        itemHeader.className = 'iv-lb-proposal-item-header';
+
+        const itemMeta = document.createElement('div');
+        itemMeta.style.cssText = 'display:flex;align-items:center;gap:8px;flex:1;min-width:0;flex-wrap:wrap';
+        itemMeta.innerHTML = `<span class="iv-lb-proposal-action">${escHtml(actionLabels[c.action] || c.action || '?')}</span><span class="iv-lb-proposal-name iv-lb-pn-target">${escHtml(c.name || c.originalName || `Entry #${c.uid || '?'}`)}</span>${c.constant ? '<span class="iv-lb-src-badge iv-lb-src-global" style="font-size:9px;padding:1px 5px" title="Constant entry">★</span>' : ''}`;
+
+        const warnEl = document.createElement('div');
+        warnEl.style.cssText = 'font-size:10px;color:var(--iv-danger);margin-top:4px;width:100%;display:none;cursor:pointer;';
+        warnEl.title = 'Click to open the edit panel and fix manually';
+        itemMeta.appendChild(warnEl);
+
+        const _activeBooks = _sharedActiveBooks;
+        const _currentBook = editableChanges[ci].worldName || '';
+
+        const worldDd = document.createElement('div');
+        worldDd.className = 'iv-lb-proposal-world-dd';
+
+        const worldTrigger = document.createElement('button');
+        worldTrigger.className = 'iv-lb-proposal-world-trigger';
+        worldTrigger.type = 'button';
+
+        const worldTriggerText = document.createElement('span');
+        worldTriggerText.className = 'iv-lb-proposal-world-trigger-text';
+        worldTriggerText.textContent = `in ${getDisplayName(_currentBook) || '?'}`;
+
+        const worldChevronEl = document.createElement('span');
+        worldChevronEl.className = 'iv-lb-proposal-world-chevron';
+        worldChevronEl.innerHTML = I.chevron;
+
+        worldTrigger.appendChild(worldTriggerText);
+        worldTrigger.appendChild(worldChevronEl);
+
+        const worldPanel = document.createElement('div');
+        worldPanel.className = 'iv-lb-proposal-world-panel';
+
+        let _selectedBook = _currentBook;
+
+        const buildWorldPanelItems = (items) => {
+            worldPanel.innerHTML = '';
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'iv-lb-proposal-world-empty';
+                empty.textContent = 'No active lorebooks';
+                worldPanel.appendChild(empty);
+            }
+            items.forEach(name => {
+                const item2 = document.createElement('div');
+                item2.className = `iv-lb-proposal-world-item${name === _selectedBook ? ' active' : ''}`;
+                item2.dataset.value = name;
+                item2.innerHTML = `<span class="iv-lb-proposal-world-item-dot"></span><span>${getDisplayName(name)}</span>`;
+                item2.addEventListener('click', () => selectBook(name));
+                worldPanel.appendChild(item2);
+            });
+            if (c.action === 'add') {
+                const sep = document.createElement('div'); sep.className = 'iv-lb-proposal-world-sep';
+                worldPanel.appendChild(sep);
+                const newItem = document.createElement('div');
+                newItem.className = 'iv-lb-proposal-world-item iv-lb-proposal-world-new';
+                newItem.innerHTML = `<span>${I.plus}</span><span>Create new lorebook…</span>`;
+                newItem.addEventListener('click', async () => {
+                    worldPanel.classList.remove('open'); worldTrigger.classList.remove('open');
+                    const name = await showCustomDialog({ type: 'prompt', title: 'New Lorebook Name', message: 'Enter name for the new lorebook:', placeholder: 'My Lorebook' });
+                    if (name?.trim()) {
+                        const n = name.trim();
+                        if (!_activeBooks.includes(n)) _activeBooks.push(n);
+                        buildWorldPanelItems(_activeBooks);
+                        selectBook(n);
+                    }
+                });
+                worldPanel.appendChild(newItem);
+            }
+        };
+
+        const _validateBookEntry = async (bookName) => {
+            worldTrigger.classList.add('loading');
+            const checkChange = { ...editableChanges[ci], worldName: bookName };
+            if (bookName !== editableChanges[ci].worldName) delete checkChange.uid;
+            
+            const resolved = await resolveLBChangeTarget(checkChange, true);
+            worldTrigger.classList.remove('loading');
+
+            const found = !!resolved.origEntry;
+            if (found) {
+                const orig = resolved.origEntry;
+                const n = orig.comment || `Entry #${orig.uid}`;
+                editableChanges[ci].originalName = n;
+                if (!editableChanges[ci].name) editableChanges[ci].name = n;
+                
+                const nameEl = item.querySelector('.iv-lb-pn-target');
+                if (nameEl) nameEl.textContent = n;
+
+                const nameInput = item.querySelector('.iv-lb-name-input');
+                if (nameInput && !nameInput.value) nameInput.value = n;
+
+                if (editableChanges[ci].triggers === null) {
+                    const origKeys = orig.key || [];
+                    editableChanges[ci].triggers = [...origKeys];
+                    const tEl = item.querySelector('.iv-lb-proposal-triggers');
+                    if (tEl) tEl.textContent = origKeys.length ? `Keys: ${origKeys.join(', ')}` : 'Keys: none';
+                    const tInput = item.querySelector('.iv-lb-trig-input');
+                    if (tInput && !tInput.value) { tInput.value = origKeys.join(', '); tInput.placeholder = ''; }
+                }
+            }
+
+            if (found && resolved.bookName && resolved.bookName !== bookName) {
+                editableChanges[ci].worldName = resolved.bookName;
+                _selectedBook = resolved.bookName;
+                worldPanel.querySelectorAll('.iv-lb-proposal-world-item').forEach(el => el.classList.toggle('active', el.dataset.value === resolved.bookName));
+                worldTriggerText.textContent = `in ${getDisplayName(resolved.bookName)}`;
+                toastr.info(`Entry found in "<b>${escHtml(getDisplayName(resolved.bookName))}</b>" instead — lorebook switched automatically.`, EXT_DISPLAY, { escapeHtml: false });
+            } else {
+                worldTriggerText.textContent = found ? `in ${getDisplayName(bookName)}` : `in ${getDisplayName(bookName)} ⚠`;
+            }
+
+            let isValid = found;
+            let reason = found ? '' : 'Entry not found in selected lorebook';
+            if (found && editableChanges[ci].action === 'patch') {
+                const orig = resolved.origEntry;
+                let current = orig?.content || '';
+                for (const patch of (editableChanges[ci].patches || [])) {
+                    const { result, matched } = applySearchReplaceToField(current, patch.search || patch.anchor || '', patch.replace || '');
+                    if (!matched) { isValid = false; reason = `ANCHOR not found: "${(patch.search || patch.anchor || '').slice(0, 40)}..."`; break; }
+                    current = result;
+                }
+            }
+
+            if (!isValid) {
+                applyItemBtn.disabled = true; applyItemBtn.title = reason;
+                item.style.borderLeftColor = 'var(--iv-danger)';
+                warnEl.textContent = `⚠ ${reason}`; warnEl.style.display = 'block';
+            } else {
+                applyItemBtn.disabled = false; applyItemBtn.title = 'Apply this change';
+                item.style.borderLeftColor = ''; warnEl.style.display = 'none';
+            }
+            worldTrigger.classList.toggle('warn', !found);
+        };
+
+        const selectBook = async (name) => {
+            _selectedBook = name;
+            editableChanges[ci].worldName = name;
+            worldTriggerText.textContent = `in ${getDisplayName(name)}`;
+            worldTrigger.classList.remove('warn');
+            worldPanel.querySelectorAll('.iv-lb-proposal-world-item').forEach(el => el.classList.toggle('active', el.dataset.value === name));
+            worldPanel.classList.remove('open'); worldTrigger.classList.remove('open');
+            if (c.action !== 'add') await _validateBookEntry(name);
+        };
+
+        worldTrigger.addEventListener('click', e => {
+            e.stopPropagation();
+            const isOpen = worldPanel.classList.contains('open');
+            document.querySelectorAll('.iv-lb-proposal-world-panel.open').forEach(p => { p.classList.remove('open'); p.previousElementSibling?.classList.remove('open'); });
+            if (!isOpen) {
+                const rect = worldTrigger.getBoundingClientRect();
+                worldPanel.style.top = `${rect.bottom + 4}px`; worldPanel.style.left = `${rect.left}px`;
+                worldPanel.classList.add('open'); worldTrigger.classList.add('open');
+            }
+        });
+
+        const _allBooks = [..._activeBooks];
+        if (_currentBook && !_activeBooks.includes(_currentBook)) _allBooks.unshift(_currentBook);
+        buildWorldPanelItems(_allBooks);
+        worldDd.appendChild(worldTrigger); worldDd.appendChild(worldPanel);
+
+        const itemBtns = document.createElement('div');
+        itemBtns.className = 'iv-lb-proposal-item-btns';
+
+        let editToggleBtn = null;
+        if (c.action !== 'delete') {
+            editToggleBtn = document.createElement('button');
+            editToggleBtn.className = 'iv-lb-proposal-edit-toggle';
+            editToggleBtn.title = 'Edit before applying'; editToggleBtn.textContent = '✎';
+            itemBtns.appendChild(editToggleBtn);
+        }
+
+        if (['edit', 'patch', 'prepend', 'append'].includes(c.action)) {
+            const diffBtn = document.createElement('button');
+            diffBtn.className = 'iv-lb-proposal-diff-btn';
+            diffBtn.title = 'View diff'; diffBtn.innerHTML = I.diff;
+            diffBtn.addEventListener('click', async e => {
+                e.stopPropagation();
+                const change = editableChanges[ci];
+                const { origEntry } = await resolveLBChangeTarget(change);
+                if (!origEntry) { toastr.warning('Could not find original entry to compare against.', EXT_DISPLAY); return; }
+                openDiffModal(change, origEntry);
+            });
+            itemBtns.appendChild(diffBtn);
+        }
+
+        const closeEditPanel = () => {
+            const editPanel = item.querySelector('.iv-lb-proposal-edit-panel');
+            if (editPanel && editPanel.style.display !== 'none') {
+                editPanel.style.display = 'none';
+                if (previewEl) previewEl.style.display = '';
+                if (triggersEl) triggersEl.style.display = '';
+                if (editToggleBtn) editToggleBtn.classList.remove('active');
+            }
+        };
+
+        const applyItemBtn = document.createElement('button');
+        applyItemBtn.className = 'iv-lb-proposal-item-apply';
+        applyItemBtn.title = 'Apply this change'; applyItemBtn.textContent = '✓';
+        applyItemBtn.addEventListener('click', async e => {
+            e.stopPropagation();
+            if (itemStates[ci] !== 'pending') return;
+            closeEditPanel();
+            applyItemBtn.disabled = true; applyItemBtn.textContent = '…';
+            try {
+                await applyLBChanges([editableChanges[ci]], card.dataset.for);
+                itemStates[ci] = 'applied'; item.classList.add('iv-lb-item-applied');
+                itemBtns.querySelectorAll('button').forEach(b => { b.disabled = true; });
+                updateCountBadge(); updateFooterBtns(); syncBlockToMessage(); checkAllResolved();
+                toastr.success('[LB] Change applied.', EXT_DISPLAY);
+            } catch (err) {
+                toastr.error(`Failed: ${err.message}`, EXT_DISPLAY);
+                applyItemBtn.disabled = false; applyItemBtn.textContent = '✓';
+            }
+        });
+
+        const rejectItemBtn = document.createElement('button');
+        rejectItemBtn.className = 'iv-lb-proposal-item-reject';
+        rejectItemBtn.title = 'Reject this change'; rejectItemBtn.textContent = '✕';
+        rejectItemBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            if (itemStates[ci] !== 'pending') return;
+            closeEditPanel(); itemStates[ci] = 'rejected';
+            item.classList.add('iv-lb-item-rejected');
+            itemBtns.querySelectorAll('button').forEach(b => { b.disabled = true; });
+            logLBHistoryChanges([editableChanges[ci]], 'Rejected', card.dataset.for);
+            updateCountBadge(); updateFooterBtns(); syncBlockToMessage(); checkAllResolved();
+        });
+
+        itemBtns.appendChild(applyItemBtn); itemBtns.appendChild(rejectItemBtn);
+        itemHeader.appendChild(itemMeta); itemHeader.appendChild(itemBtns);
+        item.appendChild(itemHeader); item.appendChild(worldDd);
+
+        let previewEl = null, triggersEl = null;
+        if (c.content) {
+            previewEl = document.createElement('div');
+            previewEl.className = 'iv-lb-proposal-preview';
+            const isLong = c.content.length > 120;
+            previewEl.textContent = isLong ? c.content.slice(0, 120) + '…' : c.content;
+            if (isLong) {
+                let _expanded = false;
+                previewEl.title = 'Click to expand'; previewEl.style.cursor = 'pointer';
+                previewEl.addEventListener('click', e => {
+                    e.stopPropagation();
+                    if (window.getSelection()?.toString()) return;
+                    _expanded = !_expanded;
+                    previewEl.textContent = _expanded ? c.content : c.content.slice(0, 120) + '…';
+                    previewEl.style.whiteSpace = _expanded ? 'pre-wrap' : '';
+                });
+            }
+            item.appendChild(previewEl);
+        }
+        if (c.triggers !== null && c.triggers?.length) {
+            triggersEl = document.createElement('div'); triggersEl.className = 'iv-lb-proposal-triggers';
+            triggersEl.textContent = 'Keys: ' + c.triggers.join(', '); item.appendChild(triggersEl);
+        } else if (c.triggers === null) {
+            triggersEl = document.createElement('div'); triggersEl.className = 'iv-lb-proposal-triggers';
+            triggersEl.style.opacity = '0.5'; triggersEl.textContent = 'Keys: keep original'; item.appendChild(triggersEl);
+        }
+
+        if (c.action !== 'delete') {
+            const editPanel = document.createElement('div');
+            editPanel.className = 'iv-lb-proposal-edit-panel';
+            editPanel.style.display = 'none';
+
+            const mkRow = (labelHtml, el) => {
+                const row = document.createElement('div'); row.className = 'iv-lb-pe-row';
+                const lbl = document.createElement('label'); lbl.className = 'iv-lb-pe-label'; lbl.innerHTML = labelHtml;
+                row.appendChild(lbl); row.appendChild(el); return row;
+            };
+
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text'; nameInput.className = 'iv-lb-pe-input iv-lb-name-input';
+            nameInput.value = c.name || '';
+            nameInput.addEventListener('input', () => { editableChanges[ci].name = nameInput.value; });
+            editPanel.appendChild(mkRow('Name', nameInput));
+
+            const trigInput = document.createElement('input');
+            trigInput.type = 'text'; trigInput.className = 'iv-lb-pe-input iv-lb-trig-input';
+            trigInput.value = Array.isArray(c.triggers) ? c.triggers.join(', ') : '';
+            trigInput.addEventListener('input', () => {
+                const val = trigInput.value.trim();
+                editableChanges[ci].triggers = val === '' ? [] : val.split(',').map(t => t.trim()).filter(Boolean);
+            });
+            editPanel.appendChild(mkRow('Keys', trigInput));
+
+            if (c.action === 'patch') {
+                const rebuildPatches = () => {
+                    const existing = editPanel.querySelector('.iv-lb-patches-wrap');
+                    if (existing) existing.remove();
+                    const patchWrap = document.createElement('div');
+                    patchWrap.className = 'iv-lb-patches-wrap';
+                    patchWrap.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin-top:4px';
+                    (editableChanges[ci].patches || []).forEach((patch, pi) => {
+                        const searchTa = document.createElement('textarea');
+                        searchTa.className = 'iv-lb-pe-textarea'; searchTa.rows = 2; searchTa.value = patch.search || '';
+                        searchTa.addEventListener('input', () => { editableChanges[ci].patches[pi].search = searchTa.value; });
+                        const replaceTa = document.createElement('textarea');
+                        replaceTa.className = 'iv-lb-pe-textarea'; replaceTa.rows = 3; replaceTa.value = patch.replace || '';
+                        replaceTa.addEventListener('input', () => { editableChanges[ci].patches[pi].replace = replaceTa.value; });
+                        patchWrap.appendChild(mkRow('Anchor (range)', searchTa));
+                        patchWrap.appendChild(mkRow('Replace', replaceTa));
+                    });
+                    editPanel.appendChild(patchWrap);
+                };
+                rebuildPatches();
+            } else {
+                const contentTa = document.createElement('textarea');
+                contentTa.className = 'iv-lb-pe-textarea'; contentTa.value = c.content || '';
+                contentTa.addEventListener('input', () => { editableChanges[ci].content = contentTa.value; });
+                editPanel.appendChild(mkRow('Content', contentTa));
+            }
+
+            const constWrap = document.createElement('label');
+            constWrap.className = 'iv-sp-check'; constWrap.style.marginTop = '6px';
+            const constCb = document.createElement('input');
+            constCb.type = 'checkbox'; constCb.checked = !!c.constant;
+            constCb.addEventListener('change', () => { editableChanges[ci].constant = constCb.checked; });
+            constWrap.appendChild(constCb); constWrap.appendChild(Object.assign(document.createElement('span'), { textContent: 'Constant (always inject)' }));
+            
+            const outletWrap = document.createElement('label');
+            outletWrap.className = 'iv-sp-check'; outletWrap.style.marginTop = '6px';
+            const outletCb = document.createElement('input');
+            outletCb.type = 'checkbox'; outletCb.checked = !!c.outlet;
+            outletWrap.appendChild(outletCb); outletWrap.appendChild(Object.assign(document.createElement('span'), { textContent: 'Outlet Entry' }));
+
+            const outletNameRow = document.createElement('div');
+            outletNameRow.className = 'iv-lb-pe-row';
+            outletNameRow.style.display = c.outlet ? 'flex' : 'none';
+            const oNameInp = document.createElement('input');
+            oNameInp.type = 'text'; oNameInp.className = 'iv-lb-pe-input';
+            oNameInp.value = c.outlet_name || '';
+            oNameInp.placeholder = 'Outlet macro name...';
+            oNameInp.addEventListener('input', () => { editableChanges[ci].outlet_name = oNameInp.value; });
+            outletNameRow.innerHTML = '<label class="iv-lb-pe-label">Outlet Name</label>';
+            outletNameRow.appendChild(oNameInp);
+
+            outletCb.addEventListener('change', () => { 
+                editableChanges[ci].outlet = outletCb.checked; 
+                outletNameRow.style.display = outletCb.checked ? 'flex' : 'none';
+            });
+
+            editPanel.appendChild(constWrap);
+            editPanel.appendChild(outletWrap);
+            editPanel.appendChild(outletNameRow);
+
+            item.appendChild(editPanel);
+
+            if (editToggleBtn) {
+                const toggleEditPanel = (e) => {
+                    e.stopPropagation();
+                    const isOpen = editPanel.style.display !== 'none';
+                    editPanel.style.display = isOpen ? 'none' : 'flex';
+                    if (previewEl) previewEl.style.display = isOpen ? '' : 'none';
+                    if (triggersEl) triggersEl.style.display = isOpen ? '' : 'none';
+                    editToggleBtn.classList.toggle('active', !isOpen);
+                };
+                editToggleBtn.addEventListener('click', toggleEditPanel);
+                warnEl.addEventListener('click', (e) => { if (editPanel.style.display === 'none') toggleEditPanel(e); });
+            }
+        }
+
+        list.appendChild(item);
+        itemEls.push(item);
+        if (c.action !== 'add' && itemStates[ci] === 'pending') _validateBookEntry(_selectedBook).catch(() => {});
+    });
+
+    const footer = document.createElement('div');
+    footer.className = 'iv-lb-proposal-footer';
+    const applyAllBtn = document.createElement('button');
+    applyAllBtn.className = 'iv-lb-proposal-apply'; applyAllBtn.textContent = 'Apply All';
+    const rejectAllBtn = document.createElement('button');
+    rejectAllBtn.className = 'iv-lb-proposal-reject'; rejectAllBtn.textContent = 'Reject All';
+
+    const updateCountBadge = () => { countBadge.textContent = getPendingCount() > 0 ? `${getPendingCount()} pending` : `${getAppliedCount()} applied`; };
+    const updateFooterBtns = () => {
+        applyAllBtn.style.display = getPendingCount() > 0 ? '' : 'none';
+        rejectAllBtn.style.display = getPendingCount() > 0 ? '' : 'none';
+    };
+
+    applyAllBtn.addEventListener('click', async () => {
+        const pending = editableChanges.filter((_, i) => itemStates[i] === 'pending');
+        if (!pending.length) return;
+        applyAllBtn.disabled = true; applyAllBtn.textContent = 'Applying…';
+        try {
+            await applyLBChanges(pending, card.dataset.for);
+            itemStates.forEach((s, i) => { if (s === 'pending') { itemStates[i] = 'applied'; itemEls[i].classList.add('iv-lb-item-applied'); itemEls[i].querySelectorAll('button').forEach(b => { b.disabled = true; }); } });
+            updateCountBadge(); updateFooterBtns(); checkAllResolved();
+            toastr.success(`[LB] ${pending.length} changes applied.`, EXT_DISPLAY);
+        } catch (e) {
+            toastr.error(`Failed: ${e.message}`, EXT_DISPLAY);
+            applyAllBtn.disabled = false; applyAllBtn.textContent = 'Apply All';
+        }
+    });
+
+    rejectAllBtn.addEventListener('click', () => {
+        const rejectedChanges = [];
+        itemStates.forEach((s, i) => {
+            if (s === 'pending') {
+                itemStates[i] = 'rejected'; itemEls[i].classList.add('iv-lb-item-rejected');
+                itemEls[i].querySelectorAll('button').forEach(b => { b.disabled = true; });
+                rejectedChanges.push(editableChanges[i]);
+            }
+        });
+        if (rejectedChanges.length > 0) logLBHistoryChanges(rejectedChanges, 'Rejected', card.dataset.for);
+        updateCountBadge(); updateFooterBtns(); checkAllResolved();
+    });
+
+    footer.appendChild(applyAllBtn); footer.appendChild(rejectAllBtn);
+    card.appendChild(header); card.appendChild(list); card.appendChild(footer);
+    const body = msgEl.querySelector('.iv-msg-body');
+    if (body) body.insertBefore(card, body.querySelector('.iv-swipe-bar'));
+    else msgEl.after(card);
+    bringWindowToFront();
+}
+
+async function openLorebookManager() {
+    const overlay = document.getElementById('iv-lb-overlay');
+    if (!overlay) return;
+    _dbgAdd('LB_UI_OPEN');
+    applyCustomTheme(getSettings().customTheme || THEME_PRESETS.default);
+    overlay.style.display = 'flex';
+    bringWindowToFront();
+    const s = getSettings();
+    if (document.getElementById('iv-lb-search')) document.getElementById('iv-lb-search').value = state.lbSearchQuery;
+    
+    // wiCache clear logic
+    Object.keys(wiCache).forEach(k => delete wiCache[k]);
+    
+    await buildLorebookContextBlock(s).catch(() => {});
+    await refreshLorebookList().catch(e => console.error(`[${EXT_DISPLAY}] LB list:`, e));
+    if (state.lbActiveBook) await renderEntryList(state.lbActiveBook, state.lbSearchQuery).catch(() => {});
+}
+
+function closeLorebookManager() {
+    document.getElementById('iv-lb-overlay').style.display = 'none';
+    _dbgAdd('LB_UI_CLOSE');
+}
+
+function _applyLBBookCheckState(item, name, s) {
+    const isSelected = s.lorebookSelectedBooks.includes(name);
+    const isExcluded = (s.lorebookExcludedBooks || []).includes(name);
+    const check = item.querySelector('.iv-lb-book-check');
+    if (!check) return;
+    check.classList.remove('checked', 'excluded');
+    if (isSelected) check.classList.add('checked');
+    else if (isExcluded) check.classList.add('excluded');
+    check.title = isSelected ? 'Selected: all entries included — click to exclude' : isExcluded ? 'Excluded: all entries blocked — click to reset' : 'Default — click to include all';
+    item.classList.toggle('selected', isSelected);
+    item.classList.toggle('lb-excluded', isExcluded);
+    const isForced = isSelected || isExcluded;
+    if (item.classList.contains('lb-book-open')) {
+        const entriesEl = document.getElementById('iv-lb-entries');
+        if (entriesEl) entriesEl.classList.toggle('lb-entries-dimmed', isForced);
+    }
+}
+
+async function refreshLorebookList() {
+    const listEl = document.getElementById('iv-lb-book-list');
+    if (!listEl) return;
+    const ctx = SillyTavern.getContext();
+    if (typeof ctx.updateWorldInfoList === 'function') ctx.updateWorldInfoList().catch(() => {});
+    const activeNamesArray = await getActiveLorebookNames();
+    const s = getSettings();
+    listEl.innerHTML = '';
+    
+    if (!activeNamesArray.length) {
+        listEl.innerHTML = '<div class="iv-lb-loading">No active lorebooks found.<br><small style="opacity:.5">Link one to the character or select globally.</small></div>';
+        return;
+    }
+    
+    await Promise.all(activeNamesArray.map(name => fetchWorldInfoBook(name)));
+    
+    
+    // (G)
+    const globalBooks = window.selected_world_info || ctx.worldInfoSettings?.globalSelect || [];
+        
+    // (Ch)
+    const chatMetadata = window.chat_metadata || ctx.chatMetadata || {};
+    const chatBook = chatMetadata.world_info || null;
+
+    // (P)
+    const pu = window.power_user || ctx.powerUserSettings || {};
+    let personaBook = pu.persona_description_lorebook || null;
+    if (!personaBook) {
+        let personaId = window.user_avatar || ctx.user_avatar || ctx.userAvatar || ctx.personaId || ctx.activePersonaId || ctx.active_persona_id;
+        if (typeof personaId === 'object' && personaId !== null) personaId = personaId.avatarId || personaId.id;
+        if (personaId && pu.persona_descriptions?.[personaId]?.lorebook) {
+            personaBook = pu.persona_descriptions[personaId].lorebook;
+        }
+    }
+
+    //(C) - Primary + Additional
+    const charBooks = new Set();
+    const chars = window.characters || ctx.characters || [];
+    
+    chars.forEach((char, idx) => {
+        if (!char) return;
+        
+        if (char.data?.extensions?.world) {
+            charBooks.add(char.data.extensions.world);
+        }
+        
+        if (window.world_info?.charLore && Array.isArray(window.world_info.charLore)) {
+            let fileName = char.avatar ? char.avatar.replace(/\.[^/.]+$/, '') : null;
+            if (typeof window.getCharaFilename === 'function') {
+                try { fileName = window.getCharaFilename(idx) || fileName; } catch (_) {}
+            }
+            
+            const charLore = window.world_info.charLore.find(e => e.name === fileName);
+            if (charLore && Array.isArray(charLore.extraBooks)) {
+                charLore.extraBooks.forEach(b => charBooks.add(b));
+            }
+        }
+    });
+
+    const getSourceInfo = (name) => {
+        if (name === EMBEDDED_BOOK_KEY) return { cls: 'iv-lb-src-character', label: 'C', title: 'Embedded Character Lorebook' };
+        
+        if (name === chatBook) return { cls: 'iv-lb-src-chat', label: 'Ch', title: 'Chat Lorebook' };
+        if (name === personaBook) return { cls: 'iv-lb-src-persona', label: 'P', title: 'Persona Lorebook' };
+        if (charBooks.has(name)) return { cls: 'iv-lb-src-character', label: 'C', title: 'Character Lorebook (Primary or Additional)' };
+        if (globalBooks.includes(name)) return { cls: 'iv-lb-src-global', label: 'G', title: 'Global Lorebook' };
+
+        return { cls: 'iv-lb-src-global', label: 'G', title: 'Global Lorebook' };
+    };
+
+    const frag = document.createDocumentFragment();
+    for (const name of activeNamesArray) {
+        const displayName = getDisplayName(name);
+        const isSelected = s.lorebookSelectedBooks.includes(name);
+        const isExcluded = (s.lorebookExcludedBooks || []).includes(name);
+        const item = document.createElement('div');
+        item.className = `iv-lb-book-item${isSelected ? ' selected' : ''}${isExcluded ? ' lb-excluded' : ''}${state.lbActiveBook === name ? ' lb-book-open' : ''}`;
+        item.dataset.name = name;
+        
+        const cached = wiCache[name];
+        const entryCount = cached ? Object.keys(cached.entries || {}).length : '…';
+        
+        const srcInfo = getSourceInfo(name);
+        const checkState = isSelected ? 'checked' : isExcluded ? 'excluded' : '';
+        
+        item.innerHTML = `
+            <div class="iv-lb-book-check${checkState ? ' ' + checkState : ''}" data-book="${escHtml(name)}"></div>
+            <div class="iv-lb-book-info">
+                <span class="iv-lb-book-name">${escHtml(displayName)}</span>
+                <span class="iv-lb-book-meta">${entryCount} entries</span>
+            </div>
+            <span class="iv-lb-src-badge ${srcInfo.cls}" title="${srcInfo.title}" style="margin-left: auto;">${srcInfo.label}</span>`;
+            
+        item.querySelector('.iv-lb-book-check').addEventListener('click', e => { e.stopPropagation(); toggleLorebookSelection(name); });
+        item.addEventListener('click', () => viewLorebookEntries(name));
+        frag.appendChild(item);
+    }
+    
+    listEl.appendChild(frag);
+    updateLBFooterInfo();
+}
+
+async function toggleLorebookSelection(name) {
+    const s = getSettings();
+    const isSelected = s.lorebookSelectedBooks.includes(name);
+    const isExcluded = (s.lorebookExcludedBooks || []).includes(name);
+
+    if (!isSelected && !isExcluded) {
+        s.lorebookSelectedBooks.push(name);
+        s.lorebookExcludedBooks = (s.lorebookExcludedBooks || []).filter(b => b !== name);
+    } else if (isSelected) {
+        s.lorebookSelectedBooks = s.lorebookSelectedBooks.filter(b => b !== name);
+        if (!s.lorebookExcludedBooks) s.lorebookExcludedBooks = [];
+        s.lorebookExcludedBooks.push(name);
+    } else {
+        s.lorebookExcludedBooks = s.lorebookExcludedBooks.filter(b => b !== name);
+    }
+    saveSettings();
+    await buildLorebookContextBlock(s);
+    const item = document.querySelector(`.iv-lb-book-item[data-name="${CSS.escape(name)}"]`);
+    if (item) _applyLBBookCheckState(item, name, s);
+    updateLBFooterInfo();
+    updateMsgCount(getConversation());
+    if (state.lbActiveBook) renderEntryList(state.lbActiveBook, state.lbSearchQuery);
+}
+
+async function viewLorebookEntries(name) {
+    state.lbActiveBook = name;
+    document.querySelectorAll('.iv-lb-book-item').forEach(el => el.classList.toggle('lb-book-open', el.dataset.name === name));
+    document.getElementById('iv-lb-main-actions').style.display = '';
+    document.getElementById('iv-lb-ctx-legend').style.display = '';
+    document.getElementById('iv-lb-entry-detail').style.display = 'none';
+    document.getElementById('iv-lb-entries').style.display = '';
+    const s = getSettings();
+    const isForced = s.lorebookSelectedBooks.includes(name) || (s.lorebookExcludedBooks || []).includes(name);
+    const entriesEl = document.getElementById('iv-lb-entries');
+    if (entriesEl) entriesEl.classList.toggle('lb-entries-dimmed', isForced);
+    await renderEntryList(name, state.lbSearchQuery);
+}
+
+async function renderEntryList(bookName, search = '') {
+    const container = document.getElementById('iv-lb-entries');
+    if (!container) return;
+    const data = await fetchWorldInfoBook(bookName);
+    if (!data) { container.innerHTML = '<div class="iv-lb-empty-state">Failed to load lorebook</div>'; return; }
+
+    const entries = wiEntriesToArray(data);
+    const s = getSettings();
+    const overrides = s.lorebookEntryOverrides || {};
+    (s.lorebookSelectedBooks || []).includes(bookName);
+    const activeEntryUids = new Set(
+        lastActiveEntries.filter(e => e.bookName === bookName).map(e => e.uid)
+    );
+    const lowerSearch = search.toLowerCase();
+    const filtered = search ? entries.filter(e => {
+        return (e.comment || '').toLowerCase().includes(lowerSearch)
+            || (e.content || '').toLowerCase().includes(lowerSearch)
+            || (e.key || []).join(' ').toLowerCase().includes(lowerSearch);
+    }) : entries;
+
+    const label = document.getElementById('iv-lb-entries-label');
+    if (label) label.textContent = `${getDisplayName(bookName)} — ${filtered.length}${filtered.length !== entries.length ? ` of ${entries.length}` : ''} entr${filtered.length !== 1 ? 'ies' : 'y'}`;
+
+    const frag = document.createDocumentFragment();
+    for (const entry of filtered) {
+        const overKey = getEntryOverrideKey(bookName, entry);
+        const override = overrides[overKey];
+        const isDisabled = !!entry.disable;
+        const isInCtx = activeEntryUids.has(entry.uid);
+        const row = document.createElement('div');
+        row.className = `iv-lb-entry-row${isDisabled ? ' lb-disabled' : ''}${isInCtx ? ' lb-in-ctx' : ''}`;
+        row.dataset.uid = entry.uid;
+
+        let indClass = '', btnText = '~';
+        if (override === true) { indClass = 'forced-on'; btnText = '✓'; }
+        else if (override === false) { indClass = 'forced-off'; btnText = '✕'; }
+        else if (entry.constant && !entry.disable) { indClass = 'forced-on'; btnText = '✓'; }
+        else if (isInCtx) { indClass = 'iv-lb-ind-in-ctx'; }
+
+        row.innerHTML = `
+            <div class="iv-lb-entry-indicator ${indClass}"></div>
+            <div class="iv-lb-entry-info">
+                <span class="iv-lb-entry-name">${escHtml(entry.comment || `#${entry.uid}`)}${isInCtx ? ' <span class="iv-lb-in-ctx-badge">in context</span>' : ''}</span>
+                <span class="iv-lb-entry-keys">${entry.key?.slice(0, 5).map(k => escHtml(k)).join(' · ') || '—'}</span>
+            </div>
+            <div class="iv-lb-entry-actions">
+                <button class="iv-lb-entry-toggle-btn ${indClass}">${btnText}</button>
+                <button class="iv-lb-entry-view-btn">${I.edit}</button>
+            </div>`;
+        row.querySelector('.iv-lb-entry-toggle-btn').addEventListener('click', e => { e.stopPropagation(); cycleEntryOverride(bookName, entry, row); });
+        row.querySelector('.iv-lb-entry-view-btn').addEventListener('click', e => { e.stopPropagation(); showEntryDetail(entry, bookName); });
+        row.addEventListener('click', () => showEntryDetail(entry, bookName));
+        frag.appendChild(row);
+    }
+    container.innerHTML = '';
+    container.appendChild(frag);
+}
+
+function cycleEntryOverride(bookName, entry, rowEl) {
+    const s = getSettings();
+    if (!s.lorebookEntryOverrides) s.lorebookEntryOverrides = {};
+    const key = getEntryOverrideKey(bookName, entry);
+    const current = s.lorebookEntryOverrides[key];
+    const isConstantEntry = !!entry.constant && !entry.disable;
+    let next;
+    if (current === undefined) next = isConstantEntry ? false : true;
+    else if (current === true) next = false;
+    else { delete s.lorebookEntryOverrides[key]; next = undefined; }
+    if (next !== undefined) s.lorebookEntryOverrides[key] = next;
+
+    saveSettings();
+
+    const ind = rowEl.querySelector('.iv-lb-entry-indicator');
+    const btn = rowEl.querySelector('.iv-lb-entry-toggle-btn');
+    if (next === true) {
+        ind.className = 'iv-lb-entry-indicator forced-on';
+        btn.textContent = '✓'; btn.className = 'iv-lb-entry-toggle-btn forced-on';
+        rowEl.classList.remove('lb-in-ctx');
+    } else if (next === false) {
+        ind.className = 'iv-lb-entry-indicator forced-off';
+        btn.textContent = '✕'; btn.className = 'iv-lb-entry-toggle-btn forced-off';
+        rowEl.classList.remove('lb-in-ctx');
+    } else {
+        const isInCtx = lastActiveEntries.some(e => e.bookName === bookName && e.uid === entry.uid);
+        ind.className = `iv-lb-entry-indicator${isConstantEntry ? ' forced-on' : (isInCtx ? ' iv-lb-ind-in-ctx' : '')}`;
+        btn.textContent = isConstantEntry ? '✓' : '~'; 
+        btn.className = `iv-lb-entry-toggle-btn${isConstantEntry ? ' forced-on' : ''}`;
+        rowEl.classList.toggle('lb-in-ctx', isInCtx);
+    }
+    updateMsgCount(getConversation());
+}
+
+function showEntryDetail(entry, bookName) {
+    state.lbEntryDetailEntry = entry;
+    state.lbEntryDetailBook = bookName;
+    document.getElementById('iv-lb-entry-detail').style.display = 'flex';
+    document.getElementById('iv-lb-entries').style.display = 'none';
+
+    document.getElementById('iv-lb-detail-title').textContent = entry.comment || `Entry #${entry.uid}`;
+    document.getElementById('iv-lb-detail-name').value = entry.comment || '';
+    document.getElementById('iv-lb-detail-triggers').value = (entry.key || []).join(', ');
+    document.getElementById('iv-lb-detail-content').value = entry.content || '';
+
+    const lbStatus = document.getElementById('iv-lb-detail-lb-status');
+    if (lbStatus) {
+        const updateStatus = () => {
+            lbStatus.textContent = entry.disable ? 'Disabled' : 'Enabled';
+            lbStatus.className = `iv-lb-detail-status ${entry.disable ? 'status-disabled' : 'status-enabled'}`;
+        };
+        updateStatus();
+        lbStatus.onclick = async () => {
+            entry.disable = !entry.disable;
+            updateStatus();
+            const data = await fetchWorldInfoBook(bookName);
+            if (data?.entries[entry.uid] !== undefined) {
+                data.entries[entry.uid].disable = entry.disable;
+                await saveWorldInfoBook(bookName, data);
+                toastr.success('Status updated', EXT_DISPLAY);
+                renderEntryList(bookName, state.lbSearchQuery);
+            }
+        };
+    }
+
+    const s = getSettings();
+    const override = (s.lorebookEntryOverrides || {})[getEntryOverrideKey(bookName, entry)];
+    ['iv-lb-inj-default', 'iv-lb-inj-force-on', 'iv-lb-inj-force-off'].forEach(id => document.getElementById(id)?.classList.remove('active'));
+    if (override === true) document.getElementById('iv-lb-inj-force-on')?.classList.add('active');
+    else if (override === false) document.getElementById('iv-lb-inj-force-off')?.classList.add('active');
+    else document.getElementById('iv-lb-inj-default')?.classList.add('active');
+}
+
+async function saveEntryDetail() {
+    if (!state.lbEntryDetailEntry || !state.lbEntryDetailBook) return;
+    if (state.lbEntryDetailBook === EMBEDDED_BOOK_KEY) { toastr.warning('Cannot save embedded character book entries.', EXT_DISPLAY); return; }
+    const data = await fetchWorldInfoBook(state.lbEntryDetailBook);
+    if (!data) return;
+    const entry = data.entries[state.lbEntryDetailEntry.uid];
+    entry.comment = document.getElementById('iv-lb-detail-name')?.value || '';
+    entry.key = (document.getElementById('iv-lb-detail-triggers')?.value || '').split(',').map(t => t.trim()).filter(Boolean);
+    entry.content = document.getElementById('iv-lb-detail-content')?.value || '';
+    Object.assign(state.lbEntryDetailEntry, entry);
+    await saveWorldInfoBook(state.lbEntryDetailBook, data);
+
+    toastr.success('Entry saved', EXT_DISPLAY);
+    document.getElementById('iv-lb-detail-title').textContent = entry.comment || `Entry #${entry.uid}`;
+    renderEntryList(state.lbEntryDetailBook, state.lbSearchQuery);
+    updateMsgCount(getConversation());
+}
+
+async function deleteEntryDetail() {
+    if (!state.lbEntryDetailEntry || !state.lbEntryDetailBook) return;
+    const ok = await showCustomDialog({ type: 'confirm', title: 'Delete Entry', message: `Delete "${state.lbEntryDetailEntry.comment || 'this entry'}"?` });
+    if (!ok) return;
+    const data = await fetchWorldInfoBook(state.lbEntryDetailBook);
+    if (!data) return;
+    delete data.entries[state.lbEntryDetailEntry.uid];
+    await saveWorldInfoBook(state.lbEntryDetailBook, data);
+
+    toastr.success('Entry deleted', EXT_DISPLAY);
+    document.getElementById('iv-lb-entry-detail').style.display = 'none';
+    document.getElementById('iv-lb-entries').style.display = '';
+    renderEntryList(state.lbEntryDetailBook, state.lbSearchQuery);
+    updateMsgCount(getConversation());
+}
+
+async function addNewEntry() {
+    if (!state.lbActiveBook) { toastr.warning('Select a lorebook first', EXT_DISPLAY); return; }
+    if (state.lbActiveBook === EMBEDDED_BOOK_KEY) { toastr.warning('Cannot add entries to embedded character books.', EXT_DISPLAY); return; }
+    const name = await showCustomDialog({ type: 'prompt', title: 'New Entry', message: 'Entry name:', placeholder: 'New Entry' });
+    if (name === null) return;
+    const data = await fetchWorldInfoBook(state.lbActiveBook);
+    if (!data) return;
+    const uids = Object.keys(data.entries).map(Number);
+    const newUid = uids.length ? Math.max(...uids) + 1 : 1;
+    const newEntry = {
+        uid: newUid, key: [], keysecondary: [], content: '',
+        comment: name.trim() || 'New Entry', disable: false, group: '',
+        selective: false, constant: false, position: 0, depth: 4, displayIndex: newUid
+    };
+
+    data.entries[newUid] = newEntry;
+    await saveWorldInfoBook(state.lbActiveBook, data);
+    toastr.success('Entry created', EXT_DISPLAY);
+    await renderEntryList(state.lbActiveBook, state.lbSearchQuery);
+    showEntryDetail(newEntry, state.lbActiveBook);
+    updateMsgCount(getConversation());
+}
+
+async function updateLBFooterInfo() {
+    const el = document.getElementById('iv-lb-footer-info');
+    if (!el) return;
+    
+    const activeNames = await getActiveLorebookNames() || [];
+    const s = getSettings();
+    
+    const count = (s.lorebookSelectedBooks || []).filter(b => activeNames.includes(b)).length;
+    const excCount = (s.lorebookExcludedBooks || []).filter(b => activeNames.includes(b)).length;
+    
+    const kwOn = s.lorebookAutoKeyword;
+    const parts = [];
+    if (count) parts.push(`${count} book${count !== 1 ? 's' : ''} selected`);
+    if (excCount) parts.push(`${excCount} excluded`);
+    if (kwOn) parts.push('Auto-keywords ON');
+    el.textContent = parts.join(' · ');
+}
+
+function setupLorebookManagerListeners() {
+    document.getElementById('iv-lb-close')?.addEventListener('click', closeLorebookManager);
+    document.getElementById('iv-diff-close')?.addEventListener('click', () => {
+        const modal = document.getElementById('iv-diff-modal');
+        if (modal) modal.style.display = 'none';
+    });
+    
+    document.getElementById('iv-lb-refresh')?.addEventListener('click', async () => {
+        Object.keys(wiCache).forEach(k => delete wiCache[k]);
+        await refreshLorebookList();
+        if (state.lbActiveBook) await renderEntryList(state.lbActiveBook, state.lbSearchQuery);
+    });
+
+    let _lbSearchTid = null;
+    document.getElementById('iv-lb-search')?.addEventListener('input', e => {
+        state.lbSearchQuery = e.target.value;
+        clearTimeout(_lbSearchTid);
+        _lbSearchTid = setTimeout(() => { if (state.lbActiveBook) renderEntryList(state.lbActiveBook, state.lbSearchQuery); }, 200);
+    });
+
+    document.getElementById('iv-lb-enable-all')?.addEventListener('click', () => {
+        if (!state.lbActiveBook || !wiCache[state.lbActiveBook]) return;
+        const s = getSettings();
+        Object.values(wiCache[state.lbActiveBook].entries).forEach(e => { s.lorebookEntryOverrides[getEntryOverrideKey(state.lbActiveBook, e)] = true; });
+        saveSettings(); renderEntryList(state.lbActiveBook, state.lbSearchQuery);
+        Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getConversation()));
+    });
+    
+    document.getElementById('iv-lb-disable-all')?.addEventListener('click', () => {
+        if (!state.lbActiveBook || !wiCache[state.lbActiveBook]) return;
+        const s = getSettings();
+        Object.values(wiCache[state.lbActiveBook].entries).forEach(e => { s.lorebookEntryOverrides[getEntryOverrideKey(state.lbActiveBook, e)] = false; });
+        saveSettings(); renderEntryList(state.lbActiveBook, state.lbSearchQuery);
+        Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getConversation()));
+    });
+    
+    document.getElementById('iv-lb-reset-overrides')?.addEventListener('click', async () => {
+        if (!state.lbActiveBook) return;
+        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Overrides', message: `Reset all copilot injection overrides for "${state.lbActiveBook}"?` });
+        if (!ok) return;
+        const s = getSettings();
+        if (wiCache[state.lbActiveBook]) Object.values(wiCache[state.lbActiveBook].entries).forEach(e => { delete s.lorebookEntryOverrides[getEntryOverrideKey(state.lbActiveBook, e)]; });
+        saveSettings(); renderEntryList(state.lbActiveBook, state.lbSearchQuery);
+        Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getConversation()));
+    });
+
+    document.getElementById('iv-lb-add-entry')?.addEventListener('click', addNewEntry);
+    
+    document.getElementById('iv-lb-back')?.addEventListener('click', async () => {
+        document.getElementById('iv-lb-entry-detail').style.display = 'none';
+        document.getElementById('iv-lb-entries').style.display = '';
+        await buildLorebookContextBlock(getSettings());
+        if (state.lbActiveBook) await renderEntryList(state.lbActiveBook, state.lbSearchQuery);
+    });
+    
+    document.getElementById('iv-lb-detail-save')?.addEventListener('click', saveEntryDetail);
+    document.getElementById('iv-lb-detail-delete')?.addEventListener('click', deleteEntryDetail);
+    
+    document.getElementById('iv-lb-detail-copy')?.addEventListener('click', () => {
+        const c = document.getElementById('iv-lb-detail-content')?.value; if (c) copyText(c);
+    });
+    
+    ['iv-lb-inj-default', 'iv-lb-inj-force-on', 'iv-lb-inj-force-off'].forEach(id => {
+        document.getElementById(id)?.addEventListener('click', () => {
+            if (!state.lbEntryDetailEntry || !state.lbEntryDetailBook) return;
+            const val = document.getElementById(id)?.dataset.val;
+            const s = getSettings();
+            if (!s.lorebookEntryOverrides) s.lorebookEntryOverrides = {};
+            const key = getEntryOverrideKey(state.lbEntryDetailBook, state.lbEntryDetailEntry);
+            if (val === 'default') delete s.lorebookEntryOverrides[key];
+            else s.lorebookEntryOverrides[key] = val === 'true';
+            
+            saveSettings();
+            ['iv-lb-inj-default', 'iv-lb-inj-force-on', 'iv-lb-inj-force-off'].forEach(bid => document.getElementById(bid)?.classList.remove('active'));
+            document.getElementById(id)?.classList.add('active');
+            showEntryDetail(state.lbEntryDetailEntry, state.lbEntryDetailBook);
+            Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getConversation()));
+        });
+    });
+
+    const ctx = SillyTavern.getContext();
+    const es = ctx.eventSource || window.eventSource;
+    const et = ctx.event_types || window.event_types || {};
+    es?.on?.(et.WORLDINFO_UPDATED || 'worldinfo_updated', (name) => {
+        const overlay = document.getElementById('iv-lb-overlay');
+        if (!overlay || overlay.style.display === 'none') return;
+        refreshLorebookList();
+        if (state.lbActiveBook && name === state.lbActiveBook) {
+            renderEntryList(state.lbActiveBook, state.lbSearchQuery);
+        }
+    });
+}
+
+var featureLorebookUi = /*#__PURE__*/Object.freeze({
+  __proto__: null,
+  _applyLBBookCheckState: _applyLBBookCheckState,
+  addNewEntry: addNewEntry,
+  appendLBHistoryEl: appendLBHistoryEl,
+  closeLorebookManager: closeLorebookManager,
+  cycleEntryOverride: cycleEntryOverride,
+  deleteEntryDetail: deleteEntryDetail,
+  logLBHistoryChanges: logLBHistoryChanges,
+  openDiffModal: openDiffModal,
+  openLorebookManager: openLorebookManager,
+  reconstructLBChangesBlock: reconstructLBChangesBlock,
+  refreshLorebookList: refreshLorebookList,
+  renderEntryList: renderEntryList,
+  renderLBHistoryContent: renderLBHistoryContent,
+  renderProposalCard: renderProposalCard,
+  saveEntryDetail: saveEntryDetail,
+  setupLorebookManagerListeners: setupLorebookManagerListeners,
+  showEntryDetail: showEntryDetail,
+  toggleLorebookSelection: toggleLorebookSelection,
+  updateLBFooterInfo: updateLBFooterInfo,
+  viewLorebookEntries: viewLorebookEntries
 });
 
 let apiMod = null;
@@ -4370,6 +7019,8 @@ function extractToolCallPlaceholders(text, startIndex = 0) {
 function _renderMsgBodyContent(msgEl, msg) {
     const settings = getSettings();
     msgEl.querySelectorAll('.iv-tool-call-item').forEach(c => c.remove());
+    msgEl.querySelectorAll('.iv-lb-proposal-card').forEach(c => c.remove());
+    msgEl.querySelectorAll('.iv-msg-hist-wrap').forEach(c => c.remove());
 
     const cleanContent = stripMemoryBlock(splitPortraySignal(msg.content).visible);
     let displayText = cleanContent;
@@ -4415,8 +7066,30 @@ function _renderMsgBodyContent(msgEl, msg) {
     const contentEl = msgEl.querySelector('.iv-msg-content');
 
     if (contentEl) {
-        contentEl.innerHTML = renderMarkdown(getDisplayContent(displayText, settings).content);
-        postProcessHTMLBlocks(contentEl);
+        const lbChanges = parseLBChangesFromText(msg.content);
+        if (lbChanges?.length) {
+            const stripped = stripLBChangesBlock(displayText);
+            contentEl.innerHTML = renderMarkdown(getDisplayContent(stripped, settings).content);
+            postProcessHTMLBlocks(contentEl);
+            renderProposalCard(lbChanges, msgEl);
+        } else {
+            contentEl.innerHTML = renderMarkdown(getDisplayContent(displayText, settings).content);
+            postProcessHTMLBlocks(contentEl);
+        }
+    }
+
+    const currentSwipe = msg.swipes?.[msg.swipeIndex || 0];
+    if (currentSwipe?.historyLines?.length) {
+        const hw = document.createElement('div');
+        hw.className = 'iv-msg-hist-wrap';
+        const cEl = document.createElement('div');
+        cEl.className = 'iv-msg-content iv-lb-history-content';
+        cEl.style.cssText = 'margin-top:10px; padding:8px 12px; background:var(--iv-accent-bg); border:1px solid var(--iv-accent-dim); border-radius:6px;';
+        Promise.resolve().then(function () { return featureLorebookUi; }).then(m => m.renderLBHistoryContent({ appliedLines: currentSwipe.historyLines }, cEl));
+        hw.appendChild(cEl);
+        const swipeBar = body.querySelector('.iv-swipe-bar');
+        if (swipeBar) body.insertBefore(hw, swipeBar);
+        else body.appendChild(hw);
     }
 
     _updateMsgTokenCount(msgEl, msg.content, true);
@@ -4887,6 +7560,51 @@ function setupMessagesScrollTracking() {
 
 // ─── Message List and Handlers ──────────────────────────────────────────
 
+function addHistoryToSwipe(msgId, newLines, charName = null) {
+    if (!msgId) return false;
+    const conversation = getConversation();
+    const msg = conversation.messages.find(m => m.id === msgId);
+    if (!msg) return false;
+    if (!msg.swipes) msg.swipes = [{ content: msg.content, reasoning: msg.reasoning }];
+    const currentSwipe = msg.swipes[msg.swipeIndex || 0];
+    if (!currentSwipe.historyLines) currentSwipe.historyLines = [];
+    currentSwipe.historyLines.push(...newLines);
+    if (charName && !currentSwipe._charName) currentSwipe._charName = charName;
+    saveConversation();
+
+    const msgEl = document.querySelector(`.iv-msg[data-id="${msgId}"]`);
+    if (msgEl) {
+        let body = msgEl.querySelector('.iv-msg-body');
+        if (body) {
+            let histWrap = body.querySelector('.iv-msg-hist-wrap');
+            if (!histWrap) {
+                histWrap = document.createElement('div');
+                histWrap.className = 'iv-msg-hist-wrap';
+                body.appendChild(histWrap);
+            }
+            const dummyMsg = { appliedLines: currentSwipe.historyLines };
+            const contentEl = document.createElement('div');
+            contentEl.className = 'iv-msg-content iv-lb-history-content';
+            contentEl.style.marginTop = '10px';
+            contentEl.style.padding = '8px 12px';
+            contentEl.style.background = 'var(--iv-accent-bg)';
+            contentEl.style.border = '1px solid var(--iv-accent-dim)';
+            contentEl.style.borderRadius = '6px';
+
+            Promise.resolve().then(function () { return featureLorebookUi; }).then(m => {
+                m.renderLBHistoryContent(dummyMsg, contentEl);
+                histWrap.innerHTML = '';
+                histWrap.appendChild(contentEl);
+            });
+
+            const swipeBar = body.querySelector('.iv-swipe-bar');
+            if (swipeBar) body.insertBefore(histWrap, swipeBar);
+            else body.appendChild(histWrap);
+        }
+    }
+    return true;
+}
+
 function handleCopy(msg) { copyText(msg.content); }
 
 function handleEdit(wrapEl, msg) {
@@ -4932,8 +7650,15 @@ function handleEdit(wrapEl, msg) {
         const nc = document.createElement('div');
         nc.className = 'iv-msg-content';
 
+        const lbChanges = parseLBChangesFromText(textToRender);
+        let stripped = textToRender;
+        if (lbChanges?.length) {
+            stripped = stripLBChangesBlock(stripped);
+            renderProposalCard(lbChanges, wrapEl);
+        } else document.querySelector(`.iv-lb-proposal-card[data-for="${msg.id}"]`)?.remove();
+
         let tcIndex = 0;
-        const resR = extractToolCallPlaceholders(textToRender, tcIndex);
+        const resR = extractToolCallPlaceholders(stripped, tcIndex);
         const displayString = getDisplayContent(resR.text, getSettings()).content;
 
         nc.innerHTML = renderMarkdown(displayString);
@@ -5249,6 +7974,10 @@ function renderConversation(conversation) {
         return;
     }
     for (const msg of conversation.messages) {
+        if (msg.isLBHistory) {
+            appendLBHistoryEl(msg);
+            continue;
+        }
         const anchor = msg.anchorIndex === undefined ? null : msg.anchorIndex;
         const segment = ensureSegment(c, conversation, anchor);
         const el = createMsgEl(msg, handleCopy, handleEdit, handleDelete, handleMessageRegen);
@@ -5292,6 +8021,7 @@ function appendMsgEl(msg, isStreamInit = false) {
 function removeMsgEl(msgId) {
     const el = document.querySelector(`.iv-msg[data-id="${msgId}"]`);
     if (!el) return;
+    document.querySelector(`.iv-lb-proposal-card[data-for="${msgId}"]`)?.remove();
     el.remove();
     pruneSegments();
     _refreshContinueBtns();
@@ -5303,7 +8033,10 @@ function removeMsgElAndBelow(msgId) {
     let found = false;
     for (const el of [...c.querySelectorAll('.iv-msg')]) {
         if (el.dataset.id === msgId) found = true;
-        if (found) el.remove();
+        if (found) {
+            document.querySelector(`.iv-lb-proposal-card[data-for="${el.dataset.id}"]`)?.remove();
+            el.remove();
+        }
     }
     pruneSegments();
     _refreshContinueBtns();
@@ -5314,7 +8047,10 @@ function removeMsgElAfter(msgId) {
     const c = document.getElementById('iv-messages'); if (!c) return;
     let found = false;
     for (const el of [...c.querySelectorAll('.iv-msg')]) {
-        if (found) el.remove();
+        if (found) {
+            document.querySelector(`.iv-lb-proposal-card[data-for="${el.dataset.id}"]`)?.remove();
+            el.remove();
+        }
         if (el.dataset.id === msgId) found = true;
     }
     pruneSegments();
@@ -6048,71 +8784,72 @@ function setupSearchHotkey() {
 }
 
 var uiChat = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    _applyHighlightsInRoot: _applyHighlightsInRoot,
-    _refreshContinueBtns: _refreshContinueBtns,
-    _refreshSwipeBars: _refreshSwipeBars,
-    _renderMsgBodyContent: _renderMsgBodyContent,
-    _runSwipeRegen: _runSwipeRegen,
-    _updateMsgTokenCount: _updateMsgTokenCount,
-    _updatePickerCountEl: _updatePickerCountEl,
-    addSwipe: addSwipe,
-    appendMsgEl: appendMsgEl,
-    clearSearchHighlights: clearSearchHighlights,
-    closeChatPicker: closeChatPicker,
-    closeSearch: closeSearch,
-    createHTMLBlockEl: createHTMLBlockEl,
-    createMsgEl: createMsgEl,
-    extractToolCallPlaceholders: extractToolCallPlaceholders,
-    getDisplayContent: getDisplayContent,
-    getLastAssistantMsgId: getLastAssistantMsgId,
-    getPickedChatIndices: getPickedChatIndices,
-    getSwipesForMsg: getSwipesForMsg,
-    handleCopy: handleCopy,
-    handleDelete: handleDelete,
-    handleEdit: handleEdit,
-    handleMessageRegen: handleMessageRegen,
-    isSegmentClosed: isSegmentClosed,
-    jumpToNextSegment: jumpToNextSegment,
-    jumpToPrevSegment: jumpToPrevSegment,
-    navigateSearch: navigateSearch,
-    navigateSwipe: navigateSwipe,
-    nearestSegmentAbove: nearestSegmentAbove,
-    nearestSegmentBelow: nearestSegmentBelow,
-    onChatChanged: onChatChanged,
-    openChatPicker: openChatPicker,
-    openSearch: openSearch,
-    performSearch: performSearch,
-    postProcessHTMLBlocks: postProcessHTMLBlocks,
-    prepareHtmlForIframe: prepareHtmlForIframe,
-    removeMsgEl: removeMsgEl,
-    removeMsgElAfter: removeMsgElAfter,
-    removeMsgElAndBelow: removeMsgElAndBelow,
-    renderConversation: renderConversation,
-    renderMarkdown: renderMarkdown,
-    renderPickerMessages: renderPickerMessages,
-    restoreScrollPosition: restoreScrollPosition,
-    saveScrollPosition: saveScrollPosition,
-    scrollToBottom: scrollToBottom,
-    segmentAnchorLabel: segmentAnchorLabel,
-    setGeneratingState: setGeneratingState,
-    setPickedChatIndices: setPickedChatIndices,
-    setupChatPickerListeners: setupChatPickerListeners,
-    setupDepthClickEdit: setupDepthClickEdit,
-    setupMainChatHideListener: setupMainChatHideListener,
-    setupMessagesScrollTracking: setupMessagesScrollTracking,
-    setupSearchHotkey: setupSearchHotkey,
-    setupSegmentJumpNav: setupSegmentJumpNav,
-    setupSegmentScrollTracking: setupSegmentScrollTracking,
-    showGenerationError: showGenerationError,
-    smartScrollToBottom: smartScrollToBottom,
-    syncExchangeHiddenUi: syncExchangeHiddenUi,
-    toggleSearchWholeWord: toggleSearchWholeWord,
-    updateDepthSlidersMax: updateDepthSlidersMax,
-    updateMsgCount: updateMsgCount,
-    updatePickBtnState: updatePickBtnState,
-    updateSearchCount: updateSearchCount,
-    updateSwipeBar: updateSwipeBar
+  __proto__: null,
+  _applyHighlightsInRoot: _applyHighlightsInRoot,
+  _refreshContinueBtns: _refreshContinueBtns,
+  _refreshSwipeBars: _refreshSwipeBars,
+  _renderMsgBodyContent: _renderMsgBodyContent,
+  _runSwipeRegen: _runSwipeRegen,
+  _updateMsgTokenCount: _updateMsgTokenCount,
+  _updatePickerCountEl: _updatePickerCountEl,
+  addHistoryToSwipe: addHistoryToSwipe,
+  addSwipe: addSwipe,
+  appendMsgEl: appendMsgEl,
+  clearSearchHighlights: clearSearchHighlights,
+  closeChatPicker: closeChatPicker,
+  closeSearch: closeSearch,
+  createHTMLBlockEl: createHTMLBlockEl,
+  createMsgEl: createMsgEl,
+  extractToolCallPlaceholders: extractToolCallPlaceholders,
+  getDisplayContent: getDisplayContent,
+  getLastAssistantMsgId: getLastAssistantMsgId,
+  getPickedChatIndices: getPickedChatIndices,
+  getSwipesForMsg: getSwipesForMsg,
+  handleCopy: handleCopy,
+  handleDelete: handleDelete,
+  handleEdit: handleEdit,
+  handleMessageRegen: handleMessageRegen,
+  isSegmentClosed: isSegmentClosed,
+  jumpToNextSegment: jumpToNextSegment,
+  jumpToPrevSegment: jumpToPrevSegment,
+  navigateSearch: navigateSearch,
+  navigateSwipe: navigateSwipe,
+  nearestSegmentAbove: nearestSegmentAbove,
+  nearestSegmentBelow: nearestSegmentBelow,
+  onChatChanged: onChatChanged,
+  openChatPicker: openChatPicker,
+  openSearch: openSearch,
+  performSearch: performSearch,
+  postProcessHTMLBlocks: postProcessHTMLBlocks,
+  prepareHtmlForIframe: prepareHtmlForIframe,
+  removeMsgEl: removeMsgEl,
+  removeMsgElAfter: removeMsgElAfter,
+  removeMsgElAndBelow: removeMsgElAndBelow,
+  renderConversation: renderConversation,
+  renderMarkdown: renderMarkdown,
+  renderPickerMessages: renderPickerMessages,
+  restoreScrollPosition: restoreScrollPosition,
+  saveScrollPosition: saveScrollPosition,
+  scrollToBottom: scrollToBottom,
+  segmentAnchorLabel: segmentAnchorLabel,
+  setGeneratingState: setGeneratingState,
+  setPickedChatIndices: setPickedChatIndices,
+  setupChatPickerListeners: setupChatPickerListeners,
+  setupDepthClickEdit: setupDepthClickEdit,
+  setupMainChatHideListener: setupMainChatHideListener,
+  setupMessagesScrollTracking: setupMessagesScrollTracking,
+  setupSearchHotkey: setupSearchHotkey,
+  setupSegmentJumpNav: setupSegmentJumpNav,
+  setupSegmentScrollTracking: setupSegmentScrollTracking,
+  showGenerationError: showGenerationError,
+  smartScrollToBottom: smartScrollToBottom,
+  syncExchangeHiddenUi: syncExchangeHiddenUi,
+  toggleSearchWholeWord: toggleSearchWholeWord,
+  updateDepthSlidersMax: updateDepthSlidersMax,
+  updateMsgCount: updateMsgCount,
+  updatePickBtnState: updatePickBtnState,
+  updateSearchCount: updateSearchCount,
+  updateSwipeBar: updateSwipeBar
 });
 
 const IV_TOP_Z_INDEX = 2147483000;
@@ -6503,7 +9240,8 @@ function applyCustomTheme(theme) {
         windowEl, 
         iconEl, 
         document.getElementById('iv-settings-overlay'), 
-        document.getElementById('iv-picker-overlay')
+        document.getElementById('iv-picker-overlay'),
+        document.getElementById('iv-lb-overlay')
     ].filter(Boolean);
     const s = getSettings();
     
@@ -6870,27 +9608,27 @@ function _setupBgUpload(btnId, inputId, onUploadSuccess) {
 }
 
 var uiWindow = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    _setupBgUpload: _setupBgUpload,
-    _uploadBgToST: _uploadBgToST,
-    applyCustomTheme: applyCustomTheme,
-    applyWindowBackground: applyWindowBackground,
-    bringWindowToFront: bringWindowToFront,
-    hideWindow: hideWindow,
-    makeDraggable: makeDraggable,
-    makeIconDraggable: makeIconDraggable,
-    makeResizable: makeResizable,
-    minimize: minimize,
-    restoreFromMinimize: restoreFromMinimize,
-    restoreWindowState: restoreWindowState,
-    saveWindowState: saveWindowState,
-    setGhostMode: setGhostMode,
-    setupGhostHotkey: setupGhostHotkey,
-    setupHotkey: setupHotkey,
-    showWindow: showWindow,
-    toggleGhostMode: toggleGhostMode,
-    toggleVisibility: toggleVisibility,
-    updateIconVisibility: updateIconVisibility
+  __proto__: null,
+  _setupBgUpload: _setupBgUpload,
+  _uploadBgToST: _uploadBgToST,
+  applyCustomTheme: applyCustomTheme,
+  applyWindowBackground: applyWindowBackground,
+  bringWindowToFront: bringWindowToFront,
+  hideWindow: hideWindow,
+  makeDraggable: makeDraggable,
+  makeIconDraggable: makeIconDraggable,
+  makeResizable: makeResizable,
+  minimize: minimize,
+  restoreFromMinimize: restoreFromMinimize,
+  restoreWindowState: restoreWindowState,
+  saveWindowState: saveWindowState,
+  setGhostMode: setGhostMode,
+  setupGhostHotkey: setupGhostHotkey,
+  setupHotkey: setupHotkey,
+  showWindow: showWindow,
+  toggleGhostMode: toggleGhostMode,
+  toggleVisibility: toggleVisibility,
+  updateIconVisibility: updateIconVisibility
 });
 
 // SillyTavern in-chat injection. Depth 0 is after the last message.
@@ -6960,10 +9698,10 @@ function syncSimulationView() {
 }
 
 var simulationView = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    assembleSimulationView: assembleSimulationView,
-    renderExchangeBlock: renderExchangeBlock,
-    syncSimulationView: syncSimulationView
+  __proto__: null,
+  assembleSimulationView: assembleSimulationView,
+  renderExchangeBlock: renderExchangeBlock,
+  syncSimulationView: syncSimulationView
 });
 
 function _getAspectEvolutiaCharFields() {
@@ -7060,342 +9798,6 @@ async function applyRegexIfEnabled(text, isUser, depth) {
     } catch (e) {
         return text;
     }
-}
-
-const EMBEDDED_BOOK_KEY = '__char_embedded__';
-
-let _worldInfoMod = false;
-let _utilsMod = false;
-
-async function loadWorldInfoMod() {
-    if (_worldInfoMod !== false) return _worldInfoMod;
-    try {
-        _worldInfoMod = await import('/scripts/world-info.js');
-    } catch (_) {
-        _worldInfoMod = null;
-    }
-    return _worldInfoMod;
-}
-
-async function loadUtilsMod() {
-    if (_utilsMod !== false) return _utilsMod;
-    try {
-        _utilsMod = await import('/scripts/utils.js');
-    } catch (_) {
-        _utilsMod = null;
-    }
-    return _utilsMod;
-}
-
-function charaFilename(character) {
-    const avatar = character?.avatar;
-    if (!avatar) return null;
-    return String(avatar).replace(/\.[^/.]+$/, '');
-}
-
-function getEmbeddedCharBook() {
-    const ctx = SillyTavern.getContext();
-    const char = ctx.characters?.[ctx.characterId];
-    const book = char?.data?.character_book;
-    if (!book?.entries?.length) return null;
-
-    const data = { entries: {}, _embedded: true };
-    (book.entries || []).forEach((e, idx) => {
-        const uid = e.id ?? e.uid ?? idx;
-        const keys = Array.isArray(e.keys) ? e.keys : (e.key || []);
-        const outlet = e.automation_id || e.automationId || e.extensions?.outlet_name || e.outletName || e.outlet_name || e.outlet || '';
-        const isOutlet = Boolean(outlet);
-        const isForceConstant = e.selective === false;
-        const disabled = e.enabled === false || e.disable === true;
-        data.entries[uid] = {
-            uid,
-            key: keys,
-            keysecondary: [],
-            content: e.content || '',
-            comment: e.comment || e.name || '',
-            disable: disabled,
-            selective: true,
-            constant: !isOutlet && (e.constant === true || isForceConstant),
-            position: isOutlet ? 7 : (e.position ?? 0),
-            displayIndex: uid,
-            automation_id: outlet,
-            outletName: outlet,
-            outlet: e.outlet || e.outlet_name || e.outletName || '',
-            group: e.group || (isOutlet ? outlet : ''),
-            role: null,
-            extensions: { outlet_name: outlet },
-            order: e.order ?? 100,
-            probability: e.probability ?? 100,
-            groupWeight: e.groupWeight ?? 100,
-            depth: 4,
-            useProbability: true,
-            addMemo: true,
-            groupOverride: false,
-            sticky: 0,
-            cooldown: 0,
-            delay: 0,
-            excludeRecursion: false,
-            preventRecursion: false,
-            delayUntilRecursion: false,
-            ignoreBudget: false,
-            vectorized: false,
-            scanDepth: null,
-            caseSensitive: null,
-            matchWholeWords: null,
-            useGroupScoring: null,
-            matchPersonaDescription: false,
-            matchCharacterDescription: false,
-            matchCharacterPersonality: false,
-            matchCharacterDepthPrompt: false,
-            matchScenario: false,
-            matchCreatorNotes: false,
-        };
-    });
-    return data;
-}
-
-async function fetchWorldInfoBook(name) {
-    if (name === EMBEDDED_BOOK_KEY) return getEmbeddedCharBook();
-
-    const ctx = SillyTavern.getContext();
-    try {
-        if (typeof ctx.loadWorldInfo === 'function') {
-            return await ctx.loadWorldInfo(name);
-        }
-        const res = await fetch('/api/worldinfo/get', {
-            method: 'POST',
-            headers: { ...ctx.getRequestHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.json();
-    } catch (e) {
-        _dbgAdd('LB_LOAD_FILE_FAILED', { bookName: name, error: e.message });
-        return null;
-    }
-}
-
-function wiEntriesToArray(data) {
-    if (!data?.entries) return [];
-    if (Array.isArray(data.entries)) return data.entries;
-    return Object.values(data.entries);
-}
-
-function getDisplayName(name) {
-    if (name === EMBEDDED_BOOK_KEY) {
-        const ctx = SillyTavern.getContext();
-        const char = ctx.characters?.[ctx.characterId];
-        return `[${char?.name || 'Character'} Book]`;
-    }
-    return name;
-}
-
-async function getActiveLorebookNames() {
-    const ctx = SillyTavern.getContext();
-    const names = new Set();
-    const wi = await loadWorldInfoMod();
-    const utils = await loadUtilsMod();
-
-    const globalBooks = wi?.selected_world_info
-        || (typeof window !== 'undefined' && window.selected_world_info)
-        || [];
-    if (Array.isArray(globalBooks)) {
-        globalBooks.forEach(n => n && names.add(n));
-    }
-
-    const charId = ctx.characterId;
-    const character = ctx.characters?.[charId];
-    if (character) {
-        const baseWorldName = character.data?.extensions?.world || character.world;
-        if (baseWorldName && typeof baseWorldName === 'string') names.add(baseWorldName);
-
-        let fileName = charaFilename(character);
-        if (utils && typeof utils.getCharaFilename === 'function') {
-            try { fileName = utils.getCharaFilename(charId) || fileName; } catch (_) {}
-        }
-        const charLoreList = wi?.world_info?.charLore
-            || (typeof window !== 'undefined' && window.world_info?.charLore);
-        if (fileName && Array.isArray(charLoreList)) {
-            const extraCharLore = charLoreList.find(e => e.name === fileName);
-            if (extraCharLore && Array.isArray(extraCharLore.extraBooks)) {
-                extraCharLore.extraBooks.forEach(book => book && names.add(book));
-            }
-        }
-
-        if (character.data?.character_book?.entries?.length) {
-            names.add(EMBEDDED_BOOK_KEY);
-        }
-    }
-
-    const wiKey = wi?.METADATA_KEY || (typeof window !== 'undefined' && window.WI_METADATA_KEY) || 'world_info';
-    const chatWorldName = ctx.chatMetadata?.[wiKey];
-    if (chatWorldName && typeof chatWorldName === 'string') names.add(chatWorldName);
-
-    const personaWorldName = ctx.powerUserSettings?.persona_description_lorebook;
-    if (personaWorldName && typeof personaWorldName === 'string') names.add(personaWorldName);
-
-    return [...names].filter(Boolean);
-}
-
-function keywordMatchEntry(keys, text) {
-    if (!keys?.length || !text) return false;
-    const lower = text.toLowerCase();
-    return keys.some(k => {
-        if (!k) return false;
-        try {
-            const m = k.match(/^\/(.+)\/([gimsuy]*)$/);
-            if (m) return new RegExp(m[1], m[2]).test(text);
-        } catch (_) {}
-        return lower.includes(k.toLowerCase());
-    });
-}
-
-function getKeywordTriggeredEntries(allBooksData, text1, text2) {
-    const scanText = [text1, text2].filter(Boolean).join('\n');
-    const results = {};
-    for (const [bookName, data] of Object.entries(allBooksData)) {
-        const entries = wiEntriesToArray(data);
-        const matched = entries.filter(e => !e.disable && (keywordMatchEntry(e.key, scanText) || keywordMatchEntry(e.keysecondary, scanText)));
-        if (matched.length) results[bookName] = matched;
-    }
-    return results;
-}
-
-function getEntryOverrideKey(bookName, entry) {
-    let entryName = String(entry.comment || entry.name || '').trim();
-    if (!entryName && entry.key && entry.key.length) {
-        entryName = entry.key.join('_').slice(0, 40);
-    }
-    entryName = String(entryName).replace(/[\r\n]+/g, ' ').trim();
-    return entryName ? `${bookName}_${entryName}` : `${bookName}_${entry.uid}`;
-}
-
-async function buildLorebookContextBlock(settings) {
-    const selectedBooks = settings.lorebookSelectedBooks || [];
-    const excludedBooks = new Set(settings.lorebookExcludedBooks || []);
-    const overrides = settings.lorebookEntryOverrides || {};
-    const loadedBooks = {};
-    const _activeNamesSet = new Set(await getActiveLorebookNames());
-
-    if (!_activeNamesSet.size) return '';
-
-    await Promise.all([..._activeNamesSet].map(async name => {
-        if (excludedBooks.has(name)) return;
-        const data = await fetchWorldInfoBook(name);
-        if (data) loadedBooks[name] = data;
-    }));
-
-    if (!Object.keys(loadedBooks).length) return '';
-
-    let keywordEntries = {};
-    if (settings.lorebookAutoKeyword) {
-        const ctx = SillyTavern.getContext();
-        const msgs = ctx.chat || [];
-        let lastUser = '', lastChar = '';
-
-        try {
-            const conv = getConversation();
-            const picked = conv.pickedChatIndices;
-            if (picked && picked.length > 0) {
-                const pickedMsgs = picked.filter(i => i >= 0 && i < msgs.length).map(i => msgs[i]);
-                lastUser = pickedMsgs.filter(m => m.is_user).map(m => m.mes).join('\n');
-                lastChar = pickedMsgs.filter(m => !m.is_user).map(m => m.mes).join('\n');
-            } else {
-                const stDepth = Math.max(1, settings.lorebookSTScanDepth ?? 5);
-                const recentMsgs = msgs.slice(-stDepth);
-                lastUser = recentMsgs.filter(m => m.is_user).map(m => m.mes).join('\n');
-                lastChar = recentMsgs.filter(m => !m.is_user).map(m => m.mes).join('\n');
-            }
-        } catch (_) {
-            const stDepth = Math.max(1, settings.lorebookSTScanDepth ?? 5);
-            const recentMsgs = msgs.slice(-stDepth);
-            lastUser = recentMsgs.filter(m => m.is_user).map(m => m.mes).join('\n');
-            lastChar = recentMsgs.filter(m => !m.is_user).map(m => m.mes).join('\n');
-        }
-
-        let copilotScanText = '';
-        try {
-            const conv = getConversation();
-            const copilotDepth = settings.lorebookCopilotScanDepth ?? 6;
-            copilotScanText = conv.messages
-                .filter(m => !m.isLBHistory)
-                .slice(-copilotDepth)
-                .map(m => m.content)
-                .join('\n');
-        } catch (_) {}
-
-        keywordEntries = getKeywordTriggeredEntries(loadedBooks, lastUser + '\n' + lastChar, copilotScanText);
-    }
-
-    const toInject = {};
-    const outletLines = [];
-    let overridesChanged = false;
-
-    for (const [bookName, data] of Object.entries(loadedBooks)) {
-        for (const entry of wiEntriesToArray(data)) {
-            if (!entry.content) continue;
-
-            const oldKey = `${bookName}_${entry.uid}`;
-            const newKey = getEntryOverrideKey(bookName, entry);
-
-            if (oldKey !== newKey && overrides[oldKey] !== undefined) {
-                overrides[newKey] = overrides[oldKey];
-                delete overrides[oldKey];
-                overridesChanged = true;
-            }
-
-            const override = overrides[newKey];
-            if (override === false) continue;
-
-            const isConstant = !!entry.constant && !entry.disable;
-            const manualInclude = selectedBooks.includes(bookName);
-            const keywordInclude = keywordEntries[bookName]?.some(e => e.uid === entry.uid);
-
-            if (override === true || isConstant || manualInclude || keywordInclude) {
-                const outletField = (entry.outlet || entry.outlet_name || entry.outletName || entry.automation_id || entry.automationId || '').trim();
-                const isOutletPos = String(entry.position).toLowerCase() === 'outlet' || String(entry.position) === '7';
-                const finalOutletName = outletField || (isOutletPos ? (entry.group || '').trim() : '');
-                const isOutlet = isOutletPos || finalOutletName !== '';
-
-                if (isOutlet) {
-                    if (!entry.disable) {
-                        outletLines.push(`### ${entry.comment || `Entry #${entry.uid}`} (uid: ${entry.uid}, book: "${getDisplayName(bookName)}") [outlet name: ${finalOutletName}]\n${entry.content}`);
-                    }
-                    continue;
-                }
-
-                if (!toInject[bookName]) toInject[bookName] = [];
-                toInject[bookName].push(entry);
-            }
-        }
-    }
-
-    if (overridesChanged) saveSettings();
-
-    if (!Object.keys(toInject).length && !outletLines.length) return '';
-
-    let block = '\n\n<lorebook_context>\n';
-    for (const [bookName, entries] of Object.entries(toInject)) {
-        let hasValidEntries = false;
-        let bookBlock = `## ${getDisplayName(bookName)}\n`;
-
-        for (const e of entries) {
-            hasValidEntries = true;
-            bookBlock += `### ${e.comment || `Entry #${e.uid}`} (uid: ${e.uid})`;
-            if (e.key?.length) bookBlock += ` [keys: ${e.key.slice(0, 5).join(', ')}]`;
-            bookBlock += `\n${e.content}\n\n`;
-        }
-        if (hasValidEntries) block += bookBlock;
-    }
-
-    if (outletLines.length) {
-        block += `## Outlet Entries (injected only where an outlet::<name> macro is manually placed elsewhere, not directly)\n${outletLines.join('\n\n')}\n\n`;
-    }
-
-    if (block === '\n\n<lorebook_context>\n') return '';
-
-    block += '</lorebook_context>';
-    return block;
 }
 
 function getEffectiveCharField(settings, k) {
@@ -7578,12 +9980,14 @@ async function buildSystemContent(settings) {
     }
 
     const memoryAIInstr = buildMemoryAIInstructions(settings).trim();
+    const aiInstructions = buildLBAIInstructions(settings).trim();
     const toolsBlock = buildToolCallsSystemBlock().trim();
     const portraySignalBlock = buildPortraySignalBlock(settings).trim();
 
-    const modules = [memoryAIInstr, toolsBlock, portraySignalBlock].filter(Boolean);
+    const modules = [memoryAIInstr, aiInstructions, toolsBlock, portraySignalBlock].filter(Boolean);
     if (modules.length > 0) {
-        parts.push(`\n\n<modules>\n${modules.join('\n\n')}\n</modules>`);
+        const reminder = `\n\n[SYSTEM REMINDER: If you intend to modify anything you MUST write the appropriate structured markdown block containing your instructions. The system strictly relies on these blocks to parse and apply your changes automatically. Simply describing your changes in plain text without outputting the corresponding markdown block will result in failure to apply them.]`;
+        parts.push(`\n\n<modules>\n${modules.join('\n\n')}${reminder}\n</modules>`);
     }
 
     return parts.join('\n');
@@ -7690,6 +10094,18 @@ async function assembleMessages(conversation, settings, pendingUserText) {
     }
     if (pendingUserText !== null && pendingUserText !== undefined && pendingUserText !== '') {
         messages.push({ role: 'user', content: pendingUserText });
+    }
+
+    for (let m of messages) {
+        if (typeof m.content === 'string') {
+            m.content = await expandOutletsAsync(m.content);
+        } else if (Array.isArray(m.content)) {
+            for (let part of m.content) {
+                if (part.type === 'text') {
+                    part.text = await expandOutletsAsync(part.text);
+                }
+            }
+        }
     }
 
     return messages;
@@ -8654,18 +11070,18 @@ async function runContinue(conversation, targetMsgId) {
 }
 
 var api = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    _joinContinuation: _joinContinuation,
-    assembleMessages: assembleMessages,
-    buildSystemContent: buildSystemContent,
-    callGenerate: callGenerate,
-    estimateTokens: estimateTokens,
-    flushPortrayAutoTrigger: flushPortrayAutoTrigger,
-    formatPayloadAsText: formatPayloadAsText,
-    getMainChatSlice: getMainChatSlice,
-    notePortrayAutoTrigger: notePortrayAutoTrigger,
-    runContinue: runContinue,
-    runGenerate: runGenerate
+  __proto__: null,
+  _joinContinuation: _joinContinuation,
+  assembleMessages: assembleMessages,
+  buildSystemContent: buildSystemContent,
+  callGenerate: callGenerate,
+  estimateTokens: estimateTokens,
+  flushPortrayAutoTrigger: flushPortrayAutoTrigger,
+  formatPayloadAsText: formatPayloadAsText,
+  getMainChatSlice: getMainChatSlice,
+  notePortrayAutoTrigger: notePortrayAutoTrigger,
+  runContinue: runContinue,
+  runGenerate: runGenerate
 });
 
 // ─── Quick Prompts ───────────────────────────────────────────────────────────
@@ -9744,26 +12160,26 @@ function buildSoundSettingsUI(container) {
 }
 
 var uiWidgets = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    _SOUND_PRESETS: _SOUND_PRESETS,
-    _buildContextInspectorHTML: _buildContextInspectorHTML,
-    _highlightContextText: _highlightContextText,
-    get _lastInspectorMessages () { return _lastInspectorMessages; },
-    _synthSound: _synthSound,
-    buildChangelogHTML: buildChangelogHTML,
-    buildPromptPresetManager: buildPromptPresetManager,
-    buildQPSetManager: buildQPSetManager,
-    buildSoundSettingsUI: buildSoundSettingsUI,
-    checkChangelogAutoShow: checkChangelogAutoShow,
-    closeChangelog: closeChangelog,
-    closePresetPanel: closePresetPanel,
-    openChangelog: openChangelog,
-    openInspector: openInspector,
-    openPresetDropdown: openPresetDropdown,
-    playCompletionSound: playCompletionSound,
-    renderQuickPromptsBar: renderQuickPromptsBar,
-    setupChangelogListeners: setupChangelogListeners,
-    showQPIconPicker: showQPIconPicker
+  __proto__: null,
+  _SOUND_PRESETS: _SOUND_PRESETS,
+  _buildContextInspectorHTML: _buildContextInspectorHTML,
+  _highlightContextText: _highlightContextText,
+  get _lastInspectorMessages () { return _lastInspectorMessages; },
+  _synthSound: _synthSound,
+  buildChangelogHTML: buildChangelogHTML,
+  buildPromptPresetManager: buildPromptPresetManager,
+  buildQPSetManager: buildQPSetManager,
+  buildSoundSettingsUI: buildSoundSettingsUI,
+  checkChangelogAutoShow: checkChangelogAutoShow,
+  closeChangelog: closeChangelog,
+  closePresetPanel: closePresetPanel,
+  openChangelog: openChangelog,
+  openInspector: openInspector,
+  openPresetDropdown: openPresetDropdown,
+  playCompletionSound: playCompletionSound,
+  renderQuickPromptsBar: renderQuickPromptsBar,
+  setupChangelogListeners: setupChangelogListeners,
+  showQPIconPicker: showQPIconPicker
 });
 
 const PORTRAY_STYLES = ['rp', 'summary'];
@@ -9979,21 +12395,21 @@ async function runPortray(formOverride = {}, {
 }
 
 var portray = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    PORTRAY_PERSONS: PORTRAY_PERSONS,
-    PORTRAY_STYLES: PORTRAY_STYLES,
-    assemblePortrayMessages: assemblePortrayMessages,
-    buildPortrayInstruction: buildPortrayInstruction,
-    considerAutoTriggerPortray: considerAutoTriggerPortray,
-    flushPendingAutoPortray: flushPendingAutoPortray,
-    readFireTimePortrayForm: readFireTimePortrayForm,
-    resolvePortrayForm: resolvePortrayForm,
-    routePortrayResult: routePortrayResult,
-    routePortrayToInput: routePortrayToInput,
-    runPortray: runPortray,
-    splitPortraySignal: splitPortraySignal,
-    syncFireTimePortrayForm: syncFireTimePortrayForm,
-    withPortrayAutoTriggerSuppressed: withPortrayAutoTriggerSuppressed
+  __proto__: null,
+  PORTRAY_PERSONS: PORTRAY_PERSONS,
+  PORTRAY_STYLES: PORTRAY_STYLES,
+  assemblePortrayMessages: assemblePortrayMessages,
+  buildPortrayInstruction: buildPortrayInstruction,
+  considerAutoTriggerPortray: considerAutoTriggerPortray,
+  flushPendingAutoPortray: flushPendingAutoPortray,
+  readFireTimePortrayForm: readFireTimePortrayForm,
+  resolvePortrayForm: resolvePortrayForm,
+  routePortrayResult: routePortrayResult,
+  routePortrayToInput: routePortrayToInput,
+  runPortray: runPortray,
+  splitPortraySignal: splitPortraySignal,
+  syncFireTimePortrayForm: syncFireTimePortrayForm,
+  withPortrayAutoTriggerSuppressed: withPortrayAutoTriggerSuppressed
 });
 
 const COMMANDS = ['dp', 'pa', 'p'];
@@ -10105,7 +12521,7 @@ async function injectUI() {
             console.error(`[${EXT_DISPLAY}] Couldn't load HTML: ${templateName}.html`);
         }
     };
-    const templates = ['window', 'settings_overlay', 'chat_picker'];
+    const templates = ['window', 'lorebook_manager', 'settings_overlay', 'chat_picker'];
     await Promise.all(templates.map(loadAndInject));
 
     const iconEl = document.getElementById(ICON_ID);
@@ -10145,9 +12561,23 @@ function attachWindowListeners() {
         const clickedInside = win.contains(e.target) ||
                               e.target.closest('.iv-dialog-overlay') ||
                               document.getElementById('iv-settings-overlay')?.contains(e.target) ||
-                              document.getElementById('iv-picker-overlay')?.contains(e.target);
+                              document.getElementById('iv-picker-overlay')?.contains(e.target) ||
+                              document.getElementById('iv-lb-overlay')?.contains(e.target);
         state.windowActive = !!clickedInside;
     }, true);
+
+    document.addEventListener('click', e => {
+        const menuDd = document.getElementById('iv-menu-dropdown');
+        if (menuDd && !menuDd.contains(e.target)) {
+            document.getElementById('iv-menu-panel')?.classList.remove('open');
+            document.getElementById('iv-menu-trigger')?.classList.remove('active');
+        }
+        if (!e.target.closest('.iv-lb-proposal-world-dd')) {
+            document.querySelectorAll('.iv-lb-proposal-world-panel.open').forEach(p => {
+                p.classList.remove('open'); p.previousElementSibling?.classList.remove('open');
+            });
+        }
+    });
 
     window.addEventListener('resize', () => {
         if (windowEl && windowEl.style.display !== 'none') {
@@ -10208,6 +12638,19 @@ function attachWindowListeners() {
 
     document.getElementById('iv-search-btn')?.addEventListener('click', () => { state.searchOpen ? closeSearch() : openSearch(); });
     document.getElementById('iv-pick-btn')?.addEventListener('click', () => openChatPicker());
+    document.getElementById('iv-menu-trigger')?.addEventListener('click', e => {
+        e.stopPropagation();
+        const panel = document.getElementById('iv-menu-panel');
+        const trigger = document.getElementById('iv-menu-trigger');
+        const isOpen = panel.classList.contains('open');
+        panel.classList.toggle('open', !isOpen);
+        trigger.classList.toggle('active', !isOpen);
+    });
+    document.getElementById('iv-menu-lb-item')?.addEventListener('click', () => {
+        document.getElementById('iv-menu-panel')?.classList.remove('open');
+        document.getElementById('iv-menu-trigger')?.classList.remove('active');
+        openLorebookManager();
+    });
     document.getElementById('iv-seg-prev-btn')?.addEventListener('click', () => jumpToPrevSegment());
     document.getElementById('iv-seg-next-btn')?.addEventListener('click', () => jumpToNextSegment());
 
@@ -10382,6 +12825,8 @@ async function init() {
     updateSettingsUI();
     setupSettingsPanelListeners();
     setupChatPickerListeners();
+    setupLorebookManagerListeners();
+    setupExternalWIChangeListener();
     setupChangelogListeners();
     setupSearchHotkey();
     setupGhostHotkey();
@@ -10492,7 +12937,8 @@ async function init() {
     [
         windowEl,
         document.getElementById('iv-settings-overlay'),
-        document.getElementById('iv-picker-overlay')
+        document.getElementById('iv-picker-overlay'),
+        document.getElementById('iv-lb-overlay')
     ].filter(Boolean).forEach(el => {
         el.addEventListener('mousedown', preventSpinBug);
         el.addEventListener('pointerdown', preventSpinBug);
@@ -10627,9 +13073,9 @@ function refreshAltGreetingsPickers() {
 }
 
 var featureCharacterUi = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    buildAltGreetingsPicker: buildAltGreetingsPicker,
-    refreshAltGreetingsPickers: refreshAltGreetingsPickers
+  __proto__: null,
+  buildAltGreetingsPicker: buildAltGreetingsPicker,
+  refreshAltGreetingsPickers: refreshAltGreetingsPickers
 });
 
 export { __extPath, extVersion, setGeneratingState };

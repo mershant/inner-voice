@@ -1,4 +1,4 @@
-import { THEME_PRESETS, THEME_VAR_DEFS, THEME_CSS_MAP, EXT_DISPLAY, DEFAULT_SYSTEM_PROMPT, DEFAULT_TOOLS_PROMPT, DEFAULT_MEMORY_PROMPT, DEFAULT_PORTRAY_PROMPT, I } from '../constants.js';
+import { THEME_PRESETS, THEME_VAR_DEFS, THEME_CSS_MAP, EXT_DISPLAY, DEFAULT_SYSTEM_PROMPT, DEFAULT_TOOLS_PROMPT, DEFAULT_MEMORY_PROMPT, DEFAULT_PORTRAY_PROMPT, DEFAULT_LB_MANAGE_PROMPT, I } from '../constants.js';
 import { state } from '../state.js';
 import { getSettings, saveSettings, getEffectiveSettings, setConversationOverride, clearAllConversationOverrides, getBindingKey, hasConversationOverrides, saveConversation, getConversation, getConversationOverrides, initConversation } from '../conversation.js';
 import { showCustomDialog, escHtml } from '../utils/util-dom.js';
@@ -52,7 +52,21 @@ const _SETTINGS_DEF = [
       onChange: () => import('./ui-window.js').then(m => m.setupGhostHotkey()) },
     { key: 'changelogAutoShow',    stId: null, spId: 'iv-sp-changelog-auto', type: 'checkbox' },
     { key: 'includeSummaryception', stId: 'iv-include-summaryception', spId: 'iv-sp-include-summaryception', type: 'checkbox', fromSetting: s => s.includeSummaryception !== false },
-    { key: 'lorebookAutoKeyword', stId: 'iv-lb-auto-kw', spId: 'iv-sp-lb-auto-kw', type: 'checkbox', profileKey: true, updCtx: true },
+    { key: 'lorebookAIManageEnabled', stId: 'iv-lb-ai-enabled-st', spId: 'iv-sp-lb-ai-enabled', type: 'checkbox', profileKey: true },
+    { key: 'lorebookAutoKeyword', stId: 'iv-lb-auto-kw', spId: 'iv-sp-lb-auto-kw', type: 'checkbox', profileKey: true, updCtx: true,
+      onChange: () => {
+          const s = getSettings();
+          import('../features/feature-lorebook.js').then(async m => {
+              await m.buildLorebookContextBlock(s);
+              import('../features/feature-lorebook-ui.js').then(ui => {
+                  ui.updateLBFooterInfo();
+                  if (state.lbActiveBook) ui.renderEntryList(state.lbActiveBook, state.lbSearchQuery);
+              });
+          });
+      }
+    },
+    { key: 'lorebookManagePrompt', stId: 'iv-lb-manage-prompt', spId: 'iv-sp-lb-manage-prompt', type: 'textarea', profileKey: true,
+      fromSetting: s => s.lorebookManagePrompt || DEFAULT_LB_MANAGE_PROMPT },
     { key: 'lorebookSTScanDepth', stId: 'iv-lb-st-scan-depth', spId: 'iv-sp-lb-st-scan-depth', type: 'input', toVal: Number, profileKey: true, updCtx: true },
     { key: 'lorebookCopilotScanDepth', stId: 'iv-lb-copilot-scan-depth', spId: 'iv-sp-lb-copilot-scan-depth', type: 'input', toVal: Number, profileKey: true, updCtx: true },
     { key: 'useAspectEvolutia',    stId: 'iv-use-aspect-evolutia',    spId: 'iv-sp-use-aspect-evolutia',    type: 'checkbox', fromSetting: s => s.useAspectEvolutia !== false },
@@ -143,6 +157,8 @@ const _OV_EL_MAP = {
     connectionProfileId: ['iv-sp-ov-conn-profile'],
     includeSystemPrompt: ['iv-sp-ov-include-sysprompt'], includeUserPersonality: ['iv-sp-ov-include-persona'],
     includeAlternateSwipes: ['iv-sp-ov-include-alt-swipes'], applyRegexToContext: ['iv-sp-ov-apply-regex'],
+    lorebookAIManageEnabled: ['iv-sp-ov-lb-ai-enabled'], lorebookManagePrompt: ['iv-sp-ov-lb-manage-prompt'],
+    lorebookAutoKeyword: ['iv-sp-ov-lb-auto-kw'],
     charField_tags: ['iv-sp-ov-ce-tags'],                 charField_description: ['iv-sp-ov-ce-description'],
     charField_personality: ['iv-sp-ov-ce-personality'],   charField_scenario: ['iv-sp-ov-ce-scenario'],
     charField_first_mes: ['iv-sp-ov-ce-first-mes'],       charField_mes_example: ['iv-sp-ov-ce-mes-example'],
@@ -743,6 +759,9 @@ export function syncSPFromSettings() {
 
     gC('iv-sp-ov-include-sysprompt', eff.includeSystemPrompt); gC('iv-sp-ov-include-persona', eff.includeUserPersonality);
     gC('iv-sp-ov-include-alt-swipes', eff.includeAlternateSwipes); gC('iv-sp-ov-apply-regex', eff.applyRegexToContext);
+    gC('iv-sp-ov-lb-ai-enabled', 'lorebookAIManageEnabled' in ov ? ov.lorebookAIManageEnabled : s.lorebookAIManageEnabled);
+    gC('iv-sp-ov-lb-auto-kw', 'lorebookAutoKeyword' in ov ? ov.lorebookAutoKeyword : s.lorebookAutoKeyword);
+    ovi('iv-sp-ov-lb-manage-prompt', 'lorebookManagePrompt');
 
     const ovStreamVal = eff.forceStreaming === true ? 'on' : (eff.forceStreaming === false ? 'auto' : (eff.forceStreaming || 'auto'));
     document.querySelectorAll('.iv-ov-stream-btn').forEach(b => {
@@ -805,6 +824,7 @@ export function openSettingsPanel() {
             dictKey
         );
         mkPresetMgr('iv-sp-prompt-preset-manager',      'iv-sp-ov-sysprompt',       undefined);
+        mkPresetMgr('iv-sp-ov-lb-preset-manager',       'iv-sp-ov-lb-manage-prompt', 'lbEditPromptPresets');
     }).catch(() => {});
     import('../features/feature-character-ui.js').then(m => m.refreshAltGreetingsPickers());
     overlay.style.display = 'flex'; updateConversationOverrideIndicator();
@@ -853,6 +873,12 @@ export function setupSettingsHandlers() {
     };
     document.getElementById('iv-reset-prompt')?.addEventListener('click', () => _resetPrompt('systemPrompt', DEFAULT_SYSTEM_PROMPT, 'iv-sysprompt', 'iv-sp-sysprompt', 'System Prompt'));
     document.getElementById('iv-reset-portray-prompt')?.addEventListener('click', () => _resetPrompt('portrayPrompt', DEFAULT_PORTRAY_PROMPT, 'iv-portray-prompt', 'iv-sp-portray-prompt', 'Portray Prompt'));
+    document.getElementById('iv-reset-lb-prompt')?.addEventListener('click', async () => {
+        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Lorebook Prompt', message: 'Reset to default?' }); if (!ok) return;
+        getSettings().lorebookManagePrompt = DEFAULT_LB_MANAGE_PROMPT; saveSettings();
+        ['iv-lb-manage-prompt', 'iv-sp-lb-manage-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_LB_MANAGE_PROMPT; });
+        toastr.success('Lorebook prompt reset.', EXT_DISPLAY);
+    });
     document.getElementById('iv-reset-memory-prompt')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Prompt', message: 'Reset memory prompt to default?' }); if (!ok) return;
         getSettings().memoryManagePrompt = DEFAULT_MEMORY_PROMPT; saveSettings();
@@ -1057,6 +1083,12 @@ export function setupSettingsPanelListeners() {
         ['iv-sp-portray-prompt', 'iv-portray-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_PORTRAY_PROMPT; });
         toastr.success('Portray prompt reset.', EXT_DISPLAY);
     });
+    document.getElementById('iv-sp-reset-lb-prompt')?.addEventListener('click', async () => {
+        const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Lorebook Prompt', message: 'Reset to default?' }); if (!ok) return;
+        getSettings().lorebookManagePrompt = DEFAULT_LB_MANAGE_PROMPT; saveSettings();
+        ['iv-sp-lb-manage-prompt', 'iv-lb-manage-prompt'].forEach(id => { const el = document.getElementById(id); if (el) el.value = DEFAULT_LB_MANAGE_PROMPT; });
+        toastr.success('Lorebook prompt reset.', EXT_DISPLAY);
+    });
     document.getElementById('iv-sp-reset-memory-prompt')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Prompt', message: 'Reset memory prompt to default?' }); if (!ok) return;
         getSettings().memoryManagePrompt = DEFAULT_MEMORY_PROMPT; saveSettings();
@@ -1123,6 +1155,9 @@ export function setupSettingsPanelListeners() {
     bindOv('iv-sp-ov-include-persona',    'includeUserPersonality',   true);
     bindOv('iv-sp-ov-include-alt-swipes', 'includeAlternateSwipes',   true);
     bindOv('iv-sp-ov-apply-regex',        'applyRegexToContext',      true);
+    bindOv('iv-sp-ov-lb-ai-enabled',      'lorebookAIManageEnabled',  true);
+    bindOv('iv-sp-ov-lb-auto-kw',         'lorebookAutoKeyword',      true);
+    bindOv('iv-sp-ov-lb-manage-prompt',   'lorebookManagePrompt');
 
     _CE_FIELDS_DEF.forEach(ceDef => {
         bindOv(ceDef.ovId, 'charField_' + ceDef.fk, true);

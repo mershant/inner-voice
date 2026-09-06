@@ -22,6 +22,7 @@ globalThis.document = {
     body: { appendChild() {} },
 };
 globalThis.window = globalThis;
+globalThis.CSS = { escape: s => String(s) };
 globalThis.toastr = { error() {}, warning() {}, success() {}, info() {} };
 
 const files = new Map();
@@ -79,8 +80,18 @@ globalThis.SillyTavern = {
     },
 };
 
-const { initConversation, getConversation, getEffectiveSettings, addTurn } = await import('../src/conversation.js');
+const { initConversation, getConversation, getEffectiveSettings, getSettings, addTurn } = await import('../src/conversation.js');
 const { assembleMessages } = await import('../src/api.js');
+const { DEFAULT_LB_MANAGE_PROMPT } = await import('../src/constants.js');
+const {
+    saveWorldInfoBook,
+    applyLBChanges,
+    parseLBChangesFromText,
+    buildLBAIInstructions,
+    lastActiveEntries,
+    wiCache,
+} = await import('../src/features/feature-lorebook.js');
+const { cycleEntryOverride, toggleLorebookSelection } = await import('../src/features/feature-lorebook-ui.js');
 
 function mainMsg(text, isUser = false) {
     return { mes: text, is_user: isUser };
@@ -99,6 +110,8 @@ async function reset() {
     fetchCalls.length = 0;
     stub.worldWrites = [];
     stub.books = {};
+    for (const k of Object.keys(wiCache)) delete wiCache[k];
+    lastActiveEntries.length = 0;
     stub.characters = [{ name: 'Kyrine', avatar: 'kyrine.png', data: {} }];
     stub.chat = [mainMsg('The tavern falls silent.')];
     stub.chatId = 'chat-a';
@@ -119,6 +132,8 @@ test('lorebook selection defaults match upstream', async () => {
     assert.deepEqual(settings.lorebookSelectedBooks, []);
     assert.deepEqual(settings.lorebookExcludedBooks, []);
     assert.deepEqual(settings.lorebookEntryOverrides, {});
+    assert.equal(settings.lorebookAIManageEnabled, true);
+    assert.equal(settings.lorebookManagePrompt, DEFAULT_LB_MANAGE_PROMPT);
 });
 
 test('excluded books contribute nothing', async () => {
@@ -409,4 +424,155 @@ test('inner conversation scan can keyword-trigger an entry', async () => {
 
     const text = payloadText(await assembleMessages(getConversation(), settings, null));
     assert.ok(text.includes('The chapel heist set the town on edge.'));
+});
+
+test('entry edit persists via saveWorldInfo', async () => {
+    stub.books['Town Lore'] = {
+        entries: {
+            1: bookEntry(1, 'The chapel heist set the town on edge.', { comment: 'Chapel heist', constant: true, key: ['chapel'] }),
+        },
+    };
+    const data = JSON.parse(JSON.stringify(stub.books['Town Lore']));
+    data.entries[1].content = 'The chapel heist is now public knowledge.';
+    data.entries[1].comment = 'Chapel heist public';
+    data.entries[1].key = ['chapel', 'heist'];
+
+    await saveWorldInfoBook('Town Lore', data);
+
+    assert.equal(stub.worldWrites.length, 1);
+    assert.equal(stub.worldWrites[0].name, 'Town Lore');
+    assert.equal(stub.worldWrites[0].data.entries[1].content, 'The chapel heist is now public knowledge.');
+    assert.equal(stub.worldWrites[0].data.entries[1].comment, 'Chapel heist public');
+    assert.deepEqual(stub.worldWrites[0].data.entries[1].key, ['chapel', 'heist']);
+});
+
+test('entry create persists via saveWorldInfo', async () => {
+    stub.books['Town Lore'] = {
+        entries: {
+            1: bookEntry(1, 'The chapel heist set the town on edge.', { comment: 'Chapel heist', constant: true }),
+        },
+    };
+    const data = JSON.parse(JSON.stringify(stub.books['Town Lore']));
+    data.entries[2] = {
+        uid: 2, key: ['river'], keysecondary: [], content: 'The river-stone of Vellith glows when a promise is kept.',
+        comment: 'River stone', disable: false, selective: false, constant: false, position: 0, depth: 4, displayIndex: 2,
+    };
+
+    await saveWorldInfoBook('Town Lore', data);
+
+    assert.equal(stub.worldWrites.length, 1);
+    assert.equal(stub.worldWrites[0].name, 'Town Lore');
+    assert.equal(stub.worldWrites[0].data.entries[2].comment, 'River stone');
+    assert.equal(stub.worldWrites[0].data.entries[2].content, 'The river-stone of Vellith glows when a promise is kept.');
+});
+
+test('per-entry toggle updates lorebookEntryOverrides as upstream', async () => {
+    const settings = getSettings();
+    const entry = bookEntry(1, 'The chapel heist set the town on edge.', { comment: 'Chapel heist', key: ['chapel'] });
+    const row = {
+        classList: { remove() {}, toggle() {} },
+        querySelector(sel) {
+            if (sel.includes('indicator')) return { className: '' };
+            if (sel.includes('toggle')) return { textContent: '~', className: '' };
+            return null;
+        },
+    };
+
+    cycleEntryOverride('Town Lore', entry, row);
+    assert.equal(settings.lorebookEntryOverrides['Town Lore_Chapel heist'], true);
+
+    cycleEntryOverride('Town Lore', entry, row);
+    assert.equal(settings.lorebookEntryOverrides['Town Lore_Chapel heist'], false);
+
+    cycleEntryOverride('Town Lore', entry, row);
+    assert.equal(settings.lorebookEntryOverrides['Town Lore_Chapel heist'], undefined);
+});
+
+test('per-book toggle updates selected then excluded as upstream', async () => {
+    stub.books['Town Lore'] = {
+        entries: { 1: bookEntry(1, 'The chapel heist set the town on edge.', { comment: 'Chapel heist', constant: true }) },
+    };
+    globalThis.selected_world_info = ['Town Lore'];
+    const settings = getSettings();
+
+    await toggleLorebookSelection('Town Lore');
+    assert.deepEqual(settings.lorebookSelectedBooks, ['Town Lore']);
+    assert.deepEqual(settings.lorebookExcludedBooks, []);
+
+    await toggleLorebookSelection('Town Lore');
+    assert.deepEqual(settings.lorebookSelectedBooks, []);
+    assert.deepEqual(settings.lorebookExcludedBooks, ['Town Lore']);
+
+    await toggleLorebookSelection('Town Lore');
+    assert.deepEqual(settings.lorebookSelectedBooks, []);
+    assert.deepEqual(settings.lorebookExcludedBooks, []);
+});
+
+test('parseLBChangesFromText extracts the structured block', () => {
+    const text = [
+        'The chapel should be recorded.',
+        '```lorebook-changes',
+        '{"changes":[{"action":"edit","worldName":"Town Lore","uid":1,"name":"Chapel heist","content":"The chapel heist is now public knowledge.","triggers":["chapel"]}]}',
+        '```',
+    ].join('\n');
+
+    const changes = parseLBChangesFromText(text);
+    assert.ok(Array.isArray(changes));
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0].action, 'edit');
+    assert.equal(changes[0].worldName, 'Town Lore');
+    assert.equal(changes[0].uid, 1);
+    assert.equal(changes[0].name, 'Chapel heist');
+    assert.equal(changes[0].content, 'The chapel heist is now public knowledge.');
+    assert.deepEqual(changes[0].triggers, ['chapel']);
+});
+
+test('applyLBChanges writes parsed edit actions through saveWorldInfo', async () => {
+    stub.books['Town Lore'] = {
+        entries: {
+            1: bookEntry(1, 'The chapel heist set the town on edge.', { comment: 'Chapel heist', constant: true, key: ['chapel'] }),
+        },
+    };
+    globalThis.selected_world_info = ['Town Lore'];
+    lastActiveEntries.length = 0;
+    lastActiveEntries.push({ bookName: 'Town Lore', displayName: 'Town Lore', entryName: 'Chapel heist', uid: 1 });
+
+    await applyLBChanges([{
+        action: 'edit',
+        worldName: 'Town Lore',
+        uid: 1,
+        name: 'Chapel heist',
+        content: 'The chapel heist is now public knowledge.',
+        triggers: ['chapel', 'heist'],
+    }]);
+
+    assert.ok(stub.worldWrites.length >= 1);
+    const write = stub.worldWrites.find(w => w.name === 'Town Lore');
+    assert.ok(write);
+    assert.equal(write.data.entries[1].content, 'The chapel heist is now public knowledge.');
+    assert.deepEqual(write.data.entries[1].key, ['chapel', 'heist']);
+});
+
+test('buildLBAIInstructions is empty when AI-manage is off', () => {
+    const settings = getEffectiveSettings();
+    settings.lorebookAIManageEnabled = false;
+    assert.equal(buildLBAIInstructions(settings), '');
+});
+
+test('buildLBAIInstructions wraps the manage prompt when AI-manage is on', async () => {
+    stub.books['Town Lore'] = {
+        entries: {
+            1: bookEntry(1, 'The chapel heist set the town on edge.', { comment: 'Chapel heist', constant: true }),
+        },
+    };
+    globalThis.selected_world_info = ['Town Lore'];
+    const settings = getEffectiveSettings();
+    settings.lorebookAIManageEnabled = true;
+    await assembleMessages(getConversation(), settings, null);
+
+    const block = buildLBAIInstructions(settings);
+    assert.match(block, /<lorebook_management>/);
+    assert.match(block, /<\/lorebook_management>/);
+    assert.ok(block.includes('Town Lore'));
+    assert.ok(block.includes('```lorebook-changes'));
 });

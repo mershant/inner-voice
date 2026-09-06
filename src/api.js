@@ -11,7 +11,7 @@ import { _getSummaryceptionSummary } from './integrations/integ-summaryception.j
 import { applyRegexIfEnabled } from './integrations/integ-regex.js';
 
 import { buildMemoryContextBlock, buildMemoryAIInstructions, processMemoryUpdates, stripMemoryBlock } from './features/feature-memory.js';
-import { buildLorebookContextBlock } from './features/feature-lorebook.js';
+import { buildLorebookContextBlock, buildLBAIInstructions, expandOutletsAsync } from './features/feature-lorebook.js';
 import { buildCharacterContextBlock } from './features/feature-characters.js';
 import { buildToolCallsSystemBlock, parseToolCallsFromText, executeTool, getEnabledTools } from './features/feature-tools-engine.js';
 import { buildPortraySignalBlock, splitPortraySignal } from './portray-signal.js';
@@ -95,12 +95,14 @@ export async function buildSystemContent(settings) {
     }
 
     const memoryAIInstr = buildMemoryAIInstructions(settings).trim();
+    const aiInstructions = buildLBAIInstructions(settings).trim();
     const toolsBlock = buildToolCallsSystemBlock().trim();
     const portraySignalBlock = buildPortraySignalBlock(settings).trim();
 
-    const modules = [memoryAIInstr, toolsBlock, portraySignalBlock].filter(Boolean);
+    const modules = [memoryAIInstr, aiInstructions, toolsBlock, portraySignalBlock].filter(Boolean);
     if (modules.length > 0) {
-        parts.push(`\n\n<modules>\n${modules.join('\n\n')}\n</modules>`);
+        const reminder = `\n\n[SYSTEM REMINDER: If you intend to modify anything you MUST write the appropriate structured markdown block containing your instructions. The system strictly relies on these blocks to parse and apply your changes automatically. Simply describing your changes in plain text without outputting the corresponding markdown block will result in failure to apply them.]`;
+        parts.push(`\n\n<modules>\n${modules.join('\n\n')}${reminder}\n</modules>`);
     }
 
     return parts.join('\n');
@@ -207,6 +209,18 @@ export async function assembleMessages(conversation, settings, pendingUserText) 
     }
     if (pendingUserText !== null && pendingUserText !== undefined && pendingUserText !== '') {
         messages.push({ role: 'user', content: pendingUserText });
+    }
+
+    for (let m of messages) {
+        if (typeof m.content === 'string') {
+            m.content = await expandOutletsAsync(m.content);
+        } else if (Array.isArray(m.content)) {
+            for (let part of m.content) {
+                if (part.type === 'text') {
+                    part.text = await expandOutletsAsync(part.text);
+                }
+            }
+        }
     }
 
     return messages;

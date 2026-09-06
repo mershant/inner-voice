@@ -1,0 +1,122 @@
+<div id="iv-lb-overlay" class="iv-lb-overlay" style="display:none">
+    <div class="iv-lb-panel">
+        <div class="iv-lb-header">
+            <div class="iv-lb-header-left">
+                <span class="iv-lb-title-icon">${I.book}</span>
+                <span class="iv-lb-title">Lorebook Manager</span>
+            </div>
+            <div class="iv-lb-header-center">
+                <div class="iv-lb-search-wrap">
+                    ${I.search}
+                    <input type="text" id="iv-lb-search" class="iv-lb-search" placeholder="Search entries by name, keys, content…">
+                </div>
+            </div>
+            <div class="iv-lb-header-right">
+                <button class="iv-hbtn iv-hbtn-close" id="iv-lb-close">${I.x}</button>
+            </div>
+        </div>
+
+        <div class="iv-lb-body">
+            <div class="iv-lb-sidebar">
+                <div class="iv-lb-sidebar-header">
+                    <span class="iv-lb-sidebar-title">Lorebooks</span>
+                    <button class="iv-tbtn" id="iv-lb-refresh" title="Refresh list">${I.refresh}</button>
+                </div>
+                <div class="iv-lb-book-list" id="iv-lb-book-list">
+                    <div class="iv-lb-loading">Loading…</div>
+                </div>
+                <div class="iv-lb-sidebar-legend">
+                    <span class="iv-lb-legend-item"><span class="iv-lb-src-badge iv-lb-src-global">G</span> Global</span>
+                    <span class="iv-lb-legend-item"><span class="iv-lb-src-badge iv-lb-src-character">C</span> Char</span>
+                    <span class="iv-lb-legend-item"><span class="iv-lb-src-badge iv-lb-src-chat">Ch</span> Chat</span>
+                    <span class="iv-lb-legend-item"><span class="iv-lb-src-badge iv-lb-src-persona">P</span> Persona</span>
+                </div>
+            </div>
+
+            <div class="iv-lb-main">
+                <div class="iv-lb-main-toolbar">
+                    <span class="iv-lb-entries-label" id="iv-lb-entries-label">Select a lorebook</span>
+                    <div class="iv-lb-main-actions" id="iv-lb-main-actions" style="display:none">
+                        <button class="iv-lb-bulk-btn" id="iv-lb-enable-all">Force All On</button>
+                        <button class="iv-lb-bulk-btn" id="iv-lb-disable-all">Force All Off</button>
+                        <button class="iv-lb-bulk-btn" id="iv-lb-reset-overrides">Reset All</button>
+                        <button class="iv-lb-bulk-btn iv-lb-add-btn" id="iv-lb-add-entry">${I.plus} New Entry</button>
+                    </div>
+                </div>
+                <div class="iv-lb-ctx-legend" id="iv-lb-ctx-legend" style="display:none">
+                    <span class="iv-lb-ctx-legend-item"><span class="iv-lb-ind-demo iv-lb-ind-in-ctx"></span>In context</span>
+                    <span class="iv-lb-ctx-legend-item"><span class="iv-lb-ind-demo forced-on"></span>Force On</span>
+                    <span class="iv-lb-ctx-legend-item"><span class="iv-lb-ind-demo forced-off"></span>Force Off</span>
+                    <span class="iv-lb-ctx-legend-item"><span class="iv-lb-ind-demo iv-lb-ind-demo-disabled"></span>Disabled</span>
+                    <span class="iv-lb-ctx-legend-item"><span class="iv-lb-ind-demo"></span>Default</span>
+                </div>
+                <div class="iv-lb-entries-container">
+                    <div class="iv-lb-entries" id="iv-lb-entries">
+                        <div class="iv-lb-empty-state"><div class="iv-empty-icon">${I.book}</div><div>Select a lorebook to view its entries</div></div>
+                    </div>
+                    <div class="iv-lb-entry-detail" id="iv-lb-entry-detail" style="display:none">
+                        <div class="iv-lb-detail-header">
+                            <button class="iv-lb-back-btn" id="iv-lb-back">← Back</button>
+                            <span class="iv-lb-detail-title" id="iv-lb-detail-title">Entry</span>
+                            <div class="iv-lb-detail-actions">
+                                <button class="iv-lb-detail-btn" id="iv-lb-detail-copy" title="Copy content">${I.copy}</button>
+                                <button class="iv-lb-detail-btn iv-lb-detail-save-btn" id="iv-lb-detail-save" title="Save">${I.check} Save</button>
+                                <button class="iv-lb-detail-btn iv-lb-detail-danger" id="iv-lb-detail-delete" title="Delete entry">${I.trash}</button>
+                            </div>
+                        </div>
+                        <div class="iv-lb-detail-body">
+                            <div class="iv-lb-detail-row">
+                                <label class="iv-lb-detail-label">Name / Comment</label>
+                                <input type="text" class="iv-lb-detail-input" id="iv-lb-detail-name" placeholder="Entry name">
+                            </div>
+                            <div class="iv-lb-detail-row">
+                                <label class="iv-lb-detail-label">Trigger Keys <span class="iv-lb-label-hint">(comma-separated)</span></label>
+                                <input type="text" class="iv-lb-detail-input" id="iv-lb-detail-triggers" placeholder="keyword1, keyword2, /regex/i">
+                            </div>
+                            <div class="iv-lb-detail-row iv-lb-detail-row-grow">
+                                <label class="iv-lb-detail-label">Content</label>
+                                <textarea class="iv-lb-detail-textarea" id="iv-lb-detail-content" placeholder="Entry content…"></textarea>
+                            </div>
+                            <div class="iv-lb-detail-meta-row">
+                                <div class="iv-lb-detail-meta-item">
+                                    <span class="iv-lb-detail-label">Lorebook Status</span>
+                                    <div class="iv-lb-detail-status" id="iv-lb-detail-lb-status" title="Click to toggle in lorebook">Enabled</div>
+                                </div>
+                                <div class="iv-lb-detail-meta-item">
+                                    <span class="iv-lb-detail-label">Copilot Context Injection</span>
+                                    <div style="display:flex;flex-direction:column;gap:4px">
+                                        <div class="iv-lb-detail-injection">
+                                            <button class="iv-lb-inj-btn" data-val="default" id="iv-lb-inj-default">Default</button>
+                                            <button class="iv-lb-inj-btn" data-val="true" id="iv-lb-inj-force-on">Force On</button>
+                                            <button class="iv-lb-inj-btn" data-val="false" id="iv-lb-inj-force-off">Force Off</button>
+                                        </div>
+                                        <span class="iv-lb-inj-hint" id="iv-lb-inj-hint"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="iv-lb-footer">
+            <span class="iv-lb-footer-info" id="iv-lb-footer-info"></span>
+            <span class="iv-lb-footer-ctx" id="iv-lb-footer-ctx"></span>
+        </div>
+    </div>
+</div>
+
+<div id="iv-diff-modal" class="iv-modal-overlay" style="display:none">
+    <div class="iv-modal iv-diff-modal-box">
+        <div class="iv-modal-header">
+            <span class="iv-diff-modal-title">${I.edit} Diff View</span>
+            <button class="iv-hbtn iv-hbtn-close" id="iv-diff-close">${I.x}</button>
+        </div>
+        <div class="iv-modal-tabs">
+            <button class="iv-modal-tab active" data-diff-tab="split">Split</button>
+            <button class="iv-modal-tab" data-diff-tab="unified">Unified</button>
+        </div>
+        <div class="iv-modal-body iv-diff-body" id="iv-diff-body"></div>
+    </div>
+</div>

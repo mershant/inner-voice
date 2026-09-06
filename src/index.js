@@ -9,6 +9,8 @@ import { setupSettingsPanelListeners, setupSettingsHandlers, updateSettingsUI, u
 import { updateMemoryDot } from './features/feature-memory.js';
 import { setupChatPickerListeners, onChatChanged, updateDepthSlidersMax, renderConversation, openSearch, navigateSearch, performSearch, closeSearch, openChatPicker, toggleSearchWholeWord, setupDepthClickEdit, updateMsgCount, setupSearchHotkey, setupMessagesScrollTracking, setupMainChatHideListener, syncExchangeHiddenUi, setupSegmentJumpNav, setupSegmentScrollTracking, jumpToPrevSegment, jumpToNextSegment, setGeneratingState } from './ui/ui-chat.js';
 import { checkChangelogAutoShow, setupChangelogListeners, openInspector, renderQuickPromptsBar } from './ui/ui-widgets.js';
+import { setupExternalWIChangeListener } from './features/feature-lorebook.js';
+import { setupLorebookManagerListeners, openLorebookManager } from './features/feature-lorebook-ui.js';
 
 import * as apiMod from './api.js';
 import { syncSimulationView } from './simulation-view.js';
@@ -54,7 +56,7 @@ async function injectUI() {
             console.error(`[${EXT_DISPLAY}] Couldn't load HTML: ${templateName}.html`);
         }
     };
-    const templates = ['window', 'settings_overlay', 'chat_picker'];
+    const templates = ['window', 'lorebook_manager', 'settings_overlay', 'chat_picker'];
     await Promise.all(templates.map(loadAndInject));
 
     const iconEl = document.getElementById(ICON_ID);
@@ -94,9 +96,23 @@ function attachWindowListeners() {
         const clickedInside = win.contains(e.target) ||
                               e.target.closest('.iv-dialog-overlay') ||
                               document.getElementById('iv-settings-overlay')?.contains(e.target) ||
-                              document.getElementById('iv-picker-overlay')?.contains(e.target);
+                              document.getElementById('iv-picker-overlay')?.contains(e.target) ||
+                              document.getElementById('iv-lb-overlay')?.contains(e.target);
         state.windowActive = !!clickedInside;
     }, true);
+
+    document.addEventListener('click', e => {
+        const menuDd = document.getElementById('iv-menu-dropdown');
+        if (menuDd && !menuDd.contains(e.target)) {
+            document.getElementById('iv-menu-panel')?.classList.remove('open');
+            document.getElementById('iv-menu-trigger')?.classList.remove('active');
+        }
+        if (!e.target.closest('.iv-lb-proposal-world-dd')) {
+            document.querySelectorAll('.iv-lb-proposal-world-panel.open').forEach(p => {
+                p.classList.remove('open'); p.previousElementSibling?.classList.remove('open');
+            });
+        }
+    });
 
     window.addEventListener('resize', () => {
         if (windowEl && windowEl.style.display !== 'none') {
@@ -157,6 +173,19 @@ function attachWindowListeners() {
 
     document.getElementById('iv-search-btn')?.addEventListener('click', () => { state.searchOpen ? closeSearch() : openSearch(); });
     document.getElementById('iv-pick-btn')?.addEventListener('click', () => openChatPicker());
+    document.getElementById('iv-menu-trigger')?.addEventListener('click', e => {
+        e.stopPropagation();
+        const panel = document.getElementById('iv-menu-panel');
+        const trigger = document.getElementById('iv-menu-trigger');
+        const isOpen = panel.classList.contains('open');
+        panel.classList.toggle('open', !isOpen);
+        trigger.classList.toggle('active', !isOpen);
+    });
+    document.getElementById('iv-menu-lb-item')?.addEventListener('click', () => {
+        document.getElementById('iv-menu-panel')?.classList.remove('open');
+        document.getElementById('iv-menu-trigger')?.classList.remove('active');
+        openLorebookManager();
+    });
     document.getElementById('iv-seg-prev-btn')?.addEventListener('click', () => jumpToPrevSegment());
     document.getElementById('iv-seg-next-btn')?.addEventListener('click', () => jumpToNextSegment());
 
@@ -331,6 +360,8 @@ async function init() {
     updateSettingsUI();
     setupSettingsPanelListeners();
     setupChatPickerListeners();
+    setupLorebookManagerListeners();
+    setupExternalWIChangeListener();
     setupChangelogListeners();
     setupSearchHotkey();
     setupGhostHotkey();
@@ -441,7 +472,8 @@ async function init() {
     [
         windowEl,
         document.getElementById('iv-settings-overlay'),
-        document.getElementById('iv-picker-overlay')
+        document.getElementById('iv-picker-overlay'),
+        document.getElementById('iv-lb-overlay')
     ].filter(Boolean).forEach(el => {
         el.addEventListener('mousedown', preventSpinBug);
         el.addEventListener('pointerdown', preventSpinBug);

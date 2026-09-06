@@ -1,6 +1,7 @@
 import { DEFAULT_TOOLS_PROMPT, TOOL_CALL_FORMAT_BLOCK, TOOL_DEFINITIONS } from '../constants.js';
 import { getSettings } from '../conversation.js';
 import { _ensureWrapped } from '../utils/util-text.js';
+import { fetchWorldInfoBook, getDisplayName, getActiveLorebookNames, wiEntriesToArray } from './feature-lorebook.js';
 
 export function getEnabledTools() {
     const s = getSettings();
@@ -63,6 +64,118 @@ export async function executeTool(toolName, toolInput) {
                 }
             }
             return { found: results.length, results, note: `Total messages searched: ${Math.min(msgs.length - 1, toIdx) - Math.max(0, fromIdx) + 1}` };
+        }
+        case 'search_lorebook_entry': {
+            const activeBooks = await getActiveLorebookNames();
+            let rawQueries = Array.isArray(toolInput.queries) ? toolInput.queries : (Array.isArray(toolInput.query) ? toolInput.query : [toolInput.query || '']);
+            const parsedQueries = rawQueries.map(q => {
+                const s = String(q);
+                const regexMatch = s.match(/^\/(.+)\/([gimsuy]*)$/);
+                if (regexMatch) {
+                    try { return { type: 'regex', re: new RegExp(regexMatch[1], regexMatch[2]) }; } catch(_) {}
+                }
+                return { type: 'text', lq: s.toLowerCase() };
+            });
+            
+            const targetBook = toolInput.book_name;
+            const searchIn = toolInput.search_in || 'all';
+            const onlyConstant = !!toolInput.only_constant;
+            const onlyOutlet = !!toolInput.only_outlet;
+            const results = [];
+            for (const bookName of activeBooks) {
+                if (targetBook && !bookName.toLowerCase().includes(targetBook.toLowerCase())) continue;
+                const data = await fetchWorldInfoBook(bookName).catch(() => null);
+                if (!data) continue;
+                for (const entry of wiEntriesToArray(data)) {
+                    const outletField = (entry.outlet || entry.outlet_name || entry.outletName || entry.automation_id || entry.automationId || '').trim();
+                    const isOutletPos = String(entry.position) === '5' || String(entry.position).toLowerCase() === 'outlet';
+                    const isEntryOutlet = isOutletPos || outletField !== '';
+                    if (onlyConstant && !entry.constant) continue;
+                    if (onlyOutlet && !isEntryOutlet) continue;
+                    
+                    const name = (entry.comment || '');
+                    const keys = (entry.key || []).join(' ');
+                    const text = (entry.content || '');
+                    
+                    let matched = false;
+                    for (const pq of parsedQueries) {
+                        if (pq.type === 'regex' && pq.re) {
+                            pq.re.lastIndex = 0;
+                            if (searchIn === 'all') {
+                                matched = pq.re.test(name) || pq.re.test(keys) || pq.re.test(text);
+                            } else if (searchIn === 'name') {
+                                matched = pq.re.test(name);
+                            } else if (searchIn === 'keys') {
+                                matched = pq.re.test(keys);
+                            } else if (searchIn === 'content') {
+                                matched = pq.re.test(text);
+                            }
+                        } else {
+                            const lq = pq.lq;
+                            const lname = name.toLowerCase();
+                            const lkeys = keys.toLowerCase();
+                            const ltext = text.toLowerCase();
+                            if (searchIn === 'all') {
+                                matched = lname.includes(lq) || lkeys.includes(lq) || ltext.includes(lq);
+                            } else if (searchIn === 'name') {
+                                matched = lname.includes(lq);
+                            } else if (searchIn === 'keys') {
+                                matched = lkeys.includes(lq);
+                            } else if (searchIn === 'content') {
+                                matched = ltext.includes(lq);
+                            }
+                        }
+                        if (matched) break;
+                    }
+                    
+                    if (matched) results.push({
+                        book: getDisplayName(bookName),
+                        uid: entry.uid,
+                        name: entry.comment || `Entry #${entry.uid}`,
+                        keys: entry.key || [],
+                        content_preview: (entry.content || '').slice(0, 200) + ((entry.content || '').length > 200 ? '...' : ''),
+                        is_constant: !!entry.constant,
+                        is_outlet: isEntryOutlet,
+                        outlet_name: outletField || null,
+                        disabled: !!entry.disable,
+                    });
+                    if (results.length >= 20) break;
+                }
+                if (results.length >= 20) break;
+            }
+            return { found: results.length, results };
+        }
+        case 'get_lorebooks': {
+            const activeBooks = await getActiveLorebookNames();
+            const includeEntries = !!toolInput.include_entries;
+            const specificBook = toolInput.book_name;
+            if (!includeEntries) {
+                return {
+                    lorebooks: activeBooks.map(name => ({ name: getDisplayName(name), internal_name: name })),
+                    total: activeBooks.length,
+                };
+            }
+            const booksToProcess = specificBook
+                ? activeBooks.filter(n => n === specificBook || getDisplayName(n) === specificBook)
+                : activeBooks;
+            const result = {};
+            for (const name of booksToProcess) {
+                const data = await fetchWorldInfoBook(name).catch(() => null);
+                if (!data) { result[getDisplayName(name)] = []; continue; }
+                result[getDisplayName(name)] = wiEntriesToArray(data).map(e => {
+                    const outletField = (e.outlet || e.outlet_name || e.outletName || e.automation_id || e.automationId || '').trim();
+                    const isOutletPos = String(e.position) === '5' || String(e.position).toLowerCase() === 'outlet';
+                    return {
+                        name: e.comment || `#${e.uid}`,
+                        uid: e.uid,
+                        is_constant: !!e.constant,
+                        is_outlet: isOutletPos || outletField !== '',
+                        outlet_name: outletField || null,
+                        disabled: !!e.disable,
+                    };
+                });
+            }
+            return { lorebooks: result };
         }
         case 'ask_user': {
             return { __ask_user: true, question: toolInput.question, context: toolInput.context };
