@@ -188,7 +188,20 @@
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-include-hidden-msgs"><span>Include hidden messages in context</span></label>
           <label class="iv-sp-check"><input type="checkbox" id="iv-sp-include-alt-swipes"><span>Include alternate swipes of the last message</span></label>
           <label class="iv-sp-check" title="Add every enabled entry from active lorebooks as established world knowledge. Keyword matching is not used."><input type="checkbox" id="iv-sp-include-lorebook"><span>Include active lorebook entries</span></label>
-          <label class="iv-sp-check" title="Add each present character's card as established knowledge about the people in the scene."><input type="checkbox" id="iv-sp-include-character-card"><span>Include character cards</span></label>
+          <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:5px">
+            <div class="iv-sp-label" style="margin-bottom:2px">Character fields sent to AI context</div>
+            <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ce-tags"><span>Tags</span></label>
+            <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ce-description"><span>Description</span></label>
+            <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ce-personality"><span>Personality</span></label>
+            <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ce-scenario"><span>Scenario</span></label>
+            <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ce-first-mes"><span>First Message</span></label>
+            <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ce-mes-example"><span>Example Dialogue</span></label>
+            <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ce-authors-note"><span>Author's Note</span></label>
+            <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ce-system-prompt"><span>Main Prompt Override</span></label>
+            <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ce-post-history"><span>Post-History Instructions</span></label>
+            <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ce-alt-greetings"><span>Alternate Greetings <span class="iv-sp-hint">(off by default — can be large)</span></span></label>
+            <div id="iv-sp-ce-alt-greetings-picker" style="display:none;margin-top:4px"></div>
+          </div>
           <div class="iv-sp-field" style="margin-top:8px">
             <label class="iv-sp-label">Main Chat Context Depth</label>
             <div class="iv-sp-row">
@@ -367,6 +380,50 @@
           <div class="iv-sp-ov-check-row">
             <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-include-alt-swipes"><span>Include alternate swipes of last message</span></label>
             <button class="iv-sp-ov-clear" data-ovkey="includeAlternateSwipes" title="Clear override" disabled>↺</button>
+          </div>
+          <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.06)">
+            <div class="iv-sp-label" style="margin-bottom:5px">Character fields <span class="iv-sp-hint">(override global)</span></div>
+            <div class="iv-sp-ov-check-row">
+              <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-ce-tags"><span>Tags</span></label>
+              <button class="iv-sp-ov-clear" data-ovkey="charField_tags" title="Clear override" disabled>↺</button>
+            </div>
+            <div class="iv-sp-ov-check-row">
+              <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-ce-description"><span>Description</span></label>
+              <button class="iv-sp-ov-clear" data-ovkey="charField_description" title="Clear override" disabled>↺</button>
+            </div>
+            <div class="iv-sp-ov-check-row">
+              <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-ce-personality"><span>Personality</span></label>
+              <button class="iv-sp-ov-clear" data-ovkey="charField_personality" title="Clear override" disabled>↺</button>
+            </div>
+            <div class="iv-sp-ov-check-row">
+              <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-ce-scenario"><span>Scenario</span></label>
+              <button class="iv-sp-ov-clear" data-ovkey="charField_scenario" title="Clear override" disabled>↺</button>
+            </div>
+            <div class="iv-sp-ov-check-row">
+              <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-ce-first-mes"><span>First Message</span></label>
+              <button class="iv-sp-ov-clear" data-ovkey="charField_first_mes" title="Clear override" disabled>↺</button>
+            </div>
+            <div class="iv-sp-ov-check-row">
+              <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-ce-mes-example"><span>Example Dialogue</span></label>
+              <button class="iv-sp-ov-clear" data-ovkey="charField_mes_example" title="Clear override" disabled>↺</button>
+            </div>
+            <div class="iv-sp-ov-check-row">
+              <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-ce-authors-note"><span>Author's Note</span></label>
+              <button class="iv-sp-ov-clear" data-ovkey="charField_authors_note" title="Clear override" disabled>↺</button>
+            </div>
+            <div class="iv-sp-ov-check-row">
+              <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-ce-system-prompt"><span>Main Prompt Override</span></label>
+              <button class="iv-sp-ov-clear" data-ovkey="charField_system_prompt" title="Clear override" disabled>↺</button>
+            </div>
+            <div class="iv-sp-ov-check-row">
+              <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-ce-post-history"><span>Post-History Instructions</span></label>
+              <button class="iv-sp-ov-clear" data-ovkey="charField_post_history_instructions" title="Clear override" disabled>↺</button>
+            </div>
+            <div class="iv-sp-ov-check-row">
+              <label class="iv-sp-check"><input type="checkbox" id="iv-sp-ov-ce-alt-greetings"><span>Alternate Greetings</span></label>
+              <button class="iv-sp-ov-clear" data-ovkey="charField_alternate_greetings" title="Clear override" disabled>↺</button>
+            </div>
+            <div id="iv-sp-ov-ce-alt-greetings-picker" style="display:none;margin-top:4px;padding-left:14px"></div>
           </div>
           <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:5px">
               <div class="iv-sp-label" style="margin-bottom:2px">Third-party Extension Support</div>

@@ -220,7 +220,20 @@
                             <label class="checkbox_label"><input id="iv-include-hidden-msgs" type="checkbox" /><span>Include hidden messages in context</span></label>
                             <label class="checkbox_label"><input id="iv-include-alt-swipes" type="checkbox" /><span>Include alternate swipes of the last message</span></label>
                             <label class="checkbox_label" title="Add every enabled entry from active lorebooks as established world knowledge. Keyword matching is not used."><input id="iv-include-lorebook" type="checkbox" /><span>Include active lorebook entries</span></label>
-                            <label class="checkbox_label" title="Add each present character's card as established knowledge about the people in the scene."><input id="iv-include-character-card" type="checkbox" /><span>Include character cards</span></label>
+                        </div>
+                        <div style="margin-top:14px; border-top:1px solid rgba(255,255,255,.06); padding-top:12px; display:flex; flex-direction:column; gap:4px">
+                            <b style="font-size:12px; margin-bottom:2px">Character fields sent to AI context:</b>
+                            <label class="checkbox_label"><input id="iv-ce-tags" type="checkbox" /><span>Tags</span></label>
+                            <label class="checkbox_label"><input id="iv-ce-description" type="checkbox" /><span>Description</span></label>
+                            <label class="checkbox_label"><input id="iv-ce-personality" type="checkbox" /><span>Personality</span></label>
+                            <label class="checkbox_label"><input id="iv-ce-scenario" type="checkbox" /><span>Scenario</span></label>
+                            <label class="checkbox_label"><input id="iv-ce-first-mes" type="checkbox" /><span>First Message</span></label>
+                            <label class="checkbox_label"><input id="iv-ce-mes-example" type="checkbox" /><span>Example Dialogue</span></label>
+                            <label class="checkbox_label"><input id="iv-ce-authors-note" type="checkbox" /><span>Author's Note</span></label>
+                            <label class="checkbox_label"><input id="iv-ce-system-prompt" type="checkbox" /><span>Main Prompt Override</span></label>
+                            <label class="checkbox_label"><input id="iv-ce-post-history" type="checkbox" /><span>Post-History Instructions</span></label>
+                            <label class="checkbox_label"><input id="iv-ce-alt-greetings" type="checkbox" /><span>Alternate Greetings <span style="font-size:10px;opacity:.6">(off by default)</span></span></label>
+                            <div id="iv-ce-alt-greetings-picker" style="display:none;margin-top:4px"></div>
                         </div>
                         <label style="margin-top:10px; font-size:11px; color:#888; display:block; margin-bottom:4px">Main Chat Context Depth Limit</label>
                         <input id="iv-history-limit" type="number" class="text_pole" placeholder="50" min="1" max="500" />

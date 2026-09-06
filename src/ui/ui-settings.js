@@ -53,7 +53,6 @@ const _SETTINGS_DEF = [
     { key: 'changelogAutoShow',    stId: null, spId: 'iv-sp-changelog-auto', type: 'checkbox' },
     { key: 'includeSummaryception', stId: 'iv-include-summaryception', spId: 'iv-sp-include-summaryception', type: 'checkbox', fromSetting: s => s.includeSummaryception !== false },
     { key: 'includeLorebook', stId: 'iv-include-lorebook', spId: 'iv-sp-include-lorebook', type: 'checkbox', fromSetting: s => s.includeLorebook !== false, updCtx: true },
-    { key: 'includeCharacterCard', stId: 'iv-include-character-card', spId: 'iv-sp-include-character-card', type: 'checkbox', fromSetting: s => s.includeCharacterCard !== false, updCtx: true },
     { key: 'useAspectEvolutia',    stId: 'iv-use-aspect-evolutia',    spId: 'iv-sp-use-aspect-evolutia',    type: 'checkbox', fromSetting: s => s.useAspectEvolutia !== false },
     { key: 'autoExpandMacros',     stId: 'iv-auto-expand-macros',     spId: 'iv-sp-auto-expand-macros',     type: 'checkbox' },
     { key: 'includeHiddenMessages', stId: 'iv-include-hidden-msgs',   spId: 'iv-sp-include-hidden-msgs',    type: 'checkbox', updCtx: true },
@@ -119,6 +118,19 @@ const _SETTINGS_DEF = [
     { key: 'pickerPreviewLastLines', stId: 'iv-picker-last-lines', spId: 'iv-sp-picker-last-lines', type: 'input', toVal: v => parseInt(v) || 0 },
 ];
 
+const _CE_FIELDS_DEF = [
+    { fk: 'tags',                      stId: 'iv-ce-tags',           spId: 'iv-sp-ce-tags',           ovId: 'iv-sp-ov-ce-tags' },
+    { fk: 'description',               stId: 'iv-ce-description',    spId: 'iv-sp-ce-description',    ovId: 'iv-sp-ov-ce-description' },
+    { fk: 'personality',               stId: 'iv-ce-personality',    spId: 'iv-sp-ce-personality',    ovId: 'iv-sp-ov-ce-personality' },
+    { fk: 'scenario',                  stId: 'iv-ce-scenario',       spId: 'iv-sp-ce-scenario',       ovId: 'iv-sp-ov-ce-scenario' },
+    { fk: 'first_mes',                 stId: 'iv-ce-first-mes',      spId: 'iv-sp-ce-first-mes',      ovId: 'iv-sp-ov-ce-first-mes' },
+    { fk: 'mes_example',               stId: 'iv-ce-mes-example',    spId: 'iv-sp-ce-mes-example',    ovId: 'iv-sp-ov-ce-mes-example' },
+    { fk: 'authors_note',              stId: 'iv-ce-authors-note',   spId: 'iv-sp-ce-authors-note',   ovId: 'iv-sp-ov-ce-authors-note' },
+    { fk: 'system_prompt',             stId: 'iv-ce-system-prompt',  spId: 'iv-sp-ce-system-prompt',  ovId: 'iv-sp-ov-ce-system-prompt' },
+    { fk: 'post_history_instructions', stId: 'iv-ce-post-history',   spId: 'iv-sp-ce-post-history',   ovId: 'iv-sp-ov-ce-post-history' },
+    { fk: 'alternate_greetings',       stId: 'iv-ce-alt-greetings',  spId: 'iv-sp-ce-alt-greetings',  ovId: 'iv-sp-ov-ce-alt-greetings', altGreetingPicker: true },
+];
+
 // Mapping override keys to elements (for the override reset button)
 const _OV_EL_MAP = {
     contextDepth: ['iv-sp-ov-depth-slider', 'iv-sp-ov-depth-val'],
@@ -129,11 +141,20 @@ const _OV_EL_MAP = {
     connectionProfileId: ['iv-sp-ov-conn-profile'],
     includeSystemPrompt: ['iv-sp-ov-include-sysprompt'], includeUserPersonality: ['iv-sp-ov-include-persona'],
     includeAlternateSwipes: ['iv-sp-ov-include-alt-swipes'], applyRegexToContext: ['iv-sp-ov-apply-regex'],
+    charField_tags: ['iv-sp-ov-ce-tags'],                 charField_description: ['iv-sp-ov-ce-description'],
+    charField_personality: ['iv-sp-ov-ce-personality'],   charField_scenario: ['iv-sp-ov-ce-scenario'],
+    charField_first_mes: ['iv-sp-ov-ce-first-mes'],       charField_mes_example: ['iv-sp-ov-ce-mes-example'],
+    charField_authors_note: ['iv-sp-ov-ce-authors-note'], charField_system_prompt: ['iv-sp-ov-ce-system-prompt'],
+    charField_post_history_instructions: ['iv-sp-ov-ce-post-history'],
+    charField_alternate_greetings: ['iv-sp-ov-ce-alt-greetings'],
     forceStreaming: [],
 };
 
 // Profile keys
-const _PROFILE_KEYS = _SETTINGS_DEF.filter(d => d.profileKey).map(d => d.key);
+const _PROFILE_KEYS = [
+    ..._SETTINGS_DEF.filter(d => d.profileKey).map(d => d.key),
+    'includeCharacterCard',
+];
 
 // ─── Configuration Profiles ───────────────────────────────────────────────────
 
@@ -143,12 +164,14 @@ export function _takeProfileSnapshot() {
     const s = getSettings();
     _profileSnapshot = {};
     for (const k of _PROFILE_KEYS) _profileSnapshot[k] = JSON.stringify(s[k]);
+    _profileSnapshot._charEditFields = JSON.stringify(s.charEditFields || {});
 }
 
 export function isConfigProfileDirty() {
     if (!_profileSnapshot) return false;
     const s = getSettings();
     for (const k of _PROFILE_KEYS) { if (JSON.stringify(s[k]) !== _profileSnapshot[k]) return true; }
+    if (JSON.stringify(s.charEditFields || {}) !== _profileSnapshot._charEditFields) return true;
     return false;
 }
 
@@ -180,12 +203,14 @@ export function _updateDirtyDots() {
 export function saveProfile(name) {
     const s = getSettings(); const p = {};
     for (const k of _PROFILE_KEYS) p[k] = s[k];
+    p.charEditFields = JSON.parse(JSON.stringify(s.charEditFields || {}));
     s.profiles[name] = p; s.activeProfile = name; saveSettings();
 }
 
 export function loadProfile(name) {
     const s = getSettings(); const p = s.profiles[name]; if (!p) return;
     for (const k of _PROFILE_KEYS) { if (p[k] !== undefined) s[k] = p[k]; }
+    if (p.charEditFields) s.charEditFields = JSON.parse(JSON.stringify(p.charEditFields));
     s.activeProfile = name; saveSettings();
     if (typeof updateSettingsUI === 'function') updateSettingsUI();
     _takeProfileSnapshot(); state.configDirty = false; _updateDirtyDots();
@@ -489,12 +514,30 @@ function _pruneMatchingOverrides() {
 
     if (conv && conv.overrides) {
         for (const key of Object.keys(conv.overrides)) {
-            const globalVal = s[key];
+            const globalVal = key.startsWith('charField_') ? (s.charEditFields || {})[key.replace('charField_', '')] !== false : s[key];
             const isEqual = typeof globalVal === 'boolean' ? conv.overrides[key] === globalVal : String(conv.overrides[key]) === String(globalVal);
             if (isEqual) { delete conv.overrides[key]; changed = true; }
         }
         if (changed) { saveConversation(); updateConversationOverrideIndicator(); }
     }
+
+    let charChanged = false;
+    if (s.charMgrFieldOverrides) {
+        for (const charId of Object.keys(s.charMgrFieldOverrides)) {
+            const ovs = s.charMgrFieldOverrides[charId];
+            for (const key of Object.keys(ovs)) {
+                const globalVal = (s.charEditFields || {})[key] !== false;
+                if (ovs[key] === globalVal) {
+                    delete ovs[key];
+                    charChanged = true;
+                }
+            }
+            if (Object.keys(ovs).length === 0) {
+                delete s.charMgrFieldOverrides[charId];
+            }
+        }
+    }
+    if (charChanged) saveSettings();
 }
 
 function _readFromSettings(def) {
@@ -540,13 +583,30 @@ function _bindSetting(def) {
     }
 }
 
+function _bindCeField(ceDef) {
+    const stEl = document.getElementById(ceDef.stId);
+    const spEl = document.getElementById(ceDef.spId);
+    const apply = val => {
+        const s = getSettings(); if (!s.charEditFields) s.charEditFields = {};
+        s.charEditFields[ceDef.fk] = val; saveSettings(); _markDirty('config'); _pruneMatchingOverrides();
+        import('./ui-chat.js').then(m => m.updateMsgCount(getConversation()));
+        if (ceDef.altGreetingPicker) {
+            ['iv-ce-alt-greetings-picker', 'iv-sp-ce-alt-greetings-picker'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = val ? '' : 'none'; });
+            import('../features/feature-character-ui.js').then(m => m.refreshAltGreetingsPickers());
+        }
+    };
+    stEl?.addEventListener('change', () => { if (spEl) spEl.checked = stEl.checked; apply(stEl.checked); });
+    spEl?.addEventListener('change', () => { if (stEl) stEl.checked = spEl.checked; apply(spEl.checked); });
+}
+
 function _bindAllSettings() {
     _SETTINGS_DEF.forEach(_bindSetting);
+    _CE_FIELDS_DEF.forEach(_bindCeField);
 }
 
 function _syncOvToGlobal(key, newVal) {
     const s = getSettings();
-    const globalVal = s[key];
+    const globalVal = key.startsWith('charField_') ? (s.charEditFields || {})[key.replace('charField_', '')] !== false : s[key];
     const isDefault = (newVal === undefined || newVal === null) ? true
         : (typeof globalVal === 'boolean' ? newVal === globalVal : String(newVal) === String(globalVal));
     setConversationOverride(key, isDefault ? undefined : newVal);
@@ -562,7 +622,7 @@ function _resetOvElToEffective(key) {
             el.textContent = eff.contextDepth ?? 15; return;
         }
         if (el.type === 'checkbox') {
-            el.checked = !!eff[key];
+            el.checked = key.startsWith('charField_') ? (getSettings().charEditFields || {})[key.replace('charField_', '')] !== false : !!eff[key];
         } else if (el.type === 'range') {
             el.value = eff[key] ?? 15;
         } else {
@@ -601,6 +661,11 @@ export function syncOverlayUI(key, val) {
     if (key === 'connectionSource') { _applyConnectionSourceVisibility(val); return; }
     if (key === 'contextDepth') { const dv = document.getElementById('iv-sp-depth-val'); if (dv) dv.textContent = val ?? 15; }
     if (key in getConversationOverrides()) return;
+    if (key.startsWith('charField_')) {
+        const ceDef = _CE_FIELDS_DEF.find(d => d.fk === key.replace('charField_', ''));
+        if (ceDef) { const el = document.getElementById(ceDef.ovId); if (el) el.checked = !!val; }
+        return;
+    }
     if (_OV_EL_MAP[key]) _resetOvElToEffective(key);
 }
 
@@ -615,6 +680,11 @@ export function updateSettingsUI() {
             [def.stValId, def.spValId].forEach(id => { if (!id) return; const el = document.getElementById(id); if (el) el.textContent = fmt; });
         }
     }
+    for (const ceDef of _CE_FIELDS_DEF) {
+        const val = (s.charEditFields || {})[ceDef.fk] !== false;
+        if (ceDef.stId) { const el = document.getElementById(ceDef.stId); if (el) el.checked = val; }
+        if (ceDef.spId) { const el = document.getElementById(ceDef.spId); if (el) el.checked = val; }
+    }
 
     const fsVal = s.forceStreaming === true ? 'on' : (s.forceStreaming === false ? 'auto' : (s.forceStreaming || 'auto'));
     document.querySelectorAll('#iv-st-stream-auto, #iv-st-stream-on, #iv-st-stream-off').forEach(b => {
@@ -622,10 +692,13 @@ export function updateSettingsUI() {
         b.style.color = active ? 'var(--SmartThemeQuoteColor,#a99bfb)' : ''; b.style.borderColor = active ? 'rgba(124,109,250,0.5)' : ''; b.style.background = active ? 'rgba(124,109,250,0.12)' : '';
     });
     _applyConnectionSourceVisibility(s.connectionSource ?? 'default');
+    const agPicker = document.getElementById('iv-ce-alt-greetings-picker');
+    if (agPicker) agPicker.style.display = s.charEditFields?.alternate_greetings ? '' : 'none';
     refreshProfilesDropdown(); buildThemeEditor();
     import('../portray.js').then(m => m.syncFireTimePortrayForm());
     import('./ui-window.js').then(m => m._setupBgUpload('iv-bg-upload-btn', 'iv-bg-url', () => _syncBgToOverlay()));
     import('./ui-widgets.js').then(m => m.buildSoundSettingsUI(document.getElementById('iv-sound-settings')));
+    import('../features/feature-character-ui.js').then(m => m.refreshAltGreetingsPickers());
 }
 
 export function syncSPFromSettings() {
@@ -637,6 +710,10 @@ export function syncSPFromSettings() {
         const val = _readFromSettings(def);
         _writeToEl(document.getElementById(def.spId), def, val);
         if (def.type === 'slider' && def.spValId) { const el = document.getElementById(def.spValId); if (el) el.textContent = def.valFmt ? def.valFmt(val) : String(val ?? ''); }
+    }
+    for (const ceDef of _CE_FIELDS_DEF) {
+        const val = (s.charEditFields || {})[ceDef.fk] !== false;
+        const el = document.getElementById(ceDef.spId); if (el) el.checked = val;
     }
 
     const streamVal = s.forceStreaming === true ? 'on' : (s.forceStreaming === false ? 'auto' : (s.forceStreaming || 'auto'));
@@ -670,6 +747,17 @@ export function syncSPFromSettings() {
         const active = b.dataset.stream === ovStreamVal; b.classList.toggle('active', active);
         b.style.color = active ? 'var(--iv-accent)' : ''; b.style.borderColor = active ? 'var(--iv-accent-dim)' : ''; b.style.background = active ? 'var(--iv-accent-bg)' : '';
     });
+    for (const ceDef of _CE_FIELDS_DEF) {
+        const ovKey = 'charField_' + ceDef.fk;
+        const val = ovKey in ov ? !!ov[ovKey] : (s.charEditFields || {})[ceDef.fk] !== false;
+        const el = document.getElementById(ceDef.ovId); if (el) el.checked = val;
+    }
+    const altGrOvEl = document.getElementById('iv-sp-ov-ce-alt-greetings');
+    if (altGrOvEl) {
+        const picker = document.getElementById('iv-sp-ov-ce-alt-greetings-picker');
+        if (picker) picker.style.display = altGrOvEl.checked ? '' : 'none';
+        import('../features/feature-character-ui.js').then(m => m.refreshAltGreetingsPickers());
+    }
     updateSPOverrideIndicators();
     buildThemeEditor(document.getElementById('iv-sp-theme-section'));
     buildBackgroundSettingsUI(document.getElementById('iv-sp-bg-settings'));
@@ -716,6 +804,7 @@ export function openSettingsPanel() {
         );
         mkPresetMgr('iv-sp-prompt-preset-manager',      'iv-sp-ov-sysprompt',       undefined);
     }).catch(() => {});
+    import('../features/feature-character-ui.js').then(m => m.refreshAltGreetingsPickers());
     overlay.style.display = 'flex'; updateConversationOverrideIndicator();
     bringWindowToFront();
     import('../features/feature-memory.js').then(m => m.updateMemoryDot());
@@ -1032,6 +1121,17 @@ export function setupSettingsPanelListeners() {
     bindOv('iv-sp-ov-include-persona',    'includeUserPersonality',   true);
     bindOv('iv-sp-ov-include-alt-swipes', 'includeAlternateSwipes',   true);
     bindOv('iv-sp-ov-apply-regex',        'applyRegexToContext',      true);
+
+    _CE_FIELDS_DEF.forEach(ceDef => {
+        bindOv(ceDef.ovId, 'charField_' + ceDef.fk, true);
+        if (ceDef.altGreetingPicker) {
+            document.getElementById(ceDef.ovId)?.addEventListener('change', e => {
+                const picker = document.getElementById('iv-sp-ov-ce-alt-greetings-picker');
+                if (picker) picker.style.display = e.target.checked ? '' : 'none';
+                import('../features/feature-character-ui.js').then(m => m.refreshAltGreetingsPickers());
+            });
+        }
+    });
 
     // Override streaming buttons
     document.querySelectorAll('.iv-ov-stream-btn').forEach(btn => {

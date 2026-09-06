@@ -135,6 +135,13 @@ export function getSettings() {
         includeSummaryception: true,
         includeLorebook: true,
         includeCharacterCard: true,
+        charEditFields: {
+            tags: true, description: true, personality: true,
+            scenario: true, first_mes: true, mes_example: true,
+            alternate_greetings: false, authors_note: true,
+            system_prompt: true, post_history_instructions: true, name: false,
+        },
+        altGreetingIndices: [],
         useAspectEvolutia: true,
         autoExpandMacros: false,
         includeHiddenMessages: false,
@@ -149,6 +156,8 @@ export function getSettings() {
     for (const [k, v] of Object.entries(defaults)) {
         if (s[k] === undefined) s[k] = v;
     }
+    if (Array.isArray(s.altGreetingIndices)) s.altGreetingIndices = {};
+    if (!s.altGreetingIndices) s.altGreetingIndices = {};
     // A stored prompt that matches a superseded default is the old default,
     // not a user customization — carry it forward to the current one.
     const _normPrompt = t => t.replace(/\r\n/g, '\n').trim();

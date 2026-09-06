@@ -863,6 +863,13 @@ function getSettings() {
         includeSummaryception: true,
         includeLorebook: true,
         includeCharacterCard: true,
+        charEditFields: {
+            tags: true, description: true, personality: true,
+            scenario: true, first_mes: true, mes_example: true,
+            alternate_greetings: false, authors_note: true,
+            system_prompt: true, post_history_instructions: true, name: false,
+        },
+        altGreetingIndices: [],
         useAspectEvolutia: true,
         autoExpandMacros: false,
         includeHiddenMessages: false,
@@ -877,6 +884,8 @@ function getSettings() {
     for (const [k, v] of Object.entries(defaults)) {
         if (s[k] === undefined) s[k] = v;
     }
+    if (Array.isArray(s.altGreetingIndices)) s.altGreetingIndices = {};
+    if (!s.altGreetingIndices) s.altGreetingIndices = {};
     // A stored prompt that matches a superseded default is the old default,
     // not a user customization — carry it forward to the current one.
     const _normPrompt = t => t.replace(/\r\n/g, '\n').trim();
@@ -1521,16 +1530,33 @@ var utilDom = /*#__PURE__*/Object.freeze({
     showCustomDialog: showCustomDialog
 });
 
+function getTagsForCharacter(char) {
+    if (!char) return [];
+    const ctx = SillyTavern.getContext();
+    const avatar = char.avatar;
+    if (!avatar) return [];
+    
+    const tagMap = ctx.tagMap || {};
+    const tagIds = tagMap[avatar];
+    if (!Array.isArray(tagIds)) return [];
+    
+    const allTags = ctx.tags || [];
+    return tagIds.map(id => {
+        const found = allTags.find(t => t.id === id);
+        return found ? found.name : null;
+    }).filter(Boolean);
+}
+
 function getCharInfo(char) {
     const ctx = SillyTavern.getContext();
-    const target = char || ctx.characters?.[ctx.characterId];
+    const target = ctx.characters?.[ctx.characterId];
     if (!target) return null;
 
-    const current = ctx.characters?.[ctx.characterId];
-    const isCurrent = !char || target === current || (!!target.avatar && target.avatar === current?.avatar);
+    ctx.characters?.[ctx.characterId];
+    const isCurrent = true;
 
     const d = target.data || {};
-    const ov = isCurrent ? (ctx.chatMetadata?.character_overrides || {}) : {};
+    const ov = (ctx.chatMetadata?.character_overrides || {}) ;
 
     const get = (field, macro) => {
         if (ov[field]) return ov[field];
@@ -2489,7 +2515,6 @@ const _SETTINGS_DEF = [
     { key: 'changelogAutoShow',    stId: null, spId: 'iv-sp-changelog-auto', type: 'checkbox' },
     { key: 'includeSummaryception', stId: 'iv-include-summaryception', spId: 'iv-sp-include-summaryception', type: 'checkbox', fromSetting: s => s.includeSummaryception !== false },
     { key: 'includeLorebook', stId: 'iv-include-lorebook', spId: 'iv-sp-include-lorebook', type: 'checkbox', fromSetting: s => s.includeLorebook !== false, updCtx: true },
-    { key: 'includeCharacterCard', stId: 'iv-include-character-card', spId: 'iv-sp-include-character-card', type: 'checkbox', fromSetting: s => s.includeCharacterCard !== false, updCtx: true },
     { key: 'useAspectEvolutia',    stId: 'iv-use-aspect-evolutia',    spId: 'iv-sp-use-aspect-evolutia',    type: 'checkbox', fromSetting: s => s.useAspectEvolutia !== false },
     { key: 'autoExpandMacros',     stId: 'iv-auto-expand-macros',     spId: 'iv-sp-auto-expand-macros',     type: 'checkbox' },
     { key: 'includeHiddenMessages', stId: 'iv-include-hidden-msgs',   spId: 'iv-sp-include-hidden-msgs',    type: 'checkbox', updCtx: true },
@@ -2555,6 +2580,19 @@ const _SETTINGS_DEF = [
     { key: 'pickerPreviewLastLines', stId: 'iv-picker-last-lines', spId: 'iv-sp-picker-last-lines', type: 'input', toVal: v => parseInt(v) || 0 },
 ];
 
+const _CE_FIELDS_DEF = [
+    { fk: 'tags',                      stId: 'iv-ce-tags',           spId: 'iv-sp-ce-tags',           ovId: 'iv-sp-ov-ce-tags' },
+    { fk: 'description',               stId: 'iv-ce-description',    spId: 'iv-sp-ce-description',    ovId: 'iv-sp-ov-ce-description' },
+    { fk: 'personality',               stId: 'iv-ce-personality',    spId: 'iv-sp-ce-personality',    ovId: 'iv-sp-ov-ce-personality' },
+    { fk: 'scenario',                  stId: 'iv-ce-scenario',       spId: 'iv-sp-ce-scenario',       ovId: 'iv-sp-ov-ce-scenario' },
+    { fk: 'first_mes',                 stId: 'iv-ce-first-mes',      spId: 'iv-sp-ce-first-mes',      ovId: 'iv-sp-ov-ce-first-mes' },
+    { fk: 'mes_example',               stId: 'iv-ce-mes-example',    spId: 'iv-sp-ce-mes-example',    ovId: 'iv-sp-ov-ce-mes-example' },
+    { fk: 'authors_note',              stId: 'iv-ce-authors-note',   spId: 'iv-sp-ce-authors-note',   ovId: 'iv-sp-ov-ce-authors-note' },
+    { fk: 'system_prompt',             stId: 'iv-ce-system-prompt',  spId: 'iv-sp-ce-system-prompt',  ovId: 'iv-sp-ov-ce-system-prompt' },
+    { fk: 'post_history_instructions', stId: 'iv-ce-post-history',   spId: 'iv-sp-ce-post-history',   ovId: 'iv-sp-ov-ce-post-history' },
+    { fk: 'alternate_greetings',       stId: 'iv-ce-alt-greetings',  spId: 'iv-sp-ce-alt-greetings',  ovId: 'iv-sp-ov-ce-alt-greetings', altGreetingPicker: true },
+];
+
 // Mapping override keys to elements (for the override reset button)
 const _OV_EL_MAP = {
     contextDepth: ['iv-sp-ov-depth-slider', 'iv-sp-ov-depth-val'],
@@ -2565,11 +2603,20 @@ const _OV_EL_MAP = {
     connectionProfileId: ['iv-sp-ov-conn-profile'],
     includeSystemPrompt: ['iv-sp-ov-include-sysprompt'], includeUserPersonality: ['iv-sp-ov-include-persona'],
     includeAlternateSwipes: ['iv-sp-ov-include-alt-swipes'], applyRegexToContext: ['iv-sp-ov-apply-regex'],
+    charField_tags: ['iv-sp-ov-ce-tags'],                 charField_description: ['iv-sp-ov-ce-description'],
+    charField_personality: ['iv-sp-ov-ce-personality'],   charField_scenario: ['iv-sp-ov-ce-scenario'],
+    charField_first_mes: ['iv-sp-ov-ce-first-mes'],       charField_mes_example: ['iv-sp-ov-ce-mes-example'],
+    charField_authors_note: ['iv-sp-ov-ce-authors-note'], charField_system_prompt: ['iv-sp-ov-ce-system-prompt'],
+    charField_post_history_instructions: ['iv-sp-ov-ce-post-history'],
+    charField_alternate_greetings: ['iv-sp-ov-ce-alt-greetings'],
     forceStreaming: [],
 };
 
 // Profile keys
-const _PROFILE_KEYS = _SETTINGS_DEF.filter(d => d.profileKey).map(d => d.key);
+const _PROFILE_KEYS = [
+    ..._SETTINGS_DEF.filter(d => d.profileKey).map(d => d.key),
+    'includeCharacterCard',
+];
 
 // ─── Configuration Profiles ───────────────────────────────────────────────────
 
@@ -2579,12 +2626,14 @@ function _takeProfileSnapshot() {
     const s = getSettings();
     _profileSnapshot = {};
     for (const k of _PROFILE_KEYS) _profileSnapshot[k] = JSON.stringify(s[k]);
+    _profileSnapshot._charEditFields = JSON.stringify(s.charEditFields || {});
 }
 
 function isConfigProfileDirty() {
     if (!_profileSnapshot) return false;
     const s = getSettings();
     for (const k of _PROFILE_KEYS) { if (JSON.stringify(s[k]) !== _profileSnapshot[k]) return true; }
+    if (JSON.stringify(s.charEditFields || {}) !== _profileSnapshot._charEditFields) return true;
     return false;
 }
 
@@ -2616,12 +2665,14 @@ function _updateDirtyDots() {
 function saveProfile(name) {
     const s = getSettings(); const p = {};
     for (const k of _PROFILE_KEYS) p[k] = s[k];
+    p.charEditFields = JSON.parse(JSON.stringify(s.charEditFields || {}));
     s.profiles[name] = p; s.activeProfile = name; saveSettings();
 }
 
 function loadProfile(name) {
     const s = getSettings(); const p = s.profiles[name]; if (!p) return;
     for (const k of _PROFILE_KEYS) { if (p[k] !== undefined) s[k] = p[k]; }
+    if (p.charEditFields) s.charEditFields = JSON.parse(JSON.stringify(p.charEditFields));
     s.activeProfile = name; saveSettings();
     if (typeof updateSettingsUI === 'function') updateSettingsUI();
     _takeProfileSnapshot(); state.configDirty = false; _updateDirtyDots();
@@ -2925,12 +2976,30 @@ function _pruneMatchingOverrides() {
 
     if (conv && conv.overrides) {
         for (const key of Object.keys(conv.overrides)) {
-            const globalVal = s[key];
+            const globalVal = key.startsWith('charField_') ? (s.charEditFields || {})[key.replace('charField_', '')] !== false : s[key];
             const isEqual = typeof globalVal === 'boolean' ? conv.overrides[key] === globalVal : String(conv.overrides[key]) === String(globalVal);
             if (isEqual) { delete conv.overrides[key]; changed = true; }
         }
         if (changed) { saveConversation(); updateConversationOverrideIndicator(); }
     }
+
+    let charChanged = false;
+    if (s.charMgrFieldOverrides) {
+        for (const charId of Object.keys(s.charMgrFieldOverrides)) {
+            const ovs = s.charMgrFieldOverrides[charId];
+            for (const key of Object.keys(ovs)) {
+                const globalVal = (s.charEditFields || {})[key] !== false;
+                if (ovs[key] === globalVal) {
+                    delete ovs[key];
+                    charChanged = true;
+                }
+            }
+            if (Object.keys(ovs).length === 0) {
+                delete s.charMgrFieldOverrides[charId];
+            }
+        }
+    }
+    if (charChanged) saveSettings();
 }
 
 function _readFromSettings(def) {
@@ -2976,13 +3045,30 @@ function _bindSetting(def) {
     }
 }
 
+function _bindCeField(ceDef) {
+    const stEl = document.getElementById(ceDef.stId);
+    const spEl = document.getElementById(ceDef.spId);
+    const apply = val => {
+        const s = getSettings(); if (!s.charEditFields) s.charEditFields = {};
+        s.charEditFields[ceDef.fk] = val; saveSettings(); _markDirty('config'); _pruneMatchingOverrides();
+        Promise.resolve().then(function () { return uiChat; }).then(m => m.updateMsgCount(getConversation()));
+        if (ceDef.altGreetingPicker) {
+            ['iv-ce-alt-greetings-picker', 'iv-sp-ce-alt-greetings-picker'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = val ? '' : 'none'; });
+            Promise.resolve().then(function () { return featureCharacterUi; }).then(m => m.refreshAltGreetingsPickers());
+        }
+    };
+    stEl?.addEventListener('change', () => { if (spEl) spEl.checked = stEl.checked; apply(stEl.checked); });
+    spEl?.addEventListener('change', () => { if (stEl) stEl.checked = spEl.checked; apply(spEl.checked); });
+}
+
 function _bindAllSettings() {
     _SETTINGS_DEF.forEach(_bindSetting);
+    _CE_FIELDS_DEF.forEach(_bindCeField);
 }
 
 function _syncOvToGlobal(key, newVal) {
     const s = getSettings();
-    const globalVal = s[key];
+    const globalVal = key.startsWith('charField_') ? (s.charEditFields || {})[key.replace('charField_', '')] !== false : s[key];
     const isDefault = (newVal === undefined || newVal === null) ? true
         : (typeof globalVal === 'boolean' ? newVal === globalVal : String(newVal) === String(globalVal));
     setConversationOverride(key, isDefault ? undefined : newVal);
@@ -2998,7 +3084,7 @@ function _resetOvElToEffective(key) {
             el.textContent = eff.contextDepth ?? 15; return;
         }
         if (el.type === 'checkbox') {
-            el.checked = !!eff[key];
+            el.checked = key.startsWith('charField_') ? (getSettings().charEditFields || {})[key.replace('charField_', '')] !== false : !!eff[key];
         } else if (el.type === 'range') {
             el.value = eff[key] ?? 15;
         } else {
@@ -3037,6 +3123,11 @@ function syncOverlayUI(key, val) {
     if (key === 'connectionSource') { _applyConnectionSourceVisibility(val); return; }
     if (key === 'contextDepth') { const dv = document.getElementById('iv-sp-depth-val'); if (dv) dv.textContent = val ?? 15; }
     if (key in getConversationOverrides()) return;
+    if (key.startsWith('charField_')) {
+        const ceDef = _CE_FIELDS_DEF.find(d => d.fk === key.replace('charField_', ''));
+        if (ceDef) { const el = document.getElementById(ceDef.ovId); if (el) el.checked = !!val; }
+        return;
+    }
     if (_OV_EL_MAP[key]) _resetOvElToEffective(key);
 }
 
@@ -3051,6 +3142,11 @@ function updateSettingsUI() {
             [def.stValId, def.spValId].forEach(id => { if (!id) return; const el = document.getElementById(id); if (el) el.textContent = fmt; });
         }
     }
+    for (const ceDef of _CE_FIELDS_DEF) {
+        const val = (s.charEditFields || {})[ceDef.fk] !== false;
+        if (ceDef.stId) { const el = document.getElementById(ceDef.stId); if (el) el.checked = val; }
+        if (ceDef.spId) { const el = document.getElementById(ceDef.spId); if (el) el.checked = val; }
+    }
 
     const fsVal = s.forceStreaming === true ? 'on' : (s.forceStreaming === false ? 'auto' : (s.forceStreaming || 'auto'));
     document.querySelectorAll('#iv-st-stream-auto, #iv-st-stream-on, #iv-st-stream-off').forEach(b => {
@@ -3058,10 +3154,13 @@ function updateSettingsUI() {
         b.style.color = active ? 'var(--SmartThemeQuoteColor,#a99bfb)' : ''; b.style.borderColor = active ? 'rgba(124,109,250,0.5)' : ''; b.style.background = active ? 'rgba(124,109,250,0.12)' : '';
     });
     _applyConnectionSourceVisibility(s.connectionSource ?? 'default');
+    const agPicker = document.getElementById('iv-ce-alt-greetings-picker');
+    if (agPicker) agPicker.style.display = s.charEditFields?.alternate_greetings ? '' : 'none';
     refreshProfilesDropdown(); buildThemeEditor();
     Promise.resolve().then(function () { return portray; }).then(m => m.syncFireTimePortrayForm());
     Promise.resolve().then(function () { return uiWindow; }).then(m => m._setupBgUpload('iv-bg-upload-btn', 'iv-bg-url', () => _syncBgToOverlay()));
     Promise.resolve().then(function () { return uiWidgets; }).then(m => m.buildSoundSettingsUI(document.getElementById('iv-sound-settings')));
+    Promise.resolve().then(function () { return featureCharacterUi; }).then(m => m.refreshAltGreetingsPickers());
 }
 
 function syncSPFromSettings() {
@@ -3073,6 +3172,10 @@ function syncSPFromSettings() {
         const val = _readFromSettings(def);
         _writeToEl(document.getElementById(def.spId), def, val);
         if (def.type === 'slider' && def.spValId) { const el = document.getElementById(def.spValId); if (el) el.textContent = def.valFmt ? def.valFmt(val) : String(val ?? ''); }
+    }
+    for (const ceDef of _CE_FIELDS_DEF) {
+        const val = (s.charEditFields || {})[ceDef.fk] !== false;
+        const el = document.getElementById(ceDef.spId); if (el) el.checked = val;
     }
 
     const streamVal = s.forceStreaming === true ? 'on' : (s.forceStreaming === false ? 'auto' : (s.forceStreaming || 'auto'));
@@ -3106,6 +3209,17 @@ function syncSPFromSettings() {
         const active = b.dataset.stream === ovStreamVal; b.classList.toggle('active', active);
         b.style.color = active ? 'var(--iv-accent)' : ''; b.style.borderColor = active ? 'var(--iv-accent-dim)' : ''; b.style.background = active ? 'var(--iv-accent-bg)' : '';
     });
+    for (const ceDef of _CE_FIELDS_DEF) {
+        const ovKey = 'charField_' + ceDef.fk;
+        const val = ovKey in ov ? !!ov[ovKey] : (s.charEditFields || {})[ceDef.fk] !== false;
+        const el = document.getElementById(ceDef.ovId); if (el) el.checked = val;
+    }
+    const altGrOvEl = document.getElementById('iv-sp-ov-ce-alt-greetings');
+    if (altGrOvEl) {
+        const picker = document.getElementById('iv-sp-ov-ce-alt-greetings-picker');
+        if (picker) picker.style.display = altGrOvEl.checked ? '' : 'none';
+        Promise.resolve().then(function () { return featureCharacterUi; }).then(m => m.refreshAltGreetingsPickers());
+    }
     updateSPOverrideIndicators();
     buildThemeEditor(document.getElementById('iv-sp-theme-section'));
     buildBackgroundSettingsUI(document.getElementById('iv-sp-bg-settings'));
@@ -3152,6 +3266,7 @@ function openSettingsPanel() {
         );
         mkPresetMgr('iv-sp-prompt-preset-manager',      'iv-sp-ov-sysprompt',       undefined);
     }).catch(() => {});
+    Promise.resolve().then(function () { return featureCharacterUi; }).then(m => m.refreshAltGreetingsPickers());
     overlay.style.display = 'flex'; updateConversationOverrideIndicator();
     bringWindowToFront();
     Promise.resolve().then(function () { return featureMemory; }).then(m => m.updateMemoryDot());
@@ -3468,6 +3583,17 @@ function setupSettingsPanelListeners() {
     bindOv('iv-sp-ov-include-persona',    'includeUserPersonality',   true);
     bindOv('iv-sp-ov-include-alt-swipes', 'includeAlternateSwipes',   true);
     bindOv('iv-sp-ov-apply-regex',        'applyRegexToContext',      true);
+
+    _CE_FIELDS_DEF.forEach(ceDef => {
+        bindOv(ceDef.ovId, 'charField_' + ceDef.fk, true);
+        if (ceDef.altGreetingPicker) {
+            document.getElementById(ceDef.ovId)?.addEventListener('change', e => {
+                const picker = document.getElementById('iv-sp-ov-ce-alt-greetings-picker');
+                if (picker) picker.style.display = e.target.checked ? '' : 'none';
+                Promise.resolve().then(function () { return featureCharacterUi; }).then(m => m.refreshAltGreetingsPickers());
+            });
+        }
+    });
 
     // Override streaming buttons
     document.querySelectorAll('.iv-ov-stream-btn').forEach(btn => {
@@ -6833,6 +6959,24 @@ var simulationView = /*#__PURE__*/Object.freeze({
     syncSimulationView: syncSimulationView
 });
 
+function _getAspectEvolutiaCharFields() {
+    try {
+        const ctx = SillyTavern.getContext();
+        const char = ctx.characters?.[ctx.characterId];
+        if (!char) return null;
+        const AE_KEY = 'st-description-swap-fields';
+        const state = char.data?.extensions?.[AE_KEY];
+        if (!state || !state.swapEnabled) return null;
+        const activeId = state.activeAlterEgoId || 'base';
+        const alterEgos = Array.isArray(state.alterEgos) ? state.alterEgos : [];
+        const activeEgo = alterEgos.find(a => a.id === activeId) || alterEgos[0];
+        const fields = Array.isArray(activeEgo?.fields) ? activeEgo.fields : (Array.isArray(state.fields) ? state.fields : []);
+        const enabled = fields.filter(f => f.enabled !== false && f.content?.trim());
+        if (!enabled.length) return null;
+        return enabled.map(f => ({ id: f.id, name: f.name || 'Field', content: f.content }));
+    } catch(_) { return null; }
+}
+
 function _getAspectEvolutiaPersonaFields() {
     try {
         const ctx = SillyTavern.getContext();
@@ -7083,73 +7227,110 @@ async function buildLorebookContextBlock(settings) {
     return block;
 }
 
-function cardFieldXml(info) {
-    if (!info) return '';
-    const parts = [];
-    for (const key of ['description', 'personality', 'scenario', 'mes_example', 'character_note', 'creator_notes']) {
-        const val = String(info[key] || '').trim();
-        if (val) parts.push(`<${key}>\n${val}\n</${key}>`);
-    }
-    return parts.join('\n');
+function getEffectiveCharField(settings, k) {
+    const ovKey = 'charField_' + k;
+    if (settings[ovKey] !== undefined) return settings[ovKey];
+    return !!(settings.charEditFields || {})[k];
 }
 
-function authorsNoteXml() {
-    const note = String(getAuthorsNote() || '').trim();
-    if (!note) return '';
-    return `<authors_note>\n${note}\n</authors_note>`;
+function getCharFieldOverride(settings, charId, field) {
+    return (settings.charMgrFieldOverrides || {})[charId]?.[field];
 }
 
-const ESTABLISHED_FRAME = 'Established knowledge about the people in the scene. These are not events from the current scene.';
+function getEffectiveCharFieldForChar(settings, charId, field) {
+    const ov = getCharFieldOverride(settings, charId, field);
+    return ov !== undefined ? ov : getEffectiveCharField(settings, field);
+}
 
-function getGroupMemberCharacters() {
+function getActiveCharacterEntities() {
     const ctx = SillyTavern.getContext();
+    const entities = [];
     const seen = new Set();
-    const list = [];
-    const push = char => {
-        if (!char) return;
-        const id = char.avatar || char.name;
-        if (seen.has(id)) return;
-        seen.add(id);
-        list.push(char);
+    const pushChar = char => {
+        if (char && !seen.has(char.avatar)) {
+            seen.add(char.avatar);
+            entities.push({ id: char.avatar, name: char.name, avatar: char.avatar, char, isPersona: false });
+        }
     };
 
-    const group = (ctx.groups || []).find(g => g.id === ctx.groupId);
-    for (const member of group?.members || []) {
-        const avatarId = typeof member === 'string' ? member : (member?.avatar || member?.id);
-        push((ctx.characters || []).find(c => c.avatar === avatarId));
-    }
-    return list;
-}
-
-function joinParts(parts) {
-    return parts.filter(Boolean).join('\n');
-}
-
-function buildSingleCharacterBlock(char) {
-    const info = getCharInfo(char);
-    const body = joinParts([cardFieldXml(info), authorsNoteXml()]);
-    if (!body) return '';
-    const name = escHtml(info?.name || char.name || 'Unknown');
-    return `<character name="${name}">\n${body}\n</character>`;
-}
-
-function buildCharacterInformationBlock(settings) {
-    const ctx = SillyTavern.getContext();
-    const includeCard = !settings || settings.includeCharacterCard !== false;
-
     if (ctx.groupId) {
-        if (!includeCard) return '';
-        const blocks = getGroupMemberCharacters().map(buildSingleCharacterBlock).filter(Boolean);
-        if (!blocks.length) return '';
-        return `\n\n<characters>\n${ESTABLISHED_FRAME}\n${blocks.join('\n\n')}\n</characters>`;
+        const group = (ctx.groups || []).find(g => g.id === ctx.groupId);
+        (group?.members || []).forEach(m => {
+            const avatarId = typeof m === 'string' ? m : (m?.avatar || m?.id);
+            pushChar((ctx.characters || []).find(c => c.avatar === avatarId));
+        });
+    } else {
+        pushChar(ctx.characters?.[ctx.characterId]);
+    }
+    return entities;
+}
+
+function buildSingleCharacterBlock(settings, entity) {
+    const ctx = SillyTavern.getContext();
+    const { char, id: charId } = entity;
+    const d = char.data || {};
+    const parts = [];
+    const eff = field => getEffectiveCharFieldForChar(settings, charId, field);
+
+    const charTags = getTagsForCharacter(char);
+    if (eff('tags') && charTags.length) parts.push(`<tags>\n${charTags.join(', ')}\n</tags>`);
+
+    const sysPrompt = d.system_prompt || char.system_prompt;
+    if (eff('system_prompt') && sysPrompt) parts.push(`<character_system_prompt_override>\n${sysPrompt}\n</character_system_prompt_override>`);
+
+    const postHist = d.post_history_instructions || char.post_history_instructions;
+    if (eff('post_history_instructions') && postHist) parts.push(`<post_history_instructions>\n${postHist}\n</post_history_instructions>`);
+
+    const simple = {
+        description: d.description || char.description,
+        personality: d.personality || char.personality,
+        scenario: d.scenario || char.scenario,
+        first_mes: d.first_mes || char.first_mes,
+        mes_example: d.mes_example || char.mes_example,
+    };
+
+    const isMainChar = char.avatar === ctx.characters?.[ctx.characterId]?.avatar;
+    if (isMainChar && getSettings().useAspectEvolutia) {
+        const aeFields = _getAspectEvolutiaCharFields();
+        if (aeFields && aeFields.length) {
+            delete simple.description;
+            aeFields.forEach(f => parts.push(`<evolutia_char_field name="${escHtml(f.name)}">\n${f.content}\n</evolutia_char_field>`));
+        }
     }
 
-    const charInfo = getCharInfo();
-    const name = charInfo ? charInfo.name : (ctx.name2 || 'Character');
-    const fields = includeCard ? joinParts([cardFieldXml(charInfo), authorsNoteXml()]) : '';
-    let inner = includeCard ? `${ESTABLISHED_FRAME}\nName: ${name}` : `Name: ${name}`;
-    if (fields) inner += `\n${fields}`;
-    return `\n\n<character_information>\n${inner}\n</character_information>`;
+    for (const [key, val] of Object.entries(simple)) {
+        if (eff(key) && val) parts.push(`<${key}>\n${val}\n</${key}>`);
+    }
+
+    if (eff('alternate_greetings') && Array.isArray(d.alternate_greetings) && d.alternate_greetings.length) {
+        const agMap = settings.altGreetingIndices || {};
+        const indices = Array.isArray(agMap[charId]) ? agMap[charId] : d.alternate_greetings.map((_, i) => i);
+        const filtered = indices.filter(i => i >= 0 && i < d.alternate_greetings.length);
+        if (filtered.length) {
+            const gs = filtered.map(i => `  <greeting id="${i+1}">\n${d.alternate_greetings[i]}\n  </greeting>`).join('\n');
+            parts.push(`<alternate_greetings>\n${gs}\n</alternate_greetings>`);
+        }
+    }
+
+    if (eff('authors_note')) {
+        const an = getAuthorsNote();
+        if (an) parts.push(`<authors_note>\n${an}\n</authors_note>`);
+    }
+
+    if (!parts.length) return '';
+    return `<character name="${escHtml(char.name)}">\n${parts.join('\n\n')}\n</character>`;
+}
+
+function buildCharacterContextBlock(settings) {
+    const entities = getActiveCharacterEntities();
+    if (!entities.length) return '';
+    const excluded = new Set(settings.charMgrExcluded || []);
+    const blocks = entities
+        .filter(ent => !excluded.has(ent.id))
+        .map(ent => buildSingleCharacterBlock(settings, ent))
+        .filter(Boolean);
+    if (!blocks.length) return '';
+    return `<characters>\n${blocks.join('\n\n')}\n</characters>`;
 }
 
 function sanitizeToolCallsForSave(toolCalls) {
@@ -7200,8 +7381,8 @@ async function buildSystemContent(settings) {
     const lorebookBlock = await buildLorebookContextBlock(settings);
     if (lorebookBlock) parts.push(lorebookBlock);
 
-    const characterBlock = buildCharacterInformationBlock(settings);
-    if (characterBlock) parts.push(characterBlock);
+    const characterBlock = buildCharacterContextBlock(settings);
+    if (characterBlock) parts.push('\n\n' + characterBlock);
 
     {
         const userName = ctx.name1 || 'User';
@@ -10154,5 +10335,130 @@ if (document.readyState === 'loading') {
 } else {
     setTimeout(init, 0);
 }
+
+function buildAltGreetingsPicker(container, isOverride = false) {
+    if (!container) return;
+    container.innerHTML = '';
+
+    const s = getSettings();
+    if (!s.charEditFields) s.charEditFields = {};
+    if (Array.isArray(s.altGreetingIndices)) s.altGreetingIndices = {};
+    if (!s.altGreetingIndices) s.altGreetingIndices = {};
+
+    const ctx = SillyTavern.getContext();
+    const char = ctx.characters?.[ctx.characterId];
+    const charId = char?.avatar || 'unknown';
+    const greetings = char?.data?.alternate_greetings || [];
+
+    let isEnabled = false;
+    if (isOverride) {
+        const conv = getConversation();
+        if (conv && conv.overrides && conv.overrides.charField_alternate_greetings !== undefined) {
+            isEnabled = conv.overrides.charField_alternate_greetings;
+        } else {
+            isEnabled = !!s.charEditFields.alternate_greetings;
+        }
+    } else {
+        isEnabled = !!s.charEditFields.alternate_greetings;
+    }
+
+    if (!isEnabled) { container.style.display = 'none'; return; }
+
+    if (!greetings.length) {
+        container.innerHTML = '<div style="font-size:11px;color:var(--iv-text-muted);font-style:italic;padding:4px">No alternate greetings found for current character.</div>';
+        container.style.display = '';
+        return;
+    }
+
+    let targetArray = [];
+    if (isOverride) {
+        const conv = getConversation();
+        if (conv?.overrides?.altGreetingIndices && conv.overrides.altGreetingIndices[charId]) {
+            targetArray = conv.overrides.altGreetingIndices[charId];
+        } else {
+            targetArray = s.altGreetingIndices[charId] || [];
+        }
+    } else {
+        targetArray = s.altGreetingIndices[charId] || [];
+    }
+
+    const label = document.createElement('div');
+    label.style.cssText = 'font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--iv-text-muted,#72728a);margin-bottom:5px';
+    label.textContent = 'Which greetings to include:';
+    container.appendChild(label);
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:3px;max-height:120px;overflow-y:auto;padding:4px;background:rgba(0,0,0,.15);border-radius:6px;border:1px solid rgba(255,255,255,.06)';
+
+    const allBtn = document.createElement('button');
+    allBtn.type = 'button';
+    allBtn.style.cssText = 'font-size:10px;cursor:pointer;background:none;border:1px solid rgba(255,255,255,.1);border-radius:4px;color:var(--iv-text-muted,#888);padding:2px 8px;align-self:flex-start;margin-bottom:3px;font-family:inherit';
+    allBtn.textContent = targetArray.length === greetings.length ? 'Deselect All' : 'Select All';
+
+    allBtn.addEventListener('click', () => {
+        const isAll = targetArray.length === greetings.length;
+        const newArray = isAll ? [] : greetings.map((_, i) => i);
+        if (isOverride) {
+            const conv = getConversation();
+            if (!conv.overrides) conv.overrides = {};
+            if (!conv.overrides.altGreetingIndices) conv.overrides.altGreetingIndices = {};
+            conv.overrides.altGreetingIndices[charId] = newArray;
+            saveConversation();
+        } else {
+            getSettings().altGreetingIndices[charId] = newArray;
+            saveSettings();
+        }
+        buildAltGreetingsPicker(container, isOverride);
+    });
+    wrap.appendChild(allBtn);
+
+    greetings.forEach((greeting, idx) => {
+        const isSelected = targetArray.includes(idx);
+        const row = document.createElement('label');
+        row.style.cssText = 'display:flex;align-items:flex-start;gap:6px;cursor:pointer;padding:3px 4px;border-radius:4px;transition:background .12s';
+
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = isSelected; cb.style.cssText = 'flex-shrink:0;margin-top:2px;accent-color:var(--iv-accent,#7c6dfa)';
+        cb.addEventListener('change', () => {
+            let currentArr = [...targetArray];
+            if (cb.checked) { if (!currentArr.includes(idx)) currentArr.push(idx); }
+            else currentArr = currentArr.filter(i => i !== idx);
+            currentArr.sort((a, b) => a - b);
+
+            if (isOverride) {
+                const conv = getConversation();
+                if (!conv.overrides) conv.overrides = {};
+                if (!conv.overrides.altGreetingIndices) conv.overrides.altGreetingIndices = {};
+                conv.overrides.altGreetingIndices[charId] = currentArr;
+                saveConversation();
+            } else {
+                getSettings().altGreetingIndices[charId] = currentArr;
+                saveSettings();
+            }
+
+            allBtn.textContent = currentArr.length === greetings.length ? 'Deselect All' : 'Select All';
+            targetArray = currentArr;
+        });
+
+        const text = document.createElement('span');
+        text.style.cssText = 'font-size:11px;color:var(--iv-text,#e2e2e6);line-height:1.4;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical';
+        text.textContent = `#${idx + 1}: ${(greeting || '').slice(0, 80)}${greeting?.length > 80 ? '…' : ''}`;
+
+        row.appendChild(cb); row.appendChild(text); wrap.appendChild(row);
+    });
+    container.appendChild(wrap); container.style.display = '';
+}
+
+function refreshAltGreetingsPickers() {
+    buildAltGreetingsPicker(document.getElementById('iv-ce-alt-greetings-picker'), false);
+    buildAltGreetingsPicker(document.getElementById('iv-sp-ce-alt-greetings-picker'), false);
+    buildAltGreetingsPicker(document.getElementById('iv-sp-ov-ce-alt-greetings-picker'), true);
+}
+
+var featureCharacterUi = /*#__PURE__*/Object.freeze({
+    __proto__: null,
+    buildAltGreetingsPicker: buildAltGreetingsPicker,
+    refreshAltGreetingsPickers: refreshAltGreetingsPickers
+});
 
 export { __extPath, extVersion, setGeneratingState };

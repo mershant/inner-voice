@@ -12,7 +12,7 @@ import { applyRegexIfEnabled } from './integrations/integ-regex.js';
 
 import { buildMemoryContextBlock, buildMemoryAIInstructions, processMemoryUpdates, stripMemoryBlock } from './features/feature-memory.js';
 import { buildLorebookContextBlock } from './features/feature-lorebook.js';
-import { buildCharacterInformationBlock } from './features/feature-characters.js';
+import { buildCharacterContextBlock } from './features/feature-characters.js';
 import { buildToolCallsSystemBlock, parseToolCallsFromText, executeTool, getEnabledTools } from './features/feature-tools-engine.js';
 import { buildPortraySignalBlock, splitPortraySignal } from './portray-signal.js';
 
@@ -69,8 +69,8 @@ export async function buildSystemContent(settings) {
     const lorebookBlock = await buildLorebookContextBlock(settings);
     if (lorebookBlock) parts.push(lorebookBlock);
 
-    const characterBlock = buildCharacterInformationBlock(settings);
-    if (characterBlock) parts.push(characterBlock);
+    const characterBlock = buildCharacterContextBlock(settings);
+    if (characterBlock) parts.push('\n\n' + characterBlock);
 
     {
         const userName = ctx.name1 || 'User';
