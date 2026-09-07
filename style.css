@@ -182,8 +182,9 @@
     padding: 6px 10px;
     background: var(--iv-toolbar-bg);
     border-bottom: var(--iv-border);
-    overflow: hidden;
+    overflow: visible;
     white-space: nowrap;
+    z-index: 2;
 }
 .iv-seg-nav {
     display: flex; align-items: center; gap: 2px;
@@ -4610,7 +4611,7 @@ details.iv-hist-details[open] .iv-hist-summary::before { transform: rotate(90deg
     border-radius: 4px;
 }
 
-.iv-menu-dropdown { position: relative; display: flex; align-items: center; flex-shrink: 0; }
+.iv-menu-dropdown { position: relative; display: flex; align-items: center; flex-shrink: 0; z-index: 2; }
 .iv-menu-panel {
     display: none; position: absolute; top: calc(100% + 5px); right: 0;
     min-width: 170px; width: max-content;
