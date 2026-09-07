@@ -15,7 +15,6 @@ import { buildLorebookContextBlock, buildLBAIInstructions, expandOutletsAsync } 
 import { buildCharacterContextBlock } from './features/feature-characters.js';
 import { buildToolCallsSystemBlock, parseToolCallsFromText, executeTool, getEnabledTools } from './features/feature-tools-engine.js';
 import { buildPortraySignalBlock, splitPortraySignal } from './portray-signal.js';
-import { prepareGenerateBody } from './reasoning-level.js';
 
 import { updateMsgCount, smartScrollToBottom, setGeneratingState, showGenerationError, _renderMsgBodyContent, _refreshSwipeBars, appendMsgEl } from './ui/ui-chat.js';
 import { getDisplayContent, extractToolCallPlaceholders, renderMarkdown, postProcessHTMLBlocks } from './ui/ui-chat.js'; 
@@ -402,12 +401,12 @@ export async function callGenerate(conversation, settings, pendingText, onChunk,
 
         try {
             const url = (settings.customUrl || 'http://localhost:5000/v1').replace(/\/+$/, '') + '/chat/completions';
-            const payload = prepareGenerateBody({
+            const payload = {
                 model: settings.customModel || 'gpt-3.5-turbo',
                 messages: messages,
                 max_tokens: maxTokens,
                 stream: useStream
-            }, settings.reasoningLevel);
+            };
             const headers = { 'Content-Type': 'application/json' };
             if (settings.customKey) headers['Authorization'] = `Bearer ${settings.customKey}`;
 
@@ -522,9 +521,32 @@ export async function callGenerate(conversation, settings, pendingText, onChunk,
         let requestUrl = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
         if ((requestUrl.includes('/generate') || requestUrl.includes('/caption-image')) && args[1] && typeof args[1].body === 'string') {
             try {
-                const reqBody = JSON.parse(args[1].body);
-                const prepared = prepareGenerateBody(reqBody, settings.reasoningLevel);
-                if (JSON.stringify(prepared) !== JSON.stringify(reqBody)) args[1].body = JSON.stringify(prepared);
+                let reqBody = JSON.parse(args[1].body);
+                let changed = false;
+                
+                if (reqBody.reasoning_effort === 'auto') { delete reqBody.reasoning_effort; changed = true; }
+                else if (reqBody.reasoning_effort === 'min') { reqBody.reasoning_effort = 'low'; changed = true; }
+                else if (reqBody.reasoning_effort === 'max') { reqBody.reasoning_effort = 'high'; changed = true; }
+
+                if (reqBody.reasoning && typeof reqBody.reasoning === 'object') {
+                    if (reqBody.reasoning.effort === 'auto') { delete reqBody.reasoning.effort; changed = true; }
+                    else if (reqBody.reasoning.effort === 'min') { reqBody.reasoning.effort = 'low'; changed = true; }
+                    else if (reqBody.reasoning.effort === 'max') { reqBody.reasoning.effort = 'high'; changed = true; }
+                }
+
+                if (reqBody.custom_prompt_post_processing === '') { delete reqBody.custom_prompt_post_processing; changed = true; }
+                if (reqBody.request_image_resolution === '') { delete reqBody.request_image_resolution; changed = true; }
+                if (reqBody.request_image_aspect_ratio === '') { delete reqBody.request_image_aspect_ratio; changed = true; }
+
+                if (reqBody.chat_completion_source === 'zai' || (typeof reqBody.model === 'string' && reqBody.model.toLowerCase().includes('glm'))) {
+                    if (reqBody.reasoning_effort !== undefined) { delete reqBody.reasoning_effort; changed = true; }
+                    if (reqBody.reasoning !== undefined) { delete reqBody.reasoning; changed = true; }
+                    if (Array.isArray(reqBody.messages)) {
+                        reqBody.messages.forEach(m => { if (m.name !== undefined) { delete m.name; changed = true; } });
+                    }
+                }
+                
+                if (changed) args[1].body = JSON.stringify(reqBody);
             } catch(_) {}
         }
         return origFetch.apply(this, args);

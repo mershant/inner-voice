@@ -1095,7 +1095,6 @@ function getSettings() {
         changelogAutoShow: true,
         lastSeenVersion: '',
         forceStreaming: 'auto',
-        reasoningLevel: 'unset',
         applyRegexToContext: true,
         completionSound: 'none',
         completionSoundVolume: 80,
@@ -3833,8 +3832,6 @@ const _SETTINGS_DEF = [
     { key: 'customKey',   stId: 'iv-custom-key',   spId: 'iv-sp-custom-key',   type: 'input', profileKey: true },
     { key: 'customModel', stId: 'iv-custom-model', spId: 'iv-sp-custom-model', type: 'input', profileKey: true },
     { key: 'maxTokens',   stId: 'iv-max-tokens',   spId: 'iv-sp-max-tokens',   type: 'input', toVal: Number, profileKey: true },
-    { key: 'reasoningLevel', stId: 'iv-reasoning-level', spId: 'iv-sp-reasoning-level', type: 'select', profileKey: true,
-      fromSetting: s => s.reasoningLevel || 'unset' },
 
     // ── Context ───────────────────────────────────────────────────────────────
     { key: 'contextDepth', stId: 'iv-depth-slider', spId: 'iv-sp-depth-slider', type: 'slider', toVal: Number,
@@ -3912,7 +3909,6 @@ const _OV_EL_MAP = {
     charField_post_history_instructions: ['iv-sp-ov-ce-post-history'],
     charField_alternate_greetings: ['iv-sp-ov-ce-alt-greetings'],
     forceStreaming: [],
-    reasoningLevel: ['iv-sp-ov-reasoning-level'],
 };
 
 // Profile keys
@@ -4502,7 +4498,6 @@ function syncSPFromSettings() {
     const ovi = (id, key) => { const el = document.getElementById(id); if (el) el.value = key in ov ? (ov[key] ?? '') : ''; };
     ovi('iv-sp-ov-custom-url', 'customUrl'); ovi('iv-sp-ov-custom-key', 'customKey'); ovi('iv-sp-ov-custom-model', 'customModel');
     ovi('iv-sp-ov-max-tokens', 'maxTokens'); ovi('iv-sp-ov-history-limit', 'localHistoryLimit');
-    g('iv-sp-ov-reasoning-level', eff.reasoningLevel || 'unset');
     ovi('iv-sp-ov-reasoning-trim', 'reasoningTrimStrings'); ovi('iv-sp-ov-sysprompt', 'systemPrompt');
 
     gC('iv-sp-ov-include-sysprompt', eff.includeSystemPrompt); gC('iv-sp-ov-include-persona', eff.includeUserPersonality);
@@ -4897,7 +4892,6 @@ function setupSettingsPanelListeners() {
     bindOv('iv-sp-ov-custom-url', 'customUrl'); bindOv('iv-sp-ov-custom-key', 'customKey'); bindOv('iv-sp-ov-custom-model', 'customModel');
     bindOvSel('iv-sp-ov-conn-profile', 'connectionProfileId');
     bindOv('iv-sp-ov-max-tokens', 'maxTokens', false, Number); bindOv('iv-sp-ov-history-limit', 'localHistoryLimit', false, Number);
-    bindOvSel('iv-sp-ov-reasoning-level', 'reasoningLevel');
     bindOv('iv-sp-ov-reasoning-trim', 'reasoningTrimStrings');
     document.getElementById('iv-sp-ov-sysprompt')?.addEventListener('input', e => _syncOvToGlobal('systemPrompt', e.target.value || undefined));
     bindOv('iv-sp-ov-include-sysprompt',  'includeSystemPrompt',     true);
@@ -9912,124 +9906,6 @@ function buildCharacterContextBlock(settings) {
     return `<characters>\n${blocks.join('\n\n')}\n</characters>`;
 }
 
-const EFFORT = {
-    low: 'low',
-    medium: 'medium',
-    high: 'high',
-    xhigh: 'xhigh',
-    max: 'max',
-};
-
-const GEMINI_THINKING_LEVEL = {
-    low: 'low',
-    medium: 'medium',
-    high: 'high',
-    xhigh: 'high',
-    max: 'high',
-};
-
-function isGeminiSource(body) {
-    const source = String(body?.chat_completion_source || '');
-    return source === 'makersuite' || source === 'vertexai';
-}
-
-function rejectsReasoningFields(body) {
-    if (body?.chat_completion_source === 'zai') return true;
-    return typeof body?.model === 'string' && body.model.toLowerCase().includes('glm');
-}
-
-function isReasoningLevelSet(level) {
-    return Boolean(level) && level !== 'unset';
-}
-
-function sanitizeGenerateBody(reqBody) {
-    let changed = false;
-
-    if (reqBody.reasoning_effort === 'auto') { delete reqBody.reasoning_effort; changed = true; }
-    else if (reqBody.reasoning_effort === 'min') { reqBody.reasoning_effort = 'low'; changed = true; }
-    else if (reqBody.reasoning_effort === 'max') { reqBody.reasoning_effort = 'high'; changed = true; }
-
-    if (reqBody.reasoning && typeof reqBody.reasoning === 'object') {
-        if (reqBody.reasoning.effort === 'auto') { delete reqBody.reasoning.effort; changed = true; }
-        else if (reqBody.reasoning.effort === 'min') { reqBody.reasoning.effort = 'low'; changed = true; }
-        else if (reqBody.reasoning.effort === 'max') { reqBody.reasoning.effort = 'high'; changed = true; }
-    }
-
-    if (reqBody.custom_prompt_post_processing === '') { delete reqBody.custom_prompt_post_processing; changed = true; }
-    if (reqBody.request_image_resolution === '') { delete reqBody.request_image_resolution; changed = true; }
-    if (reqBody.request_image_aspect_ratio === '') { delete reqBody.request_image_aspect_ratio; changed = true; }
-
-    if (rejectsReasoningFields(reqBody)) {
-        if (reqBody.reasoning_effort !== undefined) { delete reqBody.reasoning_effort; changed = true; }
-        if (reqBody.reasoning !== undefined) { delete reqBody.reasoning; changed = true; }
-        if (Array.isArray(reqBody.messages)) {
-            reqBody.messages.forEach(m => { if (m.name !== undefined) { delete m.name; changed = true; } });
-        }
-    }
-
-    return changed;
-}
-
-function dropIncompatibleReasoning(reqBody) {
-    if (!rejectsReasoningFields(reqBody)) return;
-    delete reqBody.reasoning_effort;
-    delete reqBody.reasoning;
-    delete reqBody.thinking;
-    delete reqBody.thinkingConfig;
-    delete reqBody.include_reasoning;
-    if (reqBody.generationConfig && 'thinkingConfig' in reqBody.generationConfig) {
-        delete reqBody.generationConfig.thinkingConfig;
-    }
-    if (Array.isArray(reqBody.messages)) {
-        reqBody.messages.forEach(m => { if (m.name !== undefined) delete m.name; });
-    }
-}
-
-function applyReasoningLevel(reqBody, level) {
-    if (!isReasoningLevelSet(level)) return reqBody;
-
-    if (level === 'off') {
-        reqBody.include_reasoning = false;
-        reqBody.thinking = { type: 'disabled' };
-        delete reqBody.reasoning_effort;
-        if (reqBody.reasoning && typeof reqBody.reasoning === 'object') {
-            delete reqBody.reasoning.effort;
-            reqBody.reasoning.exclude = true;
-        }
-        if (isGeminiSource(reqBody)) {
-            reqBody.thinkingConfig = { includeThoughts: false, thinkingBudget: 0 };
-        }
-        return reqBody;
-    }
-
-    const effort = EFFORT[level];
-    if (!effort) return reqBody;
-
-    reqBody.include_reasoning = true;
-    reqBody.reasoning_effort = effort;
-    if (reqBody.reasoning && typeof reqBody.reasoning === 'object') {
-        reqBody.reasoning.effort = effort;
-        reqBody.reasoning.exclude = false;
-    }
-    if (isGeminiSource(reqBody)) {
-        reqBody.thinkingConfig = {
-            includeThoughts: true,
-            thinkingLevel: GEMINI_THINKING_LEVEL[level],
-        };
-    }
-    return reqBody;
-}
-
-function prepareGenerateBody(reqBody, level) {
-    const next = JSON.parse(JSON.stringify(reqBody));
-    sanitizeGenerateBody(next);
-    if (isReasoningLevelSet(level)) {
-        applyReasoningLevel(next, level);
-        dropIncompatibleReasoning(next);
-    }
-    return next;
-}
-
 function sanitizeToolCallsForSave(toolCalls) {
     return (toolCalls || []).map(tc => ({ ...tc }));
 }
@@ -10410,12 +10286,12 @@ async function callGenerate(conversation, settings, pendingText, onChunk, messag
 
         try {
             const url = (settings.customUrl || 'http://localhost:5000/v1').replace(/\/+$/, '') + '/chat/completions';
-            const payload = prepareGenerateBody({
+            const payload = {
                 model: settings.customModel || 'gpt-3.5-turbo',
                 messages: messages,
                 max_tokens: maxTokens,
                 stream: useStream
-            }, settings.reasoningLevel);
+            };
             const headers = { 'Content-Type': 'application/json' };
             if (settings.customKey) headers['Authorization'] = `Bearer ${settings.customKey}`;
 
@@ -10530,9 +10406,32 @@ async function callGenerate(conversation, settings, pendingText, onChunk, messag
         let requestUrl = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
         if ((requestUrl.includes('/generate') || requestUrl.includes('/caption-image')) && args[1] && typeof args[1].body === 'string') {
             try {
-                const reqBody = JSON.parse(args[1].body);
-                const prepared = prepareGenerateBody(reqBody, settings.reasoningLevel);
-                if (JSON.stringify(prepared) !== JSON.stringify(reqBody)) args[1].body = JSON.stringify(prepared);
+                let reqBody = JSON.parse(args[1].body);
+                let changed = false;
+                
+                if (reqBody.reasoning_effort === 'auto') { delete reqBody.reasoning_effort; changed = true; }
+                else if (reqBody.reasoning_effort === 'min') { reqBody.reasoning_effort = 'low'; changed = true; }
+                else if (reqBody.reasoning_effort === 'max') { reqBody.reasoning_effort = 'high'; changed = true; }
+
+                if (reqBody.reasoning && typeof reqBody.reasoning === 'object') {
+                    if (reqBody.reasoning.effort === 'auto') { delete reqBody.reasoning.effort; changed = true; }
+                    else if (reqBody.reasoning.effort === 'min') { reqBody.reasoning.effort = 'low'; changed = true; }
+                    else if (reqBody.reasoning.effort === 'max') { reqBody.reasoning.effort = 'high'; changed = true; }
+                }
+
+                if (reqBody.custom_prompt_post_processing === '') { delete reqBody.custom_prompt_post_processing; changed = true; }
+                if (reqBody.request_image_resolution === '') { delete reqBody.request_image_resolution; changed = true; }
+                if (reqBody.request_image_aspect_ratio === '') { delete reqBody.request_image_aspect_ratio; changed = true; }
+
+                if (reqBody.chat_completion_source === 'zai' || (typeof reqBody.model === 'string' && reqBody.model.toLowerCase().includes('glm'))) {
+                    if (reqBody.reasoning_effort !== undefined) { delete reqBody.reasoning_effort; changed = true; }
+                    if (reqBody.reasoning !== undefined) { delete reqBody.reasoning; changed = true; }
+                    if (Array.isArray(reqBody.messages)) {
+                        reqBody.messages.forEach(m => { if (m.name !== undefined) { delete m.name; changed = true; } });
+                    }
+                }
+                
+                if (changed) args[1].body = JSON.stringify(reqBody);
             } catch(_) {}
         }
         return origFetch.apply(this, args);
