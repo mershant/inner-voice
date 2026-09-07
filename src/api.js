@@ -15,6 +15,7 @@ import { buildLorebookContextBlock, buildLBAIInstructions, expandOutletsAsync } 
 import { buildCharacterContextBlock } from './features/feature-characters.js';
 import { buildToolCallsSystemBlock, parseToolCallsFromText, executeTool, getEnabledTools } from './features/feature-tools-engine.js';
 import { buildPortraySignalBlock, splitPortraySignal } from './portray-signal.js';
+import { applyReasoningOverrideToBody, innerReasoningOverride } from './reasoning-level.js';
 
 import { updateMsgCount, smartScrollToBottom, setGeneratingState, showGenerationError, _renderMsgBodyContent, _refreshSwipeBars, appendMsgEl } from './ui/ui-chat.js';
 import { getDisplayContent, extractToolCallPlaceholders, renderMarkdown, postProcessHTMLBlocks } from './ui/ui-chat.js'; 
@@ -401,12 +402,12 @@ export async function callGenerate(conversation, settings, pendingText, onChunk,
 
         try {
             const url = (settings.customUrl || 'http://localhost:5000/v1').replace(/\/+$/, '') + '/chat/completions';
-            const payload = {
+            const payload = applyReasoningOverrideToBody({
                 model: settings.customModel || 'gpt-3.5-turbo',
                 messages: messages,
                 max_tokens: maxTokens,
                 stream: useStream
-            };
+            }, innerReasoningOverride(settings, ctx));
             const headers = { 'Content-Type': 'application/json' };
             if (settings.customKey) headers['Authorization'] = `Bearer ${settings.customKey}`;
 
@@ -514,6 +515,35 @@ export async function callGenerate(conversation, settings, pendingText, onChunk,
         }
     }
 
+    const reasoningOverride = innerReasoningOverride(settings, ctx);
+
+    function connectionManagerOptions(stream) {
+        return {
+            stream,
+            signal: abort.signal,
+            extractData: false,
+            includePreset: true
+        };
+    }
+
+    function sendViaConnectionManager(stream) {
+        const options = connectionManagerOptions(stream);
+        if (reasoningOverride) {
+            return service.sendRequest(profileId, messages, maxTokens, options, reasoningOverride);
+        }
+        return service.sendRequest(profileId, messages, maxTokens, options);
+    }
+
+    function chatCompletionPayload(stream) {
+        const request = {
+            messages: messages,
+            max_tokens: maxTokens,
+            stream
+        };
+        if (reasoningOverride) Object.assign(request, reasoningOverride);
+        return request;
+    }
+
     let asyncGeneratorFn;
     const origFetch = window.fetch;
     
@@ -523,15 +553,17 @@ export async function callGenerate(conversation, settings, pendingText, onChunk,
             try {
                 let reqBody = JSON.parse(args[1].body);
                 let changed = false;
-                
-                if (reqBody.reasoning_effort === 'auto') { delete reqBody.reasoning_effort; changed = true; }
-                else if (reqBody.reasoning_effort === 'min') { reqBody.reasoning_effort = 'low'; changed = true; }
-                else if (reqBody.reasoning_effort === 'max') { reqBody.reasoning_effort = 'high'; changed = true; }
 
-                if (reqBody.reasoning && typeof reqBody.reasoning === 'object') {
-                    if (reqBody.reasoning.effort === 'auto') { delete reqBody.reasoning.effort; changed = true; }
-                    else if (reqBody.reasoning.effort === 'min') { reqBody.reasoning.effort = 'low'; changed = true; }
-                    else if (reqBody.reasoning.effort === 'max') { reqBody.reasoning.effort = 'high'; changed = true; }
+                if (!reasoningOverride) {
+                    if (reqBody.reasoning_effort === 'auto') { delete reqBody.reasoning_effort; changed = true; }
+                    else if (reqBody.reasoning_effort === 'min') { reqBody.reasoning_effort = 'low'; changed = true; }
+                    else if (reqBody.reasoning_effort === 'max') { reqBody.reasoning_effort = 'high'; changed = true; }
+
+                    if (reqBody.reasoning && typeof reqBody.reasoning === 'object') {
+                        if (reqBody.reasoning.effort === 'auto') { delete reqBody.reasoning.effort; changed = true; }
+                        else if (reqBody.reasoning.effort === 'min') { reqBody.reasoning.effort = 'low'; changed = true; }
+                        else if (reqBody.reasoning.effort === 'max') { reqBody.reasoning.effort = 'high'; changed = true; }
+                    }
                 }
 
                 if (reqBody.custom_prompt_post_processing === '') { delete reqBody.custom_prompt_post_processing; changed = true; }
@@ -554,21 +586,17 @@ export async function callGenerate(conversation, settings, pendingText, onChunk,
 
     try {
         if (useConnectionManager && service && typeof service.sendRequest === 'function') {
-            asyncGeneratorFn = await service.sendRequest(profileId, messages, maxTokens, {
-                stream: useStream,
-                signal: abort.signal,
-                extractData: false,
-                includePreset: true
-            });
+            asyncGeneratorFn = await sendViaConnectionManager(useStream);
         } else {
             const mainApi = window.main_api || ctx.main_api;
             if (mainApi === 'openai' && ctx.ChatCompletionService) {
                 const oaiSettings = window.oai_settings || ctx.oai_settings || {};
-                asyncGeneratorFn = await ctx.ChatCompletionService.processRequest({
-                    messages: messages,
-                    max_tokens: maxTokens,
-                    stream: useStream
-                }, { presetName: oaiSettings.preset_settings_openai }, false, abort.signal);
+                asyncGeneratorFn = await ctx.ChatCompletionService.processRequest(
+                    chatCompletionPayload(useStream),
+                    { presetName: oaiSettings.preset_settings_openai },
+                    false,
+                    abort.signal,
+                );
             } else if (mainApi === 'textgenerationwebui' && ctx.TextCompletionService) {
                 const textGenSettings = window.textgenerationwebui_settings || ctx.textgenerationwebui_settings || {};
                 asyncGeneratorFn = await ctx.TextCompletionService.processRequest({
@@ -587,21 +615,17 @@ export async function callGenerate(conversation, settings, pendingText, onChunk,
             useStream = false;
             try {
                 if (useConnectionManager && service && typeof service.sendRequest === 'function') {
-                    asyncGeneratorFn = await service.sendRequest(profileId, messages, maxTokens, {
-                        stream: false,
-                        signal: abort.signal,
-                        extractData: false,
-                        includePreset: true
-                    });
+                    asyncGeneratorFn = await sendViaConnectionManager(false);
                 } else {
                     const mainApi = window.main_api || ctx.main_api;
                     if (mainApi === 'openai' && ctx.ChatCompletionService) {
                         const oaiSettings = window.oai_settings || ctx.oai_settings || {};
-                        asyncGeneratorFn = await ctx.ChatCompletionService.processRequest({
-                            messages: messages,
-                            max_tokens: maxTokens,
-                            stream: false
-                        }, { presetName: oaiSettings.preset_settings_openai }, false, abort.signal);
+                        asyncGeneratorFn = await ctx.ChatCompletionService.processRequest(
+                            chatCompletionPayload(false),
+                            { presetName: oaiSettings.preset_settings_openai },
+                            false,
+                            abort.signal,
+                        );
                     } else if (mainApi === 'textgenerationwebui' && ctx.TextCompletionService) {
                         const textGenSettings = window.textgenerationwebui_settings || ctx.textgenerationwebui_settings || {};
                         asyncGeneratorFn = await ctx.TextCompletionService.processRequest({

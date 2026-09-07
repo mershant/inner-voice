@@ -78,6 +78,7 @@ export function getSettings() {
         customUrl: 'http://localhost:5000/v1',
         customKey: '',
         customModel: '',
+        reasoningLevel: 'unset',
         maxTokens: 8048,
         includeSystemPrompt: false,
         includeUserPersonality: true,

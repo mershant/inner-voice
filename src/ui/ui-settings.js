@@ -1,4 +1,5 @@
 import { THEME_PRESETS, THEME_VAR_DEFS, THEME_CSS_MAP, EXT_DISPLAY, DEFAULT_SYSTEM_PROMPT, DEFAULT_TOOLS_PROMPT, DEFAULT_MEMORY_PROMPT, DEFAULT_PORTRAY_PROMPT, DEFAULT_LB_MANAGE_PROMPT, I } from '../constants.js';
+import { REASONING_LEVELS } from '../reasoning-level.js';
 import { state } from '../state.js';
 import { getSettings, saveSettings, getEffectiveSettings, setConversationOverride, clearAllConversationOverrides, getBindingKey, hasConversationOverrides, saveConversation, getConversation, getConversationOverrides, initConversation } from '../conversation.js';
 import { showCustomDialog, escHtml } from '../utils/util-dom.js';
@@ -88,6 +89,9 @@ const _SETTINGS_DEF = [
     { key: 'customUrl',   stId: 'iv-custom-url',   spId: 'iv-sp-custom-url',   type: 'input', profileKey: true },
     { key: 'customKey',   stId: 'iv-custom-key',   spId: 'iv-sp-custom-key',   type: 'input', profileKey: true },
     { key: 'customModel', stId: 'iv-custom-model', spId: 'iv-sp-custom-model', type: 'input', profileKey: true },
+    { key: 'reasoningLevel', stId: 'iv-reasoning-level', spId: 'iv-sp-reasoning-level', type: 'select', profileKey: true,
+      fromSetting: s => REASONING_LEVELS.includes(s.reasoningLevel) ? s.reasoningLevel : 'unset',
+      toVal: v => REASONING_LEVELS.includes(v) ? v : 'unset' },
     { key: 'maxTokens',   stId: 'iv-max-tokens',   spId: 'iv-sp-max-tokens',   type: 'input', toVal: Number, profileKey: true },
 
     // ── Context ───────────────────────────────────────────────────────────────
@@ -155,6 +159,7 @@ const _OV_EL_MAP = {
     connectionSource: ['iv-sp-ov-conn-source'],   customUrl: ['iv-sp-ov-custom-url'],
     customKey: ['iv-sp-ov-custom-key'],           customModel: ['iv-sp-ov-custom-model'],
     connectionProfileId: ['iv-sp-ov-conn-profile'],
+    reasoningLevel: ['iv-sp-ov-reasoning-level'],
     includeSystemPrompt: ['iv-sp-ov-include-sysprompt'], includeUserPersonality: ['iv-sp-ov-include-persona'],
     includeAlternateSwipes: ['iv-sp-ov-include-alt-swipes'], applyRegexToContext: ['iv-sp-ov-apply-regex'],
     lorebookAIManageEnabled: ['iv-sp-ov-lb-ai-enabled'], lorebookManagePrompt: ['iv-sp-ov-lb-manage-prompt'],
@@ -747,6 +752,7 @@ export function syncSPFromSettings() {
     if (ovDs) ovDs.value = eff.contextDepth ?? 15; if (ovDv) ovDv.textContent = eff.contextDepth ?? 15;
 
     g('iv-sp-ov-conn-source', eff.connectionSource ?? 'default');
+    g('iv-sp-ov-reasoning-level', REASONING_LEVELS.includes(eff.reasoningLevel) ? eff.reasoningLevel : 'unset');
     const ovPg = document.getElementById('iv-sp-ov-profile-group'); const ovCus = document.getElementById('iv-sp-ov-custom-profile-group');
     if (ovPg) ovPg.style.display = eff.connectionSource === 'profile' ? '' : 'none';
     if (ovCus) ovCus.style.display = eff.connectionSource === 'custom' ? '' : 'none';
@@ -1148,6 +1154,7 @@ export function setupSettingsPanelListeners() {
     });
     bindOv('iv-sp-ov-custom-url', 'customUrl'); bindOv('iv-sp-ov-custom-key', 'customKey'); bindOv('iv-sp-ov-custom-model', 'customModel');
     bindOvSel('iv-sp-ov-conn-profile', 'connectionProfileId');
+    bindOvSel('iv-sp-ov-reasoning-level', 'reasoningLevel');
     bindOv('iv-sp-ov-max-tokens', 'maxTokens', false, Number); bindOv('iv-sp-ov-history-limit', 'localHistoryLimit', false, Number);
     bindOv('iv-sp-ov-reasoning-trim', 'reasoningTrimStrings');
     document.getElementById('iv-sp-ov-sysprompt')?.addEventListener('input', e => _syncOvToGlobal('systemPrompt', e.target.value || undefined));

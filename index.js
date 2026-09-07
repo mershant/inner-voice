@@ -1064,6 +1064,7 @@ function getSettings() {
         customUrl: 'http://localhost:5000/v1',
         customKey: '',
         customModel: '',
+        reasoningLevel: 'unset',
         maxTokens: 8048,
         includeSystemPrompt: false,
         includeUserPersonality: true,
@@ -3638,6 +3639,116 @@ function buildToolCallsSystemBlock() {
     return '\n\n' + _ensureWrapped(finalPrompt, 'tool_calls_system');
 }
 
+const REASONING_LEVELS = Object.freeze(['unset', 'off', 'low', 'medium', 'high', 'xhigh', 'max']);
+
+function isGeminiModel(model) {
+    return /gemini/iu.test(String(model));
+}
+
+function normalizeReasoningLevel(value) {
+    return REASONING_LEVELS.includes(value) ? value : 'unset';
+}
+
+function reasoningIncludeBody(model, level) {
+    if (isGeminiModel(model)) {
+        if (level === 'off') {
+            return '{"thinking":{"type":"disabled"},"thinking_config":{"thinking_budget":0}}';
+        }
+        return JSON.stringify({
+            thinking: { type: 'enabled' },
+            thinking_config: { thinking_level: level },
+        });
+    }
+    if (level === 'off') {
+        return JSON.stringify({
+            thinking: { type: 'disabled' },
+            reasoning_effort: 'none',
+        });
+    }
+    return JSON.stringify({ reasoning_effort: level });
+}
+
+function mergeExcludedFields(value, addedFields) {
+    const fields = new Set();
+    const source = String(value ?? '').trim();
+    if (source) {
+        try {
+            const parsed = JSON.parse(source);
+            if (Array.isArray(parsed)) parsed.forEach((field) => fields.add(String(field)));
+            else if (parsed && typeof parsed === 'object') Object.keys(parsed).forEach((field) => fields.add(field));
+            else if (typeof parsed === 'string') fields.add(parsed);
+        } catch {
+            for (const line of source.split(/\r?\n/u)) {
+                const match = /^\s*(?:-\s*)?([^:#]+?)(?:\s*:.*)?\s*$/u.exec(line);
+                if (match) fields.add(match[1].trim());
+            }
+        }
+    }
+    for (const field of addedFields) fields.add(field);
+    return JSON.stringify([...fields]);
+}
+
+function connectionProfiles(ctx) {
+    return ctx?.ConnectionManagerRequestService?.getSupportedProfiles?.()
+        ?? ctx?.extensionSettings?.connectionManager?.profiles
+        ?? [];
+}
+
+function findProfile(settings, ctx) {
+    const profiles = connectionProfiles(ctx);
+    const id = settings?.connectionProfileId;
+    return profiles.find((p) => p.id === id || p.name === id);
+}
+
+function resolveInnerModel(settings, ctx) {
+    if (settings?.connectionSource === 'custom') return settings.customModel;
+    if (settings?.connectionSource === 'profile') return findProfile(settings, ctx)?.model || '';
+    return ctx?.getChatCompletionModel?.() || '';
+}
+
+function lookupExistingExclusions(settings, ctx) {
+    if (settings?.connectionSource === 'custom') return undefined;
+    if (settings?.connectionSource === 'profile') {
+        const profile = findProfile(settings, ctx);
+        const presetName = profile?.preset;
+        const preset = ctx?.getPresetManager?.('openai')?.getCompletionPresetByName?.(presetName);
+        return preset?.custom_exclude_body ?? ctx?.chatCompletionSettings?.custom_exclude_body;
+    }
+    const selectedProfileId = ctx?.extensionSettings?.connectionManager?.selectedProfile;
+    const selectedProfile = connectionProfiles(ctx).find((p) => p?.id === selectedProfileId);
+    const presetName = selectedProfile?.preset
+        || ctx?.getPresetManager?.('openai')?.getSelectedPresetName?.();
+    const preset = ctx?.getPresetManager?.('openai')?.getCompletionPresetByName?.(presetName);
+    return preset?.custom_exclude_body ?? ctx?.chatCompletionSettings?.custom_exclude_body;
+}
+
+function innerReasoningOverride(settings, ctx) {
+    const level = normalizeReasoningLevel(settings?.reasoningLevel);
+    if (level === 'unset') return undefined;
+    const model = resolveInnerModel(settings, ctx);
+    return {
+        custom_include_body: reasoningIncludeBody(model, level),
+        custom_exclude_body: mergeExcludedFields(
+            lookupExistingExclusions(settings, ctx),
+            isGeminiModel(model) ? ['reasoning_effort'] : ['thinking', 'thinking_config'],
+        ),
+    };
+}
+
+function applyReasoningOverrideToBody(body, override) {
+    if (!override) return body;
+    const next = { ...body };
+    const include = String(override.custom_include_body ?? '').trim();
+    if (include) Object.assign(next, JSON.parse(include));
+    const exclude = String(override.custom_exclude_body ?? '').trim();
+    if (exclude) {
+        for (const key of JSON.parse(exclude)) delete next[key];
+    }
+    delete next.custom_include_body;
+    delete next.custom_exclude_body;
+    return next;
+}
+
 function _parseRgba(str) {
     if (!str) return null;
     const m = str.match(/rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)/);
@@ -3831,6 +3942,9 @@ const _SETTINGS_DEF = [
     { key: 'customUrl',   stId: 'iv-custom-url',   spId: 'iv-sp-custom-url',   type: 'input', profileKey: true },
     { key: 'customKey',   stId: 'iv-custom-key',   spId: 'iv-sp-custom-key',   type: 'input', profileKey: true },
     { key: 'customModel', stId: 'iv-custom-model', spId: 'iv-sp-custom-model', type: 'input', profileKey: true },
+    { key: 'reasoningLevel', stId: 'iv-reasoning-level', spId: 'iv-sp-reasoning-level', type: 'select', profileKey: true,
+      fromSetting: s => REASONING_LEVELS.includes(s.reasoningLevel) ? s.reasoningLevel : 'unset',
+      toVal: v => REASONING_LEVELS.includes(v) ? v : 'unset' },
     { key: 'maxTokens',   stId: 'iv-max-tokens',   spId: 'iv-sp-max-tokens',   type: 'input', toVal: Number, profileKey: true },
 
     // ── Context ───────────────────────────────────────────────────────────────
@@ -3898,6 +4012,7 @@ const _OV_EL_MAP = {
     connectionSource: ['iv-sp-ov-conn-source'],   customUrl: ['iv-sp-ov-custom-url'],
     customKey: ['iv-sp-ov-custom-key'],           customModel: ['iv-sp-ov-custom-model'],
     connectionProfileId: ['iv-sp-ov-conn-profile'],
+    reasoningLevel: ['iv-sp-ov-reasoning-level'],
     includeSystemPrompt: ['iv-sp-ov-include-sysprompt'], includeUserPersonality: ['iv-sp-ov-include-persona'],
     includeAlternateSwipes: ['iv-sp-ov-include-alt-swipes'], applyRegexToContext: ['iv-sp-ov-apply-regex'],
     lorebookAIManageEnabled: ['iv-sp-ov-lb-ai-enabled'], lorebookManagePrompt: ['iv-sp-ov-lb-manage-prompt'],
@@ -4490,6 +4605,7 @@ function syncSPFromSettings() {
     if (ovDs) ovDs.value = eff.contextDepth ?? 15; if (ovDv) ovDv.textContent = eff.contextDepth ?? 15;
 
     g('iv-sp-ov-conn-source', eff.connectionSource ?? 'default');
+    g('iv-sp-ov-reasoning-level', REASONING_LEVELS.includes(eff.reasoningLevel) ? eff.reasoningLevel : 'unset');
     const ovPg = document.getElementById('iv-sp-ov-profile-group'); const ovCus = document.getElementById('iv-sp-ov-custom-profile-group');
     if (ovPg) ovPg.style.display = eff.connectionSource === 'profile' ? '' : 'none';
     if (ovCus) ovCus.style.display = eff.connectionSource === 'custom' ? '' : 'none';
@@ -4891,6 +5007,7 @@ function setupSettingsPanelListeners() {
     });
     bindOv('iv-sp-ov-custom-url', 'customUrl'); bindOv('iv-sp-ov-custom-key', 'customKey'); bindOv('iv-sp-ov-custom-model', 'customModel');
     bindOvSel('iv-sp-ov-conn-profile', 'connectionProfileId');
+    bindOvSel('iv-sp-ov-reasoning-level', 'reasoningLevel');
     bindOv('iv-sp-ov-max-tokens', 'maxTokens', false, Number); bindOv('iv-sp-ov-history-limit', 'localHistoryLimit', false, Number);
     bindOv('iv-sp-ov-reasoning-trim', 'reasoningTrimStrings');
     document.getElementById('iv-sp-ov-sysprompt')?.addEventListener('input', e => _syncOvToGlobal('systemPrompt', e.target.value || undefined));
@@ -10286,12 +10403,12 @@ async function callGenerate(conversation, settings, pendingText, onChunk, messag
 
         try {
             const url = (settings.customUrl || 'http://localhost:5000/v1').replace(/\/+$/, '') + '/chat/completions';
-            const payload = {
+            const payload = applyReasoningOverrideToBody({
                 model: settings.customModel || 'gpt-3.5-turbo',
                 messages: messages,
                 max_tokens: maxTokens,
                 stream: useStream
-            };
+            }, innerReasoningOverride(settings, ctx));
             const headers = { 'Content-Type': 'application/json' };
             if (settings.customKey) headers['Authorization'] = `Bearer ${settings.customKey}`;
 
@@ -10399,6 +10516,35 @@ async function callGenerate(conversation, settings, pendingText, onChunk, messag
         }
     }
 
+    const reasoningOverride = innerReasoningOverride(settings, ctx);
+
+    function connectionManagerOptions(stream) {
+        return {
+            stream,
+            signal: abort.signal,
+            extractData: false,
+            includePreset: true
+        };
+    }
+
+    function sendViaConnectionManager(stream) {
+        const options = connectionManagerOptions(stream);
+        if (reasoningOverride) {
+            return service.sendRequest(profileId, messages, maxTokens, options, reasoningOverride);
+        }
+        return service.sendRequest(profileId, messages, maxTokens, options);
+    }
+
+    function chatCompletionPayload(stream) {
+        const request = {
+            messages: messages,
+            max_tokens: maxTokens,
+            stream
+        };
+        if (reasoningOverride) Object.assign(request, reasoningOverride);
+        return request;
+    }
+
     let asyncGeneratorFn;
     const origFetch = window.fetch;
     
@@ -10408,15 +10554,17 @@ async function callGenerate(conversation, settings, pendingText, onChunk, messag
             try {
                 let reqBody = JSON.parse(args[1].body);
                 let changed = false;
-                
-                if (reqBody.reasoning_effort === 'auto') { delete reqBody.reasoning_effort; changed = true; }
-                else if (reqBody.reasoning_effort === 'min') { reqBody.reasoning_effort = 'low'; changed = true; }
-                else if (reqBody.reasoning_effort === 'max') { reqBody.reasoning_effort = 'high'; changed = true; }
 
-                if (reqBody.reasoning && typeof reqBody.reasoning === 'object') {
-                    if (reqBody.reasoning.effort === 'auto') { delete reqBody.reasoning.effort; changed = true; }
-                    else if (reqBody.reasoning.effort === 'min') { reqBody.reasoning.effort = 'low'; changed = true; }
-                    else if (reqBody.reasoning.effort === 'max') { reqBody.reasoning.effort = 'high'; changed = true; }
+                if (!reasoningOverride) {
+                    if (reqBody.reasoning_effort === 'auto') { delete reqBody.reasoning_effort; changed = true; }
+                    else if (reqBody.reasoning_effort === 'min') { reqBody.reasoning_effort = 'low'; changed = true; }
+                    else if (reqBody.reasoning_effort === 'max') { reqBody.reasoning_effort = 'high'; changed = true; }
+
+                    if (reqBody.reasoning && typeof reqBody.reasoning === 'object') {
+                        if (reqBody.reasoning.effort === 'auto') { delete reqBody.reasoning.effort; changed = true; }
+                        else if (reqBody.reasoning.effort === 'min') { reqBody.reasoning.effort = 'low'; changed = true; }
+                        else if (reqBody.reasoning.effort === 'max') { reqBody.reasoning.effort = 'high'; changed = true; }
+                    }
                 }
 
                 if (reqBody.custom_prompt_post_processing === '') { delete reqBody.custom_prompt_post_processing; changed = true; }
@@ -10439,21 +10587,17 @@ async function callGenerate(conversation, settings, pendingText, onChunk, messag
 
     try {
         if (useConnectionManager && service && typeof service.sendRequest === 'function') {
-            asyncGeneratorFn = await service.sendRequest(profileId, messages, maxTokens, {
-                stream: useStream,
-                signal: abort.signal,
-                extractData: false,
-                includePreset: true
-            });
+            asyncGeneratorFn = await sendViaConnectionManager(useStream);
         } else {
             const mainApi = window.main_api || ctx.main_api;
             if (mainApi === 'openai' && ctx.ChatCompletionService) {
                 const oaiSettings = window.oai_settings || ctx.oai_settings || {};
-                asyncGeneratorFn = await ctx.ChatCompletionService.processRequest({
-                    messages: messages,
-                    max_tokens: maxTokens,
-                    stream: useStream
-                }, { presetName: oaiSettings.preset_settings_openai }, false, abort.signal);
+                asyncGeneratorFn = await ctx.ChatCompletionService.processRequest(
+                    chatCompletionPayload(useStream),
+                    { presetName: oaiSettings.preset_settings_openai },
+                    false,
+                    abort.signal,
+                );
             } else if (mainApi === 'textgenerationwebui' && ctx.TextCompletionService) {
                 const textGenSettings = window.textgenerationwebui_settings || ctx.textgenerationwebui_settings || {};
                 asyncGeneratorFn = await ctx.TextCompletionService.processRequest({
@@ -10472,21 +10616,17 @@ async function callGenerate(conversation, settings, pendingText, onChunk, messag
             useStream = false;
             try {
                 if (useConnectionManager && service && typeof service.sendRequest === 'function') {
-                    asyncGeneratorFn = await service.sendRequest(profileId, messages, maxTokens, {
-                        stream: false,
-                        signal: abort.signal,
-                        extractData: false,
-                        includePreset: true
-                    });
+                    asyncGeneratorFn = await sendViaConnectionManager(false);
                 } else {
                     const mainApi = window.main_api || ctx.main_api;
                     if (mainApi === 'openai' && ctx.ChatCompletionService) {
                         const oaiSettings = window.oai_settings || ctx.oai_settings || {};
-                        asyncGeneratorFn = await ctx.ChatCompletionService.processRequest({
-                            messages: messages,
-                            max_tokens: maxTokens,
-                            stream: false
-                        }, { presetName: oaiSettings.preset_settings_openai }, false, abort.signal);
+                        asyncGeneratorFn = await ctx.ChatCompletionService.processRequest(
+                            chatCompletionPayload(false),
+                            { presetName: oaiSettings.preset_settings_openai },
+                            false,
+                            abort.signal,
+                        );
                     } else if (mainApi === 'textgenerationwebui' && ctx.TextCompletionService) {
                         const textGenSettings = window.textgenerationwebui_settings || ctx.textgenerationwebui_settings || {};
                         asyncGeneratorFn = await ctx.TextCompletionService.processRequest({
