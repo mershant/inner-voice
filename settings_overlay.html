@@ -130,6 +130,18 @@
             <input type="number" class="iv-sp-input" id="iv-sp-max-tokens" placeholder="2048" min="64" max="32768">
           </div>
           <div class="iv-sp-field" style="margin-top:4px">
+            <label class="iv-sp-label">Reasoning level</label>
+            <select class="iv-sp-select" id="iv-sp-reasoning-level">
+              <option value="unset">Unset</option>
+              <option value="off">Off</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="xhigh">xHigh</option>
+              <option value="max">Max</option>
+            </select>
+          </div>
+          <div class="iv-sp-field" style="margin-top:4px">
             <label class="iv-sp-label">Streaming</label>
             <div style="display:flex;gap:4px">
               <button class="iv-action-btn iv-stream-btn" data-stream="auto" id="iv-sp-stream-auto">Auto</button>
@@ -366,6 +378,21 @@
             <div class="iv-sp-ov-wrap">
               <input type="number" class="iv-sp-input" id="iv-sp-ov-max-tokens" placeholder="Use global" min="64" max="32768">
               <button class="iv-sp-ov-clear" data-ovkey="maxTokens" title="Clear override" disabled>↺</button>
+            </div>
+          </div>
+          <div class="iv-sp-field">
+            <label class="iv-sp-ov-label iv-sp-label" data-ovkey="reasoningLevel">Reasoning level</label>
+            <div class="iv-sp-ov-wrap">
+              <select class="iv-sp-select" id="iv-sp-ov-reasoning-level">
+                <option value="unset">Unset</option>
+                <option value="off">Off</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">xHigh</option>
+                <option value="max">Max</option>
+              </select>
+              <button class="iv-sp-ov-clear" data-ovkey="reasoningLevel" title="Clear override" disabled>↺</button>
             </div>
           </div>
           <div class="iv-sp-field">

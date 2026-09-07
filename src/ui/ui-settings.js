@@ -89,6 +89,8 @@ const _SETTINGS_DEF = [
     { key: 'customKey',   stId: 'iv-custom-key',   spId: 'iv-sp-custom-key',   type: 'input', profileKey: true },
     { key: 'customModel', stId: 'iv-custom-model', spId: 'iv-sp-custom-model', type: 'input', profileKey: true },
     { key: 'maxTokens',   stId: 'iv-max-tokens',   spId: 'iv-sp-max-tokens',   type: 'input', toVal: Number, profileKey: true },
+    { key: 'reasoningLevel', stId: 'iv-reasoning-level', spId: 'iv-sp-reasoning-level', type: 'select', profileKey: true,
+      fromSetting: s => s.reasoningLevel || 'unset' },
 
     // ── Context ───────────────────────────────────────────────────────────────
     { key: 'contextDepth', stId: 'iv-depth-slider', spId: 'iv-sp-depth-slider', type: 'slider', toVal: Number,
@@ -166,6 +168,7 @@ const _OV_EL_MAP = {
     charField_post_history_instructions: ['iv-sp-ov-ce-post-history'],
     charField_alternate_greetings: ['iv-sp-ov-ce-alt-greetings'],
     forceStreaming: [],
+    reasoningLevel: ['iv-sp-ov-reasoning-level'],
 };
 
 // Profile keys
@@ -755,6 +758,7 @@ export function syncSPFromSettings() {
     const ovi = (id, key) => { const el = document.getElementById(id); if (el) el.value = key in ov ? (ov[key] ?? '') : ''; };
     ovi('iv-sp-ov-custom-url', 'customUrl'); ovi('iv-sp-ov-custom-key', 'customKey'); ovi('iv-sp-ov-custom-model', 'customModel');
     ovi('iv-sp-ov-max-tokens', 'maxTokens'); ovi('iv-sp-ov-history-limit', 'localHistoryLimit');
+    g('iv-sp-ov-reasoning-level', eff.reasoningLevel || 'unset');
     ovi('iv-sp-ov-reasoning-trim', 'reasoningTrimStrings'); ovi('iv-sp-ov-sysprompt', 'systemPrompt');
 
     gC('iv-sp-ov-include-sysprompt', eff.includeSystemPrompt); gC('iv-sp-ov-include-persona', eff.includeUserPersonality);
@@ -1149,6 +1153,7 @@ export function setupSettingsPanelListeners() {
     bindOv('iv-sp-ov-custom-url', 'customUrl'); bindOv('iv-sp-ov-custom-key', 'customKey'); bindOv('iv-sp-ov-custom-model', 'customModel');
     bindOvSel('iv-sp-ov-conn-profile', 'connectionProfileId');
     bindOv('iv-sp-ov-max-tokens', 'maxTokens', false, Number); bindOv('iv-sp-ov-history-limit', 'localHistoryLimit', false, Number);
+    bindOvSel('iv-sp-ov-reasoning-level', 'reasoningLevel');
     bindOv('iv-sp-ov-reasoning-trim', 'reasoningTrimStrings');
     document.getElementById('iv-sp-ov-sysprompt')?.addEventListener('input', e => _syncOvToGlobal('systemPrompt', e.target.value || undefined));
     bindOv('iv-sp-ov-include-sysprompt',  'includeSystemPrompt',     true);

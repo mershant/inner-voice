@@ -109,6 +109,7 @@ export function getSettings() {
         changelogAutoShow: true,
         lastSeenVersion: '',
         forceStreaming: 'auto',
+        reasoningLevel: 'unset',
         applyRegexToContext: true,
         completionSound: 'none',
         completionSoundVolume: 80,
