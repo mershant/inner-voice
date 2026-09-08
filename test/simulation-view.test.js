@@ -181,14 +181,69 @@ test('the block frame carries the privacy explanation and IV:/{{user}}: labels',
     assert.match(block, /<inner-exchange>/);
     assert.match(block, /<\/inner-exchange>/);
     assert.match(block, /\{\{user\}\}'s private inner exchange/);
-    assert.match(block, /NPCs and the World/);
-    assert.match(block, /cannot perceive it|imperceptible/);
     assert.match(block, /one mind talking to itself/);
-    assert.match(block, /IV:/);
-    assert.match(block, /\{\{user\}\}:/);
+    assert.match(block, /imperceptible to everyone except \{\{user\}\}/);
+    assert.match(block, /IV: is the Inner Voice/);
+    assert.match(block, /\{\{user\}\}: is \{\{user\}\}/);
     assert.match(block, /IV: wtf\? how can she talk to us like that\?/);
     assert.match(block, /\{\{user\}\}: I don't know\. It still stings\./);
     assert.ok(!/assistant|co-?writer|external/i.test(block));
+});
+
+test('a talkative voice does not crowd another voice out of the outgoing prompt', () => {
+    stub.chat = [mainMsg('scene zero')];
+    const conv = getConversation();
+    addTurn(conv, 'user', 'persona at zero');
+    addTurn(conv, 'user', 'npc at zero', { ownerVoice: 'Kyrine' });
+
+    stub.chat.push(mainMsg('scene one'));
+    addTurn(conv, 'user', 'persona at one');
+
+    stub.chat.push(mainMsg('scene two'));
+    addTurn(conv, 'user', 'persona at two');
+
+    syncSimulationView();
+    const outgoing = placeInChat(stub.chat, stub.extensionPrompts);
+    const texts = outgoing.map(m => m.mes);
+
+    const zeroPos = texts.indexOf('scene zero');
+    const twoPos = texts.indexOf('scene two');
+    assert.match(texts[zeroPos + 1] || '', /npc at zero/);
+    assert.match(texts[twoPos + 1] || '', /persona at two/);
+    assert.ok(!texts.some(t => t.includes('persona at zero')));
+    assert.ok(!texts.some(t => t.includes('persona at one')));
+});
+
+test('{{user}} exchange depth and other-voices exchange depth select independently', () => {
+    stub.chat = [mainMsg('scene zero')];
+    const conv = getConversation();
+    addTurn(conv, 'user', 'persona at zero');
+    addTurn(conv, 'user', 'npc at zero', { ownerVoice: 'Kyrine' });
+
+    stub.chat.push(mainMsg('scene one'));
+    addTurn(conv, 'user', 'persona at one');
+    addTurn(conv, 'user', 'npc at one', { ownerVoice: 'Kyrine' });
+
+    stub.chat.push(mainMsg('scene two'));
+    addTurn(conv, 'user', 'persona at two');
+    addTurn(conv, 'user', 'npc at two', { ownerVoice: 'Kyrine' });
+
+    stub.extensionSettings.inner_voice = {
+        ...(stub.extensionSettings.inner_voice || {}),
+        exchangeDepth: 1,
+        otherVoicesDepth: 2,
+    };
+
+    syncSimulationView();
+    const outgoing = placeInChat(stub.chat, stub.extensionPrompts);
+    const texts = outgoing.map(m => m.mes);
+
+    assert.ok(!texts.some(t => t.includes('persona at zero')));
+    assert.ok(!texts.some(t => t.includes('persona at one')));
+    assert.ok(texts.some(t => t.includes('persona at two')));
+    assert.ok(!texts.some(t => t.includes('npc at zero')));
+    assert.ok(texts.some(t => t.includes('npc at one')));
+    assert.ok(texts.some(t => t.includes('npc at two')));
 });
 
 test('two voices under one anchor keep separate outgoing blocks', () => {
@@ -196,16 +251,43 @@ test('two voices under one anchor keep separate outgoing blocks', () => {
     const conv = getConversation();
     addTurn(conv, 'user', 'persona thought');
     addTurn(conv, 'user', 'npc thought', { ownerVoice: 'Kyrine' });
-    stub.extensionSettings.inner_voice = { ...(stub.extensionSettings.inner_voice || {}), exchangeDepth: 2 };
 
     syncSimulationView();
-    const keys = Object.keys(stub.extensionPrompts).filter(k => stub.extensionPrompts[k]?.value);
-    assert.equal(keys.length, 2);
-    const texts = keys.map(k => stub.extensionPrompts[k].value);
-    assert.equal(texts.filter(t => t.includes('persona thought')).length, 1);
-    assert.equal(texts.filter(t => t.includes('npc thought')).length, 1);
-    assert.ok(texts.some(t => t.includes("{{user}}'s private inner exchange")));
-    assert.ok(texts.some(t => t.includes("Kyrine's private inner exchange")));
+    const outgoing = placeInChat(stub.chat, stub.extensionPrompts);
+    const texts = outgoing.map(m => m.mes);
+    const afterAnchor = texts.slice(texts.indexOf('Kyrine waits.') + 1);
+    assert.ok(afterAnchor.some(t => t.includes('persona thought')));
+    assert.ok(afterAnchor.some(t => t.includes('npc thought')));
+    assert.ok(afterAnchor.some(t => t.includes("{{user}}'s private inner exchange")));
+    assert.ok(afterAnchor.some(t => t.includes("Kyrine's private inner exchange")));
+});
+
+test('hide overrides the outgoing prompt for one voice without removing the other at the same anchor', () => {
+    stub.chat = [mainMsg('Kyrine waits.')];
+    const conv = getConversation();
+    addTurn(conv, 'user', 'persona thought');
+    addTurn(conv, 'user', 'npc thought', { ownerVoice: 'Kyrine' });
+    setExchangeHidden(conv, 0, true, 'Kyrine');
+
+    syncSimulationView();
+    const outgoing = placeInChat(stub.chat, stub.extensionPrompts);
+    const texts = outgoing.map(m => m.mes);
+    assert.ok(texts.some(t => t.includes('persona thought')));
+    assert.ok(!texts.some(t => t.includes('npc thought')));
+});
+
+test('a hidden main-chat anchor removes every voice at that anchor from the outgoing prompt', () => {
+    stub.chat = [mainMsg('Kyrine waits.')];
+    const conv = getConversation();
+    addTurn(conv, 'user', 'persona thought');
+    addTurn(conv, 'user', 'npc thought', { ownerVoice: 'Kyrine' });
+    stub.chat[0].is_system = true;
+
+    syncSimulationView();
+    const outgoing = placeInChat(stub.chat, stub.extensionPrompts);
+    const texts = outgoing.map(m => m.mes);
+    assert.ok(!texts.some(t => t.includes('persona thought')));
+    assert.ok(!texts.some(t => t.includes('npc thought')));
 });
 
 test('an NPC exchange names its owner and is private from every other mind, including {{user}}', () => {
@@ -219,4 +301,5 @@ test('an NPC exchange names its owner and is private from every other mind, incl
     assert.match(block, /IV: Maybe Mira is right\./);
     assert.match(block, /Kyrine: I hate that she might be\./);
     assert.ok(!block.includes('{{user}}'));
+    assert.ok(!/NPCs and the World cannot perceive it/.test(block));
 });

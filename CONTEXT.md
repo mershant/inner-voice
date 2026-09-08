@@ -20,11 +20,14 @@ The ordinary SillyTavern chat where the simulation happens, outside the Inner Vo
 **Outgoing prompt**:
 What the main chat's model actually receives when generating. Exchanges may enter it or be hidden from it.
 
+**Voice session**:
+A private inner chat bound to one mind. The default session is {{user}}. Additional sessions are bound to a character from the cast. Each session is that character's brain: the Inner Voice talks with that character, and the model answers as them in first person.
+
 **Exchange**:
-The single private conversation between the Inner Voice and {{user}} anchored under one main-chat message. A main-chat message holds at most one exchange, which grows as that checkpoint's conversation continues.
+The single private conversation between the Inner Voice and one mind, anchored under one main-chat message. A main-chat message holds at most one exchange per voice, which grows as that checkpoint's conversation continues.
 
 **Exchange block**:
-The form a visible exchange takes inside the outgoing prompt: the full transcript wrapped in an `<inner-exchange>` frame whose opening explanation states that this is {{user}}'s private inner exchange, imperceptible to NPCs and the World, and defines the speaker labels (`IV:` for the Inner Voice, `{{user}}:` for {{user}}). It sits directly below its anchor message.
+The form a visible exchange takes inside the outgoing prompt: the full transcript wrapped in an `<inner-exchange>` frame. The opening explanation names the owning mind: this is [voice]'s private inner exchange — one mind talking to itself — imperceptible to everyone except [voice]; `IV:` is the Inner Voice; `[voice]:` is [voice]. For the {{user}} session that is equivalent to today's {{user}} frame. It sits directly below its anchor message. Multiple voices' blocks can sit under the same anchor.
 
 **Live edge**:
 The latest main-chat message — the only place a new exchange turn can occur. {{user}} thinks through the story linearly; older exchanges remain readable and hideable but never extendable.
@@ -48,4 +51,4 @@ Global set-and-forget settings shaping how a portray is written, overridable in 
 What fires a portray. A manual button always exists. Auto-trigger, when enabled, fires from natural conclusion cues inside the exchange — the Inner Voice directing ("you should probably tell her about...") or {{user}} resolving ("...yeah, let's just do that.") — in a tool-call-like way that can be turned off or set to manual-only. Firing and landing are independent settings: auto-trigger alone still drafts into the input box, and only deliberately enabling immediate send as well produces the fully hands-off mode. Defaults are manual trigger and input-box landing.
 
 **Simulation view**:
-What the outgoing prompt carries from the inner life. Exchange depth is a setting defaulting to 1: the most recent non-hidden exchanges up to that count appear, each placed below its anchor message. Hide always overrides. The main chat receives {{user}}'s present private state, not the whole inner history.
+What the outgoing prompt carries from the inner life. Two depth settings: exchange depth for {{user}} (default 1) and a separate exchange depth for all other voices (default 1). Depth is judged per voice: every voice whose non-hidden exchange falls within its applicable depth shows at its anchor. Voices never compete for slots, so one talkative mind cannot crowd another out. Multiple voices' blocks coexist under the same anchor. Hide always overrides. The main chat receives each mind's present private state, not the whole inner history.

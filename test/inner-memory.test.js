@@ -276,7 +276,7 @@ test('each in-slice exchange appears once, directly below its anchor, in exchang
     assert.match(mainChat, /<inner-exchange>/);
     assert.match(mainChat, /<\/inner-exchange>/);
     assert.match(mainChat, /\{\{user\}\}'s private inner exchange/);
-    assert.match(mainChat, /NPCs and the World/);
+    assert.match(mainChat, /imperceptible to everyone except \{\{user\}\}/);
     assert.match(mainChat, /IV: gamma thought/);
     assert.match(mainChat, /\{\{user\}\}: gamma answer/);
     assert.match(mainChat, /IV: delta thought/);

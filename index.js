@@ -1141,6 +1141,7 @@ function getSettings() {
         searchHotkeyEnabled: true,
         contextDepth: 15,
         exchangeDepth: 1,
+        otherVoicesDepth: 1,
         localHistoryLimit: 50,
         connectionSource: 'default',
         connectionProfileId: '',
@@ -4139,6 +4140,9 @@ const _SETTINGS_DEF = [
     { key: 'contextDepth', stId: 'iv-depth-slider', spId: 'iv-sp-depth-slider', type: 'slider', toVal: Number,
       stValId: 'iv-depth-val', spValId: 'iv-sp-depth-val', updCtx: true, profileKey: true },
     { key: 'exchangeDepth', stId: 'iv-exchange-depth', spId: 'iv-sp-exchange-depth', type: 'input',
+      toVal: v => { const n = parseInt(v, 10); return Number.isFinite(n) ? Math.max(0, n) : 1; },
+      onChange: () => Promise.resolve().then(function () { return simulationView; }).then(m => m.syncSimulationView()) },
+    { key: 'otherVoicesDepth', stId: 'iv-other-voices-depth', spId: 'iv-sp-other-voices-depth', type: 'input',
       toVal: v => { const n = parseInt(v, 10); return Number.isFinite(n) ? Math.max(0, n) : 1; },
       onChange: () => Promise.resolve().then(function () { return simulationView; }).then(m => m.syncSimulationView()) },
     { key: 'portrayStyle', stId: 'iv-portray-style', spId: 'iv-sp-portray-style', type: 'select',
@@ -9953,10 +9957,15 @@ function promptKey(anchorIndex, ownerVoice = USER_VOICE) {
     return `${KEY_PREFIX}${anchorIndex}:${ownerVoice}`;
 }
 
-function exchangeDepthOf(settings) {
-    if (settings.exchangeDepth === undefined || settings.exchangeDepth === null) return 1;
-    const n = parseInt(settings.exchangeDepth, 10);
+function parseDepth(value) {
+    if (value === undefined || value === null) return 1;
+    const n = parseInt(value, 10);
     return Number.isFinite(n) ? Math.max(0, n) : 1;
+}
+
+function depthForVoice(settings, ownerVoice) {
+    if (!ownerVoice || ownerVoice === USER_VOICE) return parseDepth(settings.exchangeDepth);
+    return parseDepth(settings.otherVoicesDepth);
 }
 
 function visibleAnchoredExchanges(conversation) {
@@ -9966,7 +9975,7 @@ function visibleAnchoredExchanges(conversation) {
     );
 }
 
-const EXCHANGE_BLOCK_FRAME = "This is {{voice}}'s private inner exchange — one mind talking to itself. It is imperceptible to everyone except {{voice}}; NPCs and the World cannot perceive it. IV: is the Inner Voice; {{voice}}: is {{voice}}.";
+const EXCHANGE_BLOCK_FRAME = "This is {{voice}}'s private inner exchange — one mind talking to itself — imperceptible to everyone except {{voice}}. IV: is the Inner Voice; {{voice}}: is {{voice}}.";
 
 function renderExchangeBlock(turns, ownerVoice = USER_VOICE) {
     const body = (turns || []).map(t => {
@@ -9980,9 +9989,19 @@ function renderExchangeBlock(turns, ownerVoice = USER_VOICE) {
 }
 
 function assembleSimulationView(conversation, settings, chatLength) {
-    const n = exchangeDepthOf(settings);
-    if (n === 0 || !chatLength) return [];
-    const selected = visibleAnchoredExchanges(conversation).slice(-n);
+    if (!chatLength) return [];
+    const byVoice = new Map();
+    for (const e of visibleAnchoredExchanges(conversation)) {
+        const voice = e.ownerVoice || USER_VOICE;
+        if (!byVoice.has(voice)) byVoice.set(voice, []);
+        byVoice.get(voice).push(e);
+    }
+    const selected = [];
+    for (const [voice, exchanges] of byVoice) {
+        const n = depthForVoice(settings, voice);
+        if (n === 0) continue;
+        selected.push(...exchanges.slice(-n));
+    }
     return selected.map(e => ({
         anchorIndex: e.anchorIndex,
         ownerVoice: e.ownerVoice,

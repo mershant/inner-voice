@@ -108,6 +108,7 @@ export function getSettings() {
         searchHotkeyEnabled: true,
         contextDepth: 15,
         exchangeDepth: 1,
+        otherVoicesDepth: 1,
         localHistoryLimit: 50,
         connectionSource: 'default',
         connectionProfileId: '',

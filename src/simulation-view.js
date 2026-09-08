@@ -13,10 +13,15 @@ function promptKey(anchorIndex, ownerVoice = USER_VOICE) {
     return `${KEY_PREFIX}${anchorIndex}:${ownerVoice}`;
 }
 
-function exchangeDepthOf(settings) {
-    if (settings.exchangeDepth === undefined || settings.exchangeDepth === null) return 1;
-    const n = parseInt(settings.exchangeDepth, 10);
+function parseDepth(value) {
+    if (value === undefined || value === null) return 1;
+    const n = parseInt(value, 10);
     return Number.isFinite(n) ? Math.max(0, n) : 1;
+}
+
+function depthForVoice(settings, ownerVoice) {
+    if (!ownerVoice || ownerVoice === USER_VOICE) return parseDepth(settings.exchangeDepth);
+    return parseDepth(settings.otherVoicesDepth);
 }
 
 function visibleAnchoredExchanges(conversation) {
@@ -26,7 +31,7 @@ function visibleAnchoredExchanges(conversation) {
     );
 }
 
-export const EXCHANGE_BLOCK_FRAME = "This is {{voice}}'s private inner exchange — one mind talking to itself. It is imperceptible to everyone except {{voice}}; NPCs and the World cannot perceive it. IV: is the Inner Voice; {{voice}}: is {{voice}}.";
+export const EXCHANGE_BLOCK_FRAME = "This is {{voice}}'s private inner exchange — one mind talking to itself — imperceptible to everyone except {{voice}}. IV: is the Inner Voice; {{voice}}: is {{voice}}.";
 
 export function renderExchangeBlock(turns, ownerVoice = USER_VOICE) {
     const body = (turns || []).map(t => {
@@ -40,9 +45,19 @@ export function renderExchangeBlock(turns, ownerVoice = USER_VOICE) {
 }
 
 export function assembleSimulationView(conversation, settings, chatLength) {
-    const n = exchangeDepthOf(settings);
-    if (n === 0 || !chatLength) return [];
-    const selected = visibleAnchoredExchanges(conversation).slice(-n);
+    if (!chatLength) return [];
+    const byVoice = new Map();
+    for (const e of visibleAnchoredExchanges(conversation)) {
+        const voice = e.ownerVoice || USER_VOICE;
+        if (!byVoice.has(voice)) byVoice.set(voice, []);
+        byVoice.get(voice).push(e);
+    }
+    const selected = [];
+    for (const [voice, exchanges] of byVoice) {
+        const n = depthForVoice(settings, voice);
+        if (n === 0) continue;
+        selected.push(...exchanges.slice(-n));
+    }
     return selected.map(e => ({
         anchorIndex: e.anchorIndex,
         ownerVoice: e.ownerVoice,
