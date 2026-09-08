@@ -11,7 +11,7 @@ export function resolveVoiceName(ownerVoice = USER_VOICE) {
     return ownerVoice;
 }
 
-export function expandVoiceMacro(text, ownerVoice = USER_VOICE) {
+export function resolveVoiceMacroForInnerChat(text, ownerVoice = USER_VOICE) {
     if (!text) return text;
     return String(text).replace(/\{\{voice\}\}/gi, resolveVoiceName(ownerVoice));
 }
@@ -19,7 +19,7 @@ export function expandVoiceMacro(text, ownerVoice = USER_VOICE) {
 // Templates keep {{voice}} for the thinking mind. In the {{user}} session that
 // fills back to {{user}} so assembled prompt text is unchanged; other owners
 // fill to the character name.
-export function applyVoiceMacro(text, ownerVoice = USER_VOICE) {
+export function prepareVoiceMacroForHostPrompt(text, ownerVoice = USER_VOICE) {
     if (!text) return text;
     const filled = !ownerVoice || ownerVoice === USER_VOICE
         ? USER_VOICE

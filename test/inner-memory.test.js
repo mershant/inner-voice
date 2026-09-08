@@ -50,16 +50,22 @@ const stub = {
     chatId: 'chat-a',
     chatMetadata: {},
     extensionSettings: {},
+    characters: [{ name: 'Kyrine', avatar: 'kyrine.png', data: {} }],
+    characterId: 0,
+    groupId: null,
+    groups: [],
 };
 
 globalThis.SillyTavern = {
     getContext() {
         return {
             chat: stub.chat,
-            characterId: 0,
-            characters: [{ name: 'Kyrine' }],
+            characterId: stub.characterId,
+            characters: stub.characters,
+            groupId: stub.groupId,
+            groups: stub.groups,
             name1: 'User',
-            name2: 'Kyrine',
+            name2: stub.characters[stub.characterId]?.name || 'Kyrine',
             extensionSettings: stub.extensionSettings,
             saveSettingsDebounced() {},
             saveMetadata() {},
@@ -79,6 +85,8 @@ const {
     setExchangeHidden,
     isExchangeHidden,
     expandMacros,
+    createVoiceSession,
+    setActiveVoice,
 } = await import('../src/conversation.js');
 const { assembleMessages, buildSystemContent } = await import('../src/api.js');
 const { DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPTS, DEFAULT_MEMORY_PROMPT, LEGACY_MEMORY_PROMPTS, DEFAULT_TOOLS_PROMPT } = await import('../src/constants.js');
@@ -104,6 +112,10 @@ async function reset() {
     stub.chatId = 'chat-a';
     stub.chatMetadata = {};
     stub.extensionSettings = {};
+    stub.characters = [{ name: 'Kyrine', avatar: 'kyrine.png', data: {} }];
+    stub.characterId = 0;
+    stub.groupId = null;
+    stub.groups = [];
     await initConversation({ forceReset: true });
 }
 
@@ -163,6 +175,44 @@ test('the payload carries exactly the non-hidden exchanges', async () => {
     assert.ok(!text.includes('first-exchange thought'));
     assert.ok(!text.includes('first-exchange answer'));
     assert.ok(text.includes('second-exchange thought'));
+});
+
+test('an NPC session remembers only its own exchanges and names that character as the first-person voice', async () => {
+    const conv = getConversation();
+    addTurn(conv, 'user', 'persona-only private thought');
+    createVoiceSession(conv, { id: 'kyrine.png', name: 'Kyrine' });
+    setActiveVoice(conv, 'Kyrine');
+    addTurn(conv, 'user', 'kyrine-only private doubt');
+    addTurn(conv, 'assistant', 'I cannot let Mira see me hesitate.');
+
+    const messages = await assembleMessages(conv, getEffectiveSettings(), null);
+    const text = payloadText(messages);
+    const system = messages.find(m => m.role === 'system')?.content || '';
+
+    assert.ok(text.includes('kyrine-only private doubt'));
+    assert.ok(text.includes('I cannot let Mira see me hesitate.'));
+    assert.ok(!text.includes('persona-only private thought'));
+    assert.match(system, /Kyrine:\s*you\b/i);
+    assert.match(system, /first person/i);
+});
+
+test("an NPC session's inner memory includes that bound character card, not another cast member's", async () => {
+    stub.groupId = 'group-1';
+    stub.groups = [{ id: 'group-1', members: ['kyrine.png', 'mira.png'] }];
+    stub.characters = [
+        { name: 'Kyrine', avatar: 'kyrine.png', data: { description: 'KYRINE-CARD-PRIVATE-RIVER' } },
+        { name: 'Mira', avatar: 'mira.png', data: { description: 'MIRA-CARD-PRIVATE-GATE' } },
+    ];
+    const conv = getConversation();
+    createVoiceSession(conv, { id: 'kyrine.png', name: 'Kyrine' });
+    setActiveVoice(conv, 'Kyrine');
+
+    const system = (await assembleMessages(conv, getEffectiveSettings(), null))[0].content;
+
+    assert.ok(system.includes('<character name="Kyrine">'));
+    assert.ok(system.includes('KYRINE-CARD-PRIVATE-RIVER'));
+    assert.ok(!system.includes('<character name="Mira">'));
+    assert.ok(!system.includes('MIRA-CARD-PRIVATE-GATE'));
 });
 
 test('unhiding an exchange restores it to the payload', async () => {

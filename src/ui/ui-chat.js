@@ -1,6 +1,7 @@
 import { I, EXT_DISPLAY, THEME_PRESETS, WIN_ID } from '../constants.js';
 import { state } from '../state.js';
-import { getSettings, saveSettings, getConversation, saveConversation, deleteMsg, truncateAfter, truncateFrom, expandMacros, getEffectiveSettings, getBindingKey, initConversation, getVisibleTurns, getExchanges, getLiveEdgeIndex, isExchangeHidden, isExchangeManuallyHidden, isAnchorHiddenInMainChat, setExchangeHidden } from '../conversation.js';
+import { getSettings, saveSettings, getConversation, saveConversation, deleteMsg, truncateAfter, truncateFrom, expandMacros, getEffectiveSettings, getBindingKey, initConversation, getVisibleTurns, getVoiceTurns, getExchanges, getLiveEdgeIndex, getActiveVoice, isExchangeHidden, isExchangeManuallyHidden, isAnchorHiddenInMainChat, setExchangeHidden } from '../conversation.js';
+import { USER_VOICE } from '../voice.js';
 import { _dbgAdd } from '../utils/util-debug.js';
 import { escHtml, autoResize, showCustomDialog, copyText } from '../utils/util-dom.js';
 import { getCharInfo } from '../utils/util-st.js';
@@ -68,14 +69,14 @@ export function isSegmentClosed(anchorIndex) {
 }
 
 export function nearestSegmentAbove(conversation, anchorIndex) {
-    const segments = getExchanges(conversation);
+    const segments = getExchanges(conversation, getActiveVoice());
     const idx = segments.findIndex(s => s.anchorIndex === anchorIndex);
     if (idx <= 0) return null;
     return segments[idx - 1].anchorIndex;
 }
 
 export function nearestSegmentBelow(conversation, anchorIndex) {
-    const segments = getExchanges(conversation);
+    const segments = getExchanges(conversation, getActiveVoice());
     const idx = segments.findIndex(s => s.anchorIndex === anchorIndex);
     if (idx === -1 || idx === segments.length - 1) return null;
     return segments[idx + 1].anchorIndex;
@@ -665,8 +666,10 @@ export function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
 // ─── Swipes and Generation ──────────────────────────────────────────────────────
 
 export function getLastAssistantMsgId(conversation) {
+    const ownerVoice = getActiveVoice();
     for (let i = conversation.messages.length - 1; i >= 0; i--) {
         const m = conversation.messages[i];
+        if ((m.ownerVoice || USER_VOICE) !== ownerVoice) continue;
         if (m.role === 'user') return null;
         if (m.role === 'assistant') {
             return m.id;
@@ -733,6 +736,7 @@ export async function _runSwipeRegen(conversation, msgId, wrapEl) {
     if (state.generating) return;
     const msgData = conversation.messages.find(m => m.id === msgId);
     if (!msgData) return;
+    const ownerVoice = msgData.ownerVoice || USER_VOICE;
 
     if (!msgData.swipes) {
         msgData.swipes = [{ content: msgData.content, reasoning: msgData.reasoning || null }];
@@ -814,11 +818,11 @@ export async function _runSwipeRegen(conversation, msgId, wrapEl) {
         const tempConversation = { ...conversation, messages: conversation.messages.filter(m => m.id !== msgId) };
         if (!apiMod) throw new Error("API module not loaded");
         
-        const builtMessages = await apiMod.assembleMessages(tempConversation, settings, null);
+        const builtMessages = await apiMod.assembleMessages(tempConversation, settings, null, ownerVoice);
         const fullPromptText = builtMessages.map(m => m.content).join('\n');
         const tokensIn = await apiMod.estimateTokens(fullPromptText);
 
-        const result = await apiMod.callGenerate(tempConversation, settings, null, onChunk);
+        const result = await apiMod.callGenerate(tempConversation, settings, null, onChunk, undefined, ownerVoice);
         cleanupCursor();
 
         if (result === null) {
@@ -1115,7 +1119,9 @@ export async function handleMessageRegen(wrapEl, msg) {
     if (idx === -1) return;
 
     const isUser = msg.role === 'user';
-    const actualMsgsAfter = conversation.messages.slice(idx + 1);
+    const ownerVoice = msg.ownerVoice || USER_VOICE;
+    const actualMsgsAfter = conversation.messages.slice(idx + 1)
+        .filter(m => (m.ownerVoice || USER_VOICE) === ownerVoice);
     const msgsAfterCount = actualMsgsAfter.length;
 
     let needsConfirm = false;
@@ -1172,7 +1178,7 @@ export async function handleDelete(wrapEl, msg) {
         removeMsgEl(msg.id);
     }
     updateMsgCount(conversation);
-    if (!conversation.messages.length) renderConversation(conversation);
+    if (!getVoiceTurns(conversation).length) renderConversation(conversation);
 }
 
 function encodeAnchor(anchorIndex) {
@@ -1186,8 +1192,9 @@ function decodeAnchor(value) {
 }
 
 function paintHideControl(segment, conversation, anchorIndex) {
-    const hidden = isExchangeHidden(conversation, anchorIndex);
-    const locked = isAnchorHiddenInMainChat(anchorIndex) && !isExchangeManuallyHidden(conversation, anchorIndex);
+    const ownerVoice = getActiveVoice();
+    const hidden = isExchangeHidden(conversation, anchorIndex, ownerVoice);
+    const locked = isAnchorHiddenInMainChat(anchorIndex) && !isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice);
     segment.classList.toggle('iv-segment-hidden', hidden);
     const btn = segment.querySelector('.iv-hide-toggle');
     if (!btn) return;
@@ -1242,7 +1249,8 @@ function createSegment(conversation, anchorIndex) {
     btn.addEventListener('click', e => {
         e.stopPropagation();
         const conv = getConversation();
-        setExchangeHidden(conv, anchorIndex, !isExchangeManuallyHidden(conv, anchorIndex));
+        const ownerVoice = getActiveVoice();
+        setExchangeHidden(conv, anchorIndex, !isExchangeManuallyHidden(conv, anchorIndex, ownerVoice), ownerVoice);
         syncExchangeHiddenUi(conv);
     });
 
@@ -1357,7 +1365,8 @@ export function renderConversation(conversation) {
     const c = document.getElementById('iv-messages');
     if (!c) return;
     c.innerHTML = '';
-    if (!conversation.messages.length) {
+    const messages = getVoiceTurns(conversation);
+    if (!messages.length) {
         c.innerHTML = `
             <div class="iv-empty-state">
                 <div class="iv-empty-icon">${I.bot}</div>
@@ -1367,7 +1376,7 @@ export function renderConversation(conversation) {
         updateMsgCount(conversation);
         return;
     }
-    for (const msg of conversation.messages) {
+    for (const msg of messages) {
         if (msg.isLBHistory) {
             appendLBHistoryEl(msg);
             continue;
@@ -1386,6 +1395,7 @@ export function renderConversation(conversation) {
 export function appendMsgEl(msg, isStreamInit = false) {
     const c = document.getElementById('iv-messages');
     if (!c) return;
+    if ((msg.ownerVoice || USER_VOICE) !== getActiveVoice()) return;
     c.querySelector('.iv-empty-state')?.remove();
 
     const conversation = getConversation();
@@ -1458,7 +1468,7 @@ let _pendingTokenCalc = false;
 
 export function updateMsgCount(conversation) {
     const el = document.getElementById('iv-msg-count');
-    if (el && conversation) el.textContent = `${conversation.messages.length} msgs`;
+    if (el && conversation) el.textContent = `${getVoiceTurns(conversation).length} msgs`;
 
     const tel = document.getElementById('iv-token-count');
     if (!tel || !conversation) return;
@@ -1481,7 +1491,9 @@ export function updateMsgCount(conversation) {
                                 id: 'tmp', 
                                 role: 'user', 
                                 content: currentInput, 
-                                timestamp: Date.now()
+                                timestamp: Date.now(),
+                                anchorIndex: getLiveEdgeIndex(),
+                                ownerVoice: getActiveVoice(),
                             });
                         }
                         const builtMsgs = await apiMod.assembleMessages(tempConv, settings, null);
@@ -2065,14 +2077,7 @@ export async function onChatChanged() {
         setGeneratingState(false);
     }
     state.lastChatLen = -1;
-    
-    const badge = document.getElementById('iv-char-badge');
-    if (badge) {
-        const ctx = SillyTavern.getContext(); const char = ctx.characters?.[ctx.characterId];
-        if (char) { badge.textContent = char.name; badge.style.display = ''; }
-        else { badge.style.display = 'none'; }
-    }
-    
+
     await initConversation();
     
     if (uiSetMod) {
@@ -2085,6 +2090,7 @@ export async function onChatChanged() {
     
     updateDepthSlidersMax();
     updatePickBtnState();
+    import('./ui-voice-sessions.js').then(m => m.refreshVoiceSessionPicker()).catch(() => {});
 }
 
 export function toggleSearchWholeWord() {

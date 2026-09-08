@@ -20,9 +20,30 @@
     </div>
 
     <div class="iv-toolbar">
-        <label class="iv-depth-label" title="Main chat messages injected into each request">Ctx</label>
-        <input type="range" id="iv-depth-slider" class="iv-slider iv-depth-slider" min="0" max="100" step="1" value="15">
-        <span class="iv-depth-val iv-depth-clickable" id="iv-depth-val" title="Click to enter exact value">15</span>
+        <div class="iv-sess-wrap">
+            <div class="iv-sess-dropdown" id="iv-sess-dropdown">
+                <button class="iv-sess-trigger" id="iv-sess-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+                    <span class="iv-sess-trigger-name" id="iv-sess-name">User</span>
+                    ${I.chevron}
+                </button>
+                <div class="iv-sess-panel" id="iv-sess-panel">
+                    <div class="iv-sess-list" id="iv-sess-list" role="listbox" aria-label="Voice sessions"></div>
+                    <div class="iv-sess-footer">
+                        <button class="iv-sess-new-btn" id="iv-new-sess-btn" type="button">
+                            ${I.plus}<span>New cast session</span>
+                        </button>
+                        <div class="iv-sess-cast-list" id="iv-sess-cast-list" style="display:none"></div>
+                    </div>
+                </div>
+            </div>
+            <button class="iv-tbtn iv-tbtn-danger" id="iv-del-sess-btn" type="button" title="The default voice session cannot be deleted" disabled>${I.trash}</button>
+        </div>
+        <div class="iv-toolbar-rest">
+        <div class="iv-depth-cluster">
+            <label class="iv-depth-label" title="Main chat messages injected into each request">Ctx</label>
+            <input type="range" id="iv-depth-slider" class="iv-slider iv-depth-slider" min="0" max="100" step="1" value="15">
+            <span class="iv-depth-val iv-depth-clickable" id="iv-depth-val" title="Click to enter exact value">15</span>
+        </div>
         <div class="iv-toolbar-sep"></div>
         <div class="iv-pick-wrap">
             <button class="iv-tbtn" id="iv-pick-btn" title="Pick specific chat messages for context (replaces Ctx slider)">${I.pick}</button>
@@ -45,6 +66,7 @@
             <span class="iv-token-count" id="iv-token-count" title="Estimated payload tokens"></span>
             <span class="iv-msg-count" id="iv-msg-count"></span>
         </span>
+        </div>
     </div>
 
     <div class="iv-search-bar" id="iv-search-bar">

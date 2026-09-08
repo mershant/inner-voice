@@ -80,7 +80,7 @@ const {
     addTurn,
     setExchangeHidden,
 } = await import('../src/conversation.js');
-const { syncSimulationView, EXCHANGE_BLOCK_FRAME } = await import('../src/simulation-view.js');
+const { renderExchangeBlock, syncSimulationView } = await import('../src/simulation-view.js');
 
 function mainMsg(text, isUser = false) {
     return { mes: text, is_user: isUser };
@@ -168,12 +168,6 @@ test('depth N injects the N most recent non-hidden exchanges, each below its own
     assert.ok(!texts.some(t => t.includes('old thought')));
 });
 
-test('the exchange block template uses {{voice}} for the thinking mind', () => {
-    assert.match(EXCHANGE_BLOCK_FRAME, /\{\{voice\}\}'s private inner exchange/);
-    assert.match(EXCHANGE_BLOCK_FRAME, /\{\{voice\}\}: is \{\{voice\}\}/);
-    assert.match(EXCHANGE_BLOCK_FRAME, /IV: is the Inner Voice/);
-});
-
 test('the block frame carries the privacy explanation and IV:/{{user}}: labels', async () => {
     stub.chat = [mainMsg('Kyrine teases her.')];
     const conv = getConversation();
@@ -195,4 +189,34 @@ test('the block frame carries the privacy explanation and IV:/{{user}}: labels',
     assert.match(block, /IV: wtf\? how can she talk to us like that\?/);
     assert.match(block, /\{\{user\}\}: I don't know\. It still stings\./);
     assert.ok(!/assistant|co-?writer|external/i.test(block));
+});
+
+test('two voices under one anchor keep separate outgoing blocks', () => {
+    stub.chat = [mainMsg('Kyrine waits.')];
+    const conv = getConversation();
+    addTurn(conv, 'user', 'persona thought');
+    addTurn(conv, 'user', 'npc thought', { ownerVoice: 'Kyrine' });
+    stub.extensionSettings.inner_voice = { ...(stub.extensionSettings.inner_voice || {}), exchangeDepth: 2 };
+
+    syncSimulationView();
+    const keys = Object.keys(stub.extensionPrompts).filter(k => stub.extensionPrompts[k]?.value);
+    assert.equal(keys.length, 2);
+    const texts = keys.map(k => stub.extensionPrompts[k].value);
+    assert.equal(texts.filter(t => t.includes('persona thought')).length, 1);
+    assert.equal(texts.filter(t => t.includes('npc thought')).length, 1);
+    assert.ok(texts.some(t => t.includes("{{user}}'s private inner exchange")));
+    assert.ok(texts.some(t => t.includes("Kyrine's private inner exchange")));
+});
+
+test('an NPC exchange names its owner and is private from every other mind, including {{user}}', () => {
+    const block = renderExchangeBlock([
+        { role: 'user', content: 'Maybe Mira is right.' },
+        { role: 'assistant', content: 'I hate that she might be.' },
+    ], 'Kyrine');
+
+    assert.match(block, /Kyrine's private inner exchange/);
+    assert.match(block, /imperceptible to everyone except Kyrine/i);
+    assert.match(block, /IV: Maybe Mira is right\./);
+    assert.match(block, /Kyrine: I hate that she might be\./);
+    assert.ok(!block.includes('{{user}}'));
 });

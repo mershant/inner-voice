@@ -1,7 +1,7 @@
 import { DEFAULT_SYSTEM_PROMPT, EXT_DISPLAY } from './constants.js';
-import { applyVoiceMacro } from './voice.js';
+import { prepareVoiceMacroForHostPrompt } from './voice.js';
 import { state } from './state.js';
-import { getEffectiveSettings, saveConversation, addTurn, getConversation, getLiveEdgeIndex, getExchangeAt, isExchangeHidden } from './conversation.js';
+import { getEffectiveSettings, saveConversation, addTurn, getConversation, getLiveEdgeIndex, getExchangeAt, isExchangeHidden, getActiveVoice, getVoiceSession } from './conversation.js';
 import { renderExchangeBlock } from './simulation-view.js';
 import { _dbgAdd } from './utils/util-debug.js';
 import { escHtml } from './utils/util-dom.js';
@@ -42,9 +42,9 @@ function visibleAssistantText(text) {
     return stripMemoryBlock(splitPortraySignal(raw).visible);
 }
 
-export async function buildSystemContent(settings) {
+export async function buildSystemContent(settings, ownerVoice = getActiveVoice(), conversation = getConversation()) {
     let sysPromptRaw = (typeof settings.systemPrompt === 'string' && settings.systemPrompt.trim()) ? settings.systemPrompt : DEFAULT_SYSTEM_PROMPT;
-    sysPromptRaw = applyVoiceMacro(sysPromptRaw);
+    sysPromptRaw = prepareVoiceMacroForHostPrompt(sysPromptRaw, ownerVoice);
     const parts = [_ensureWrapped(sysPromptRaw, 'system_prompt')];
     const ctx = SillyTavern.getContext();
 
@@ -72,7 +72,7 @@ export async function buildSystemContent(settings) {
     const lorebookBlock = await buildLorebookContextBlock(settings);
     if (lorebookBlock) parts.push(lorebookBlock);
 
-    const characterBlock = buildCharacterContextBlock(settings);
+    const characterBlock = buildCharacterContextBlock(settings, getVoiceSession(conversation, ownerVoice));
     if (characterBlock) parts.push('\n\n' + characterBlock);
 
     {
@@ -140,8 +140,8 @@ export function getMainChatSlice(depth) {
     return ctx.chat.slice(start).map((m, i) => extractData(m, start + i));
 }
 
-export async function assembleMessages(conversation, settings, pendingUserText) {
-    const messages = [{ role: 'system', content: await buildSystemContent(settings) }];
+export async function assembleMessages(conversation, settings, pendingUserText, ownerVoice = getActiveVoice()) {
+    const messages = [{ role: 'system', content: await buildSystemContent(settings, ownerVoice, conversation) }];
     const depth = Math.max(0, parseInt(settings.contextDepth) || 0);
     const hasPicked = !!(conversation.pickedChatIndices && conversation.pickedChatIndices.length > 0);
     
@@ -184,8 +184,8 @@ export async function assembleMessages(conversation, settings, pendingUserText) 
             // their exchanges with them; the UI keeps every exchange readable.
             const block = visibleSlice.map(m => {
                 const msgXml = `<msg index="${m.chatIndex}" role="${m.role === 'user' ? 'user' : 'assistant'}">\n${m.content}\n</msg>`;
-                if (isExchangeHidden(conversation, m.chatIndex)) return msgXml;
-                const exchange = getExchangeAt(conversation, m.chatIndex);
+                if (isExchangeHidden(conversation, m.chatIndex, ownerVoice)) return msgXml;
+                const exchange = getExchangeAt(conversation, m.chatIndex, ownerVoice);
                 if (!exchange || !exchange.turns.length) return msgXml;
                 return `${msgXml}\n\n${renderExchangeBlock(exchange.turns, exchange.ownerVoice)}`;
             }).join('\n\n');
@@ -300,9 +300,9 @@ export async function estimateTokens(text) {
     }
 }
 
-export async function callGenerate(conversation, settings, pendingText, onChunk, messagesOverride) {
+export async function callGenerate(conversation, settings, pendingText, onChunk, messagesOverride, ownerVoice = getActiveVoice()) {
     const ctx = SillyTavern.getContext();
-    const messages = messagesOverride || await assembleMessages(conversation, settings, pendingText);
+    const messages = messagesOverride || await assembleMessages(conversation, settings, pendingText, ownerVoice);
     const maxTokens = parseInt(settings.maxTokens) || 8200;
 
     const abort = new AbortController();
@@ -732,6 +732,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
     state.generating = true;
     state.activeToolCalls = [];
     const settings = getEffectiveSettings();
+    const ownerVoice = getActiveVoice();
     setGeneratingState(true);
 
     let streamMsgId = null;
@@ -756,7 +757,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
         streamAccumReasoning = reasoning;
 
         if (!streamMsgId) {
-            const placeholder = { id: `msg_${Date.now()}`, role: 'assistant', content: '', reasoning: null, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex() };
+            const placeholder = { id: `msg_${Date.now()}`, role: 'assistant', content: '', reasoning: null, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ownerVoice };
             conversation.messages.push(placeholder);
             streamMsgId = placeholder.id;
             
@@ -827,11 +828,11 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
 
     try {
         if (addUserMsg && userText) {
-            const msgObj = addTurn(conversation, 'user', userText);
+            const msgObj = addTurn(conversation, 'user', userText, { ownerVoice });
             appendMsgEl(msgObj);
         }
 
-        const fullMessages = await assembleMessages(conversation, settings, userText || null);
+        const fullMessages = await assembleMessages(conversation, settings, userText || null, ownerVoice);
         const fullPromptText = fullMessages.map(m => m.content).join('\n');
         const tokensIn = await estimateTokens(fullPromptText);
 
@@ -844,7 +845,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
             tokensIn
         });
 
-        let result = await callGenerate(conversation, settings, userText || null, onChunk);
+        let result = await callGenerate(conversation, settings, userText || null, onChunk, undefined, ownerVoice);
 
         cleanupCursor();
         
@@ -948,7 +949,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
                 if (bar) bar.style.display = 'flex';
 
                 for (const eh of extraHistory) {
-                    conversation.messages.push({ id: `tc_hist_${Date.now()}`, role: eh.role, content: eh.content, timestamp: Date.now(), _tcTemp: true });
+                    conversation.messages.push({ id: `tc_hist_${Date.now()}`, role: eh.role, content: eh.content, timestamp: Date.now(), ownerVoice, _tcTemp: true });
                 }
 
                 isStreaming = false;
@@ -964,7 +965,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
                 const nextResult = await callGenerate(tempConversation, settings, null, (t, r) => {
                     _updateLiveUI(t, r);
                     if (streamContentEl) streamContentEl.appendChild(cursor2);
-                });
+                }, undefined, ownerVoice);
 
                 conversation.messages = conversation.messages.filter(m => !m._tcTemp);
                 cursor2.remove();
@@ -1025,7 +1026,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
                 _renderMsgBodyContent(streamMsgEl, msg);
             }
         } else {
-            const newMsg = addTurn(conversation, 'assistant', fullText, { reasoning: fullReasoning || null, toolCalls: savedToolCalls });
+            const newMsg = addTurn(conversation, 'assistant', fullText, { ownerVoice, reasoning: fullReasoning || null, toolCalls: savedToolCalls });
             newMsg.swipes = [{ content: fullText, reasoning: fullReasoning || null }];
             newMsg.swipeIndex = 0;
             saveConversation();
@@ -1081,6 +1082,7 @@ export async function runContinue(conversation, targetMsgId) {
     if (state.generating) return;
     const targetMsg = conversation.messages.find(m => m.id === targetMsgId);
     if (!targetMsg || targetMsg.role !== 'assistant') return;
+    const ownerVoice = targetMsg.ownerVoice || getActiveVoice();
 
     state.generating = true;
     state.activeToolCalls = [];
@@ -1141,7 +1143,7 @@ export async function runContinue(conversation, targetMsgId) {
     };
 
     try {
-        const fullMessages = await assembleMessages(conversation, settings, CONTINUE_PROMPT);
+        const fullMessages = await assembleMessages(conversation, settings, CONTINUE_PROMPT, ownerVoice);
         const fullPromptText = fullMessages.map(m => m.content).join('\n');
         
         const tokensIn = await estimateTokens(fullPromptText);
@@ -1154,7 +1156,7 @@ export async function runContinue(conversation, targetMsgId) {
             tokensIn
         });
 
-        const result = await callGenerate(conversation, settings, CONTINUE_PROMPT, onChunk);
+        const result = await callGenerate(conversation, settings, CONTINUE_PROMPT, onChunk, undefined, ownerVoice);
         cleanupCursor();
 
         if (result === null) {

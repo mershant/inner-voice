@@ -49,6 +49,10 @@ test('{{voice}} resolves to the persona name in the {{user}} session', () => {
     assert.equal(expandMacros('{{voice}}'), 'Elaine');
 });
 
+test('{{voice}} resolves to a non-{{user}} owner while {{user}} stays the persona', () => {
+    assert.equal(expandMacros('{{voice}} speaks privately to {{user}}', 'Kyrine'), 'Kyrine speaks privately to Elaine');
+});
+
 test('{{user}} still resolves to the persona name', () => {
     assert.equal(expandMacros('{{user}}'), 'Elaine');
 });

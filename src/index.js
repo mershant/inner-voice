@@ -1,6 +1,6 @@
 import { EXT_DISPLAY, CHANGELOG, I, WIN_ID, ICON_ID, MODAL_ID, ICON_STORAGE_KEY } from './constants.js';
 import { state } from './state.js';
-import { getSettings, saveSettings, getConversation } from './conversation.js';
+import { getSettings, saveSettings, getConversation, getActiveVoice, getVoiceTurns } from './conversation.js';
 import { _dbgSetupGlobalErrorHandlers, _dbgSnapshotSettings } from './utils/util-debug.js';
 import { autoResize, copyText } from './utils/util-dom.js';
 
@@ -11,6 +11,7 @@ import { setupChatPickerListeners, onChatChanged, updateDepthSlidersMax, renderC
 import { checkChangelogAutoShow, setupChangelogListeners, openInspector, renderQuickPromptsBar } from './ui/ui-widgets.js';
 import { setupExternalWIChangeListener } from './features/feature-lorebook.js';
 import { setupLorebookManagerListeners, openLorebookManager } from './features/feature-lorebook-ui.js';
+import { refreshVoiceSessionPicker, setupVoiceSessionPicker } from './ui/ui-voice-sessions.js';
 
 import * as apiMod from './api.js';
 import { syncSimulationView } from './simulation-view.js';
@@ -161,11 +162,12 @@ function attachWindowListeners() {
     // Toolbar actions
     document.getElementById('iv-regen-btn')?.addEventListener('click', () => {
         const conv = getConversation();
-        if (!conv.messages.length || state.generating) return;
+        const voiceTurns = getVoiceTurns(conv, getActiveVoice());
+        if (!voiceTurns.length || state.generating) return;
         let lastUserIdx = -1;
-        for (let i = conv.messages.length - 1; i >= 0; i--) { if (conv.messages[i].role === 'user') { lastUserIdx = i; break; } }
+        for (let i = voiceTurns.length - 1; i >= 0; i--) { if (voiceTurns[i].role === 'user') { lastUserIdx = i; break; } }
         if (lastUserIdx === -1) return;
-        const userMsg = conv.messages[lastUserIdx];
+        const userMsg = voiceTurns[lastUserIdx];
         import('./conversation.js').then(m => m.truncateAfter(conv, userMsg.id));
         import('./ui/ui-chat.js').then(m => m.removeMsgElAfter(userMsg.id));
         apiMod.runGenerate(conv, userMsg.content, false);
@@ -359,6 +361,7 @@ async function init() {
     setupSettingsHandlers();
     updateSettingsUI();
     setupSettingsPanelListeners();
+    setupVoiceSessionPicker();
     setupChatPickerListeners();
     setupLorebookManagerListeners();
     setupExternalWIChangeListener();
@@ -386,6 +389,8 @@ async function init() {
     bringWindowToFront();
 
     await onChatChanged();
+    refreshVoiceSessionPicker();
+    renderConversation(getConversation());
     syncSimulationView();
 
     const es = ctx.eventSource || window.eventSource;
@@ -394,11 +399,13 @@ async function init() {
     if (es) {
         es.on(et.CHAT_CHANGED || 'chat_changed', async () => {
             await onChatChanged();
+            refreshVoiceSessionPicker();
             renderConversation(getConversation());
             syncSimulationView();
         });
         es.on(et.CHARACTER_SELECTED || 'character_selected', async () => {
             await onChatChanged();
+            refreshVoiceSessionPicker();
             renderConversation(getConversation());
             syncSimulationView();
         });

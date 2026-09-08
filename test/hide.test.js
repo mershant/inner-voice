@@ -217,3 +217,27 @@ test('unhiding the anchor message does not clear a hide toggle', () => {
     assert.equal(isExchangeHidden(conv, 0), true);
     assert.ok(conv.messages.some(m => m.content === 'still hidden thought'));
 });
+
+test('manual hide is scoped to one owner voice at an anchor', () => {
+    const conv = getConversation();
+    addTurn(conv, 'user', 'persona thought');
+    addTurn(conv, 'user', 'npc thought', { ownerVoice: 'Kyrine' });
+
+    setExchangeHidden(conv, 0, true, 'Kyrine');
+
+    assert.equal(isExchangeHidden(conv, 0, 'Kyrine'), true);
+    assert.equal(isExchangeHidden(conv, 0, '{{user}}'), false);
+    assert.deepEqual(getVisibleTurns(conv, '{{user}}').map(m => m.content), ['persona thought']);
+    assert.deepEqual(getVisibleTurns(conv, 'Kyrine'), []);
+});
+
+test('a hidden main-chat anchor auto-hides every owner voice at that anchor', () => {
+    const conv = getConversation();
+    addTurn(conv, 'user', 'persona thought');
+    addTurn(conv, 'user', 'npc thought', { ownerVoice: 'Kyrine' });
+    stub.chat[0].is_hidden = true;
+
+    assert.equal(isExchangeHidden(conv, 0, '{{user}}'), true);
+    assert.equal(isExchangeHidden(conv, 0, 'Kyrine'), true);
+    assert.deepEqual(conv.hiddenAnchors, []);
+});

@@ -13,18 +13,27 @@ import {
 } from './constants.js';
 import { _dbgAdd, _dbgDiffSettings } from './utils/util-debug.js';
 import { _repairJSON } from './utils/util-text.js';
-import { USER_VOICE, expandVoiceMacro } from './voice.js';
+import { USER_VOICE, resolveVoiceMacroForInnerChat } from './voice.js';
 
 // ─── The exchange spine ──────────────────────────────────────────────────────
 // One continuous inner conversation per main chat. Every turn is anchored to a
-// main-chat message (its anchorIndex). The set of turns sharing one anchor is
-// an exchange; a main-chat message holds at most one exchange. New turns are
-// only ever created at the live edge — the latest main-chat message. Older
-// exchanges stay readable but never grow.
+// main-chat message (its anchorIndex) and tagged with an owner voice. The set
+// of turns sharing one (anchor, voice) is an exchange; a main-chat message
+// holds at most one exchange per voice. New turns are only ever created at the
+// live edge — the latest main-chat message. Older exchanges stay readable but
+// never grow.
 
 function emptyConversation() {
-    return { messages: [], overrides: {}, pickedChatIndices: [], hiddenAnchors: [] };
+    return {
+        messages: [],
+        overrides: {},
+        pickedChatIndices: [],
+        hiddenAnchors: [],
+        voiceSessions: [{ ownerVoice: USER_VOICE, characterId: null }],
+    };
 }
+
+let _activeVoice = USER_VOICE;
 
 function normalizeConversation(conv) {
     const next = conv && typeof conv === 'object' ? conv : emptyConversation();
@@ -32,10 +41,35 @@ function normalizeConversation(conv) {
     if (!next.overrides || typeof next.overrides !== 'object') next.overrides = {};
     if (!Array.isArray(next.pickedChatIndices)) next.pickedChatIndices = [];
     if (!Array.isArray(next.hiddenAnchors)) next.hiddenAnchors = [];
+    if (!Array.isArray(next.voiceSessions)) next.voiceSessions = [];
     for (const m of next.messages) {
         if (m.anchorIndex === undefined) m.anchorIndex = null;
         if (!m.ownerVoice) m.ownerVoice = USER_VOICE;
     }
+    const sessions = [{ ownerVoice: USER_VOICE, characterId: null }];
+    const seen = new Set([USER_VOICE]);
+    for (const session of next.voiceSessions) {
+        const ownerVoice = typeof session?.ownerVoice === 'string' ? session.ownerVoice.trim() : '';
+        if (!ownerVoice || ownerVoice === USER_VOICE || seen.has(ownerVoice)) continue;
+        seen.add(ownerVoice);
+        sessions.push({
+            ownerVoice,
+            characterId: session.characterId === null || session.characterId === undefined
+                ? null
+                : String(session.characterId),
+        });
+    }
+    // Owner tags from the #34 prefactor remain reachable even if they predate
+    // the persisted picker list. A newly created session adds the exact card
+    // binding; an inferred one can still show its existing exchanges.
+    for (const m of next.messages) {
+        const ownerVoice = m.ownerVoice || USER_VOICE;
+        if (ownerVoice === USER_VOICE || seen.has(ownerVoice)) continue;
+        seen.add(ownerVoice);
+        sessions.push({ ownerVoice, characterId: null });
+    }
+    next.voiceSessions = sessions;
+    if (!seen.has(_activeVoice)) _activeVoice = USER_VOICE;
     return next;
 }
 
@@ -347,6 +381,7 @@ function conversationFromPayload(payload) {
 }
 
 export async function initConversation({ forceReset = false } = {}) {
+    _activeVoice = USER_VOICE;
     const ctx = SillyTavern.getContext();
     if (!ctx.chatMetadata) ctx.chatMetadata = {};
     const { charId, chatId } = getBindingKey();
@@ -482,6 +517,68 @@ export function getConversation() {
     return _conversation;
 }
 
+// Voice sessions are owner tags over the shared anchored exchange spine, not
+// separate chats. The active picker choice is deliberately runtime-only and
+// resets to {{user}} whenever the main chat is opened or changed.
+export function getVoiceSessions(conversation = getConversation()) {
+    return normalizeConversation(conversation).voiceSessions;
+}
+
+export function getVoiceSession(conversation, ownerVoice = _activeVoice) {
+    const voice = ownerVoice || USER_VOICE;
+    return getVoiceSessions(conversation).find(session => session.ownerVoice === voice) || null;
+}
+
+export function createVoiceSession(conversation, character) {
+    const ownerVoice = typeof character?.name === 'string' ? character.name.trim() : '';
+    const characterId = character?.id === null || character?.id === undefined
+        ? null
+        : String(character.id);
+    if (!ownerVoice || ownerVoice === USER_VOICE || characterId === null) return null;
+    const existing = getVoiceSession(conversation, ownerVoice);
+    if (existing) {
+        if (existing.characterId === null) {
+            existing.characterId = characterId;
+            saveConversation();
+        }
+        return existing;
+    }
+    const session = { ownerVoice, characterId };
+    conversation.voiceSessions.push(session);
+    saveConversation();
+    return session;
+}
+
+export function deleteVoiceSession(conversation, ownerVoice) {
+    const voice = ownerVoice || USER_VOICE;
+    if (voice === USER_VOICE || !getVoiceSession(conversation, voice)) return false;
+    const removedAnchors = new Set(
+        conversation.messages
+            .filter(m => (m.ownerVoice || USER_VOICE) === voice)
+            .map(m => m.anchorIndex === undefined ? null : m.anchorIndex)
+    );
+    conversation.messages = conversation.messages.filter(m => (m.ownerVoice || USER_VOICE) !== voice);
+    conversation.voiceSessions = conversation.voiceSessions.filter(session => session.ownerVoice !== voice);
+    conversation.hiddenAnchors = conversation.hiddenAnchors.filter(entry =>
+        ![...removedAnchors].some(anchor => entry === manualHideKey(anchor, voice))
+    );
+    if (_activeVoice === voice) _activeVoice = USER_VOICE;
+    saveConversation();
+    refreshSimulationView();
+    return true;
+}
+
+export function getActiveVoice() {
+    return _activeVoice;
+}
+
+export function setActiveVoice(conversation, ownerVoice) {
+    const voice = ownerVoice || USER_VOICE;
+    if (!getVoiceSession(conversation, voice)) return false;
+    _activeVoice = voice;
+    return true;
+}
+
 // ─── Exchange Spine Helpers ─────────────────────────────────────────────────
 
 export function genId(prefix) { return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`; }
@@ -505,7 +602,7 @@ function refreshSimulationView() {
 }
 
 export function addTurn(conversation, role, content, extra = {}) {
-    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ownerVoice: USER_VOICE, ...extra };
+    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ownerVoice: _activeVoice, ...extra };
     conversation.messages.push(msg);
     if (conversation.messages.length > 400) conversation.messages = conversation.messages.slice(-400);
     saveConversation();
@@ -520,32 +617,39 @@ export function addTurnAt(conversation, anchorIndex, role, content, extra = {}) 
     return addTurn(conversation, role, content, extra);
 }
 
-// Groups the conversation's turns into exchanges — one per anchor, in order.
-export function getExchanges(conversation) {
+// Groups turns into exchanges — one per (anchor, owner voice), in order.
+export function getExchanges(conversation, ownerVoice) {
     const groups = new Map();
     for (const m of conversation.messages) {
         const anchor = m.anchorIndex === undefined ? null : m.anchorIndex;
-        if (!groups.has(anchor)) {
-            groups.set(anchor, {
+        const voice = m.ownerVoice || USER_VOICE;
+        if (ownerVoice !== undefined && voice !== ownerVoice) continue;
+        const key = JSON.stringify([anchor, voice]);
+        if (!groups.has(key)) {
+            groups.set(key, {
                 anchorIndex: anchor,
-                ownerVoice: m.ownerVoice || USER_VOICE,
+                ownerVoice: voice,
                 turns: [],
             });
         }
-        groups.get(anchor).turns.push(m);
+        groups.get(key).turns.push(m);
     }
     return [...groups.values()];
 }
 
-export function getExchangeAt(conversation, anchorIndex) {
-    return getExchanges(conversation).find(e => e.anchorIndex === anchorIndex) || null;
+export function getExchangeAt(conversation, anchorIndex, ownerVoice = _activeVoice) {
+    return getExchanges(conversation, ownerVoice).find(e => e.anchorIndex === anchorIndex) || null;
 }
 
 // The exchange at the live edge — the only one that can still grow.
-export function getLiveExchange(conversation) {
+export function getLiveExchange(conversation, ownerVoice = _activeVoice) {
     const edge = getLiveEdgeIndex();
     if (edge === null) return null;
-    return getExchangeAt(conversation, edge);
+    return getExchangeAt(conversation, edge, ownerVoice);
+}
+
+export function getVoiceTurns(conversation, ownerVoice = _activeVoice) {
+    return conversation.messages.filter(m => (m.ownerVoice || USER_VOICE) === ownerVoice);
 }
 
 // ─── Hide ───────────────────────────────────────────────────────────────────
@@ -574,33 +678,47 @@ export function isAnchorHiddenInMainChat(anchorIndex) {
     }
 }
 
-export function isExchangeManuallyHidden(conversation, anchorIndex) {
+function manualHideKey(anchorIndex, ownerVoice = USER_VOICE) {
     const anchor = anchorIndex === undefined ? null : anchorIndex;
-    return conversation.hiddenAnchors.includes(anchor);
+    return ownerVoice === USER_VOICE ? anchor : JSON.stringify([anchor, ownerVoice]);
 }
 
-export function isExchangeHidden(conversation, anchorIndex) {
-    return isExchangeManuallyHidden(conversation, anchorIndex) || isAnchorHiddenInMainChat(anchorIndex);
+export function isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice = _activeVoice) {
+    return conversation.hiddenAnchors.includes(manualHideKey(anchorIndex, ownerVoice));
 }
 
-export function setExchangeHidden(conversation, anchorIndex, hidden) {
-    const has = isExchangeManuallyHidden(conversation, anchorIndex);
-    if (hidden && !has) conversation.hiddenAnchors.push(anchorIndex);
-    if (!hidden && has) conversation.hiddenAnchors = conversation.hiddenAnchors.filter(a => a !== anchorIndex);
+export function isExchangeHidden(conversation, anchorIndex, ownerVoice = _activeVoice) {
+    return isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice) || isAnchorHiddenInMainChat(anchorIndex);
+}
+
+export function setExchangeHidden(conversation, anchorIndex, hidden, ownerVoice = _activeVoice) {
+    const key = manualHideKey(anchorIndex, ownerVoice);
+    const has = isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice);
+    if (hidden && !has) conversation.hiddenAnchors.push(key);
+    if (!hidden && has) conversation.hiddenAnchors = conversation.hiddenAnchors.filter(entry => entry !== key);
     saveConversation();
     refreshSimulationView();
 }
 
 // The turns the Inner Voice remembers: every turn whose exchange is not hidden.
-export function getVisibleTurns(conversation) {
-    return conversation.messages.filter(m => !isExchangeHidden(conversation, m.anchorIndex));
+export function getVisibleTurns(conversation, ownerVoice = _activeVoice) {
+    return getVoiceTurns(conversation, ownerVoice).filter(m =>
+        !isExchangeHidden(conversation, m.anchorIndex, ownerVoice)
+    );
 }
 
 // ─── Turn Editing Helpers ───────────────────────────────────────────────────
 
 export function truncateAfter(conversation, msgId) {
     const idx = conversation.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { conversation.messages.splice(idx + 1); saveConversation(); refreshSimulationView(); }
+    if (idx !== -1) {
+        const ownerVoice = conversation.messages[idx].ownerVoice || USER_VOICE;
+        conversation.messages = conversation.messages.filter((m, messageIndex) =>
+            messageIndex <= idx || (m.ownerVoice || USER_VOICE) !== ownerVoice
+        );
+        saveConversation();
+        refreshSimulationView();
+    }
 }
 
 export function deleteMsg(conversation, msgId) {
@@ -610,14 +728,21 @@ export function deleteMsg(conversation, msgId) {
 
 export function truncateFrom(conversation, msgId) {
     const idx = conversation.messages.findIndex(m => m.id === msgId);
-    if (idx !== -1) { conversation.messages.splice(idx); saveConversation(); refreshSimulationView(); }
+    if (idx !== -1) {
+        const ownerVoice = conversation.messages[idx].ownerVoice || USER_VOICE;
+        conversation.messages = conversation.messages.filter((m, messageIndex) =>
+            messageIndex < idx || (m.ownerVoice || USER_VOICE) !== ownerVoice
+        );
+        saveConversation();
+        refreshSimulationView();
+    }
 }
 
 // ─── Macro Expansion Helper ────────────────────────────────────────────────
 
-export function expandMacros(text) {
+export function expandMacros(text, ownerVoice = _activeVoice) {
     if (!text) return text;
-    text = expandVoiceMacro(text);
+    text = resolveVoiceMacroForInnerChat(text, ownerVoice);
     try {
         const ctx = SillyTavern.getContext();
         if (typeof ctx.substituteParams === 'function') {

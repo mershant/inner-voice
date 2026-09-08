@@ -2,6 +2,7 @@ import { getSettings } from '../conversation.js';
 import { escHtml } from '../utils/util-dom.js';
 import { getTagsForCharacter, getAuthorsNote } from '../utils/util-st.js';
 import { _getAspectEvolutiaCharFields } from '../integrations/integ-evolutia.js';
+import { USER_VOICE } from '../voice.js';
 
 export function getEffectiveCharField(settings, k) {
     const ovKey = 'charField_' + k;
@@ -115,8 +116,16 @@ function buildSingleCharacterBlock(settings, entity) {
     return `<character name="${escHtml(char.name)}">\n${parts.join('\n\n')}\n</character>`;
 }
 
-export function buildCharacterContextBlock(settings) {
-    const entities = getActiveCharacterEntities();
+export function buildCharacterContextBlock(settings, voiceSession = null) {
+    let entities = getActiveCharacterEntities();
+    if (voiceSession?.ownerVoice && voiceSession.ownerVoice !== USER_VOICE) {
+        const bound = entities.find(entity =>
+            (voiceSession.characterId !== null && voiceSession.characterId !== undefined
+                && String(entity.id) === String(voiceSession.characterId))
+            || entity.name === voiceSession.ownerVoice
+        );
+        entities = bound ? [bound] : [];
+    }
     if (!entities.length) return '';
     const excluded = new Set(settings.charMgrExcluded || []);
     const blocks = entities

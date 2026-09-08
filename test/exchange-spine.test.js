@@ -70,6 +70,13 @@ const {
     getExchanges,
     getExchangeAt,
     getLiveExchange,
+    truncateAfter,
+    getVoiceSessions,
+    createVoiceSession,
+    deleteVoiceSession,
+    getActiveVoice,
+    setActiveVoice,
+    getVoiceTurns,
 } = await import('../src/conversation.js');
 
 function mainMsg(text, isUser = false) {
@@ -108,6 +115,32 @@ test('every exchange carries an owner voice, defaulting to {{user}}', () => {
     assert.equal(getLiveExchange(conv).ownerVoice, '{{user}}');
 });
 
+test('the default {{user}} voice session always exists, opens by default, and cannot be deleted', () => {
+    const conv = getConversation();
+
+    assert.deepEqual(getVoiceSessions(conv), [{ ownerVoice: '{{user}}', characterId: null }]);
+    assert.equal(getActiveVoice(), '{{user}}');
+    assert.equal(deleteVoiceSession(conv, '{{user}}'), false);
+    assert.deepEqual(getVoiceSessions(conv), [{ ownerVoice: '{{user}}', characterId: null }]);
+});
+
+test('a cast-bound voice session becomes active without altering existing exchanges', () => {
+    const conv = getConversation();
+    addTurn(conv, 'user', 'the persona thought');
+    const before = structuredClone(conv.messages);
+
+    const session = createVoiceSession(conv, { id: 'kyrine.png', name: 'Kyrine' });
+    assert.deepEqual(session, { ownerVoice: 'Kyrine', characterId: 'kyrine.png' });
+    assert.equal(setActiveVoice(conv, 'Kyrine'), true);
+    assert.equal(getActiveVoice(), 'Kyrine');
+    assert.deepEqual(conv.messages, before);
+
+    const npcTurn = addTurn(conv, 'user', 'the NPC thought');
+    assert.equal(npcTurn.ownerVoice, 'Kyrine');
+    assert.equal(setActiveVoice(conv, '{{user}}'), true);
+    assert.deepEqual(conv.messages.slice(0, before.length), before);
+});
+
 test('turns under the same main-chat message form one exchange', () => {
     stub.chat = [mainMsg('one'), mainMsg('two')];
     const conv = getConversation();
@@ -123,6 +156,25 @@ test('turns under the same main-chat message form one exchange', () => {
     // At most one exchange per main-chat message.
     const anchors = exchanges.map(e => e.anchorIndex);
     assert.equal(new Set(anchors).size, anchors.length);
+});
+
+test('the same main-chat message holds one independent exchange per owner voice', () => {
+    const conv = getConversation();
+    addTurn(conv, 'user', 'persona thought');
+    addTurn(conv, 'assistant', 'persona answer');
+    addTurn(conv, 'user', 'npc thought', { ownerVoice: 'Kyrine' });
+    addTurn(conv, 'assistant', 'npc answer', { ownerVoice: 'Kyrine' });
+
+    const exchanges = getExchanges(conv);
+    assert.equal(exchanges.length, 2);
+    assert.deepEqual(exchanges.map(e => [e.anchorIndex, e.ownerVoice, e.turns.map(t => t.content)]), [
+        [0, '{{user}}', ['persona thought', 'persona answer']],
+        [0, 'Kyrine', ['npc thought', 'npc answer']],
+    ]);
+    assert.deepEqual(getExchangeAt(conv, 0, '{{user}}').turns.map(t => t.content), ['persona thought', 'persona answer']);
+    assert.deepEqual(getExchangeAt(conv, 0, 'Kyrine').turns.map(t => t.content), ['npc thought', 'npc answer']);
+    assert.equal(getLiveExchange(conv, 'Kyrine').ownerVoice, 'Kyrine');
+    assert.deepEqual(getVoiceTurns(conv, 'Kyrine').map(t => t.content), ['npc thought', 'npc answer']);
 });
 
 test('an old segment rejects a new turn', () => {
@@ -172,6 +224,22 @@ test('turns before any main-chat message form a segment that closes once the sto
     const next = addTurn(conv, 'user', 'present thought');
     assert.equal(next.anchorIndex, 0);
     assert.equal(getExchanges(conv).length, 2);
+});
+
+test('truncating one owner voice preserves later turns belonging to another voice', () => {
+    const conv = getConversation();
+    const userFirst = addTurn(conv, 'user', 'user first');
+    const npcFirst = addTurn(conv, 'user', 'npc first', { ownerVoice: 'Kyrine' });
+    const userLater = addTurn(conv, 'assistant', 'user later');
+    addTurn(conv, 'assistant', 'npc later', { ownerVoice: 'Kyrine' });
+
+    truncateAfter(conv, npcFirst.id);
+
+    assert.deepEqual(conv.messages.map(m => [m.id, m.ownerVoice]), [
+        [userFirst.id, '{{user}}'],
+        [npcFirst.id, 'Kyrine'],
+        [userLater.id, '{{user}}'],
+    ]);
 });
 
 // ─── Persistence with the main chat ──────────────────────────────────────────

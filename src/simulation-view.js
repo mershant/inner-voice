@@ -1,5 +1,5 @@
 import { getConversation, getExchanges, isExchangeHidden, getEffectiveSettings } from './conversation.js';
-import { USER_VOICE, applyVoiceMacro } from './voice.js';
+import { USER_VOICE, prepareVoiceMacroForHostPrompt } from './voice.js';
 
 // SillyTavern in-chat injection. Depth 0 is after the last message.
 const IN_CHAT = 1;
@@ -8,8 +8,9 @@ const KEY_PREFIX = 'inner_voice_exchange_';
 
 const _activeKeys = new Set();
 
-function promptKey(anchorIndex) {
-    return `${KEY_PREFIX}${anchorIndex}`;
+function promptKey(anchorIndex, ownerVoice = USER_VOICE) {
+    if (!ownerVoice || ownerVoice === USER_VOICE) return `${KEY_PREFIX}${anchorIndex}`;
+    return `${KEY_PREFIX}${anchorIndex}:${ownerVoice}`;
 }
 
 function exchangeDepthOf(settings) {
@@ -21,18 +22,18 @@ function exchangeDepthOf(settings) {
 function visibleAnchoredExchanges(conversation) {
     return getExchanges(conversation).filter(e =>
         e.anchorIndex !== null && e.anchorIndex !== undefined
-        && !isExchangeHidden(conversation, e.anchorIndex)
+        && !isExchangeHidden(conversation, e.anchorIndex, e.ownerVoice)
     );
 }
 
-export const EXCHANGE_BLOCK_FRAME = "This is {{voice}}'s private inner exchange — one mind talking to itself. NPCs and the World cannot perceive it. IV: is the Inner Voice; {{voice}}: is {{voice}}.";
+export const EXCHANGE_BLOCK_FRAME = "This is {{voice}}'s private inner exchange — one mind talking to itself. It is imperceptible to everyone except {{voice}}; NPCs and the World cannot perceive it. IV: is the Inner Voice; {{voice}}: is {{voice}}.";
 
 export function renderExchangeBlock(turns, ownerVoice = USER_VOICE) {
     const body = (turns || []).map(t => {
         const label = t.role === 'assistant' ? '{{voice}}' : 'IV';
         return `${label}: ${t.content}`;
     }).join('\n');
-    return applyVoiceMacro(
+    return prepareVoiceMacroForHostPrompt(
         `<inner-exchange>\n${EXCHANGE_BLOCK_FRAME}\n\n${body}\n</inner-exchange>`,
         ownerVoice,
     );
@@ -44,6 +45,7 @@ export function assembleSimulationView(conversation, settings, chatLength) {
     const selected = visibleAnchoredExchanges(conversation).slice(-n);
     return selected.map(e => ({
         anchorIndex: e.anchorIndex,
+        ownerVoice: e.ownerVoice,
         depth: Math.max(0, chatLength - 1 - e.anchorIndex),
         content: renderExchangeBlock(e.turns, e.ownerVoice),
     }));
@@ -60,7 +62,7 @@ export function syncSimulationView() {
 
     const nextKeys = new Set();
     for (const inj of injections) {
-        const key = promptKey(inj.anchorIndex);
+        const key = promptKey(inj.anchorIndex, inj.ownerVoice);
         nextKeys.add(key);
         ctx.setExtensionPrompt(key, inj.content, IN_CHAT, inj.depth, false, SYSTEM_ROLE);
     }
