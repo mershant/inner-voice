@@ -24,6 +24,12 @@ ordinary {{user}} reply also decides whether the completed exchange should portr
 triggered exchange costs two model requests and an untriggered one costs one.
 Remaining product behavior — the drawer cleanup — lands in a later issue.
 
+## Prompt macros
+
+`{{voice}}` is the mind this inner chat belongs to. `{{user}}` is your persona.
+
+Today those are the same person, so custom prompts that still say `{{user}}` keep working. When you write or update a prompt, use `{{voice}}` wherever you mean the mind doing the thinking. Keep `{{user}}` when you mean the persona — Portray always writes the persona's next turn.
+
 ## Development
 
 - Live testing runs only in the isolated SillyTavern-Dev install, never main SillyTavern.

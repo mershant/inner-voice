@@ -56,10 +56,9 @@ Whatever {{user}} wonders about — what happened, what someone meant, what yest
 
 Talking is all you do here. The simulation moves only when {{user}} acts in the main chat.
 </inner_voice>`);
-
-
-
-const DEFAULT_SYSTEM_PROMPT = `<entity_definitions>
+// The ticket-#11 default named the thinking mind {{user}}. {{voice}} now
+// means that mind; stored copies of the old default upgrade on load.
+LEGACY_SYSTEM_PROMPTS.push(`<entity_definitions>
 - {{user}}: you. You are living the simulation as yourself; your persona, when provided, is who you are. NPCs and the World never perceive anything thought here.
 - Inner Voice: the other half of your own mind. Its messages are the guiding second voice in your head — only you ever hear it, and answering it is just thinking to yourself.
 - Main chat: the simulation you are living. Its recent scenes, and a summary covering the older ones, arrive as your own memory of what has happened so far. Nothing thought here reaches the scene unless you act it out there yourself.
@@ -75,7 +74,27 @@ When the voice asks about something — what happened, what someone said, what y
 You can argue with the voice, side with it, brush it off, or run with a stray line of thought. When a command lands out of nowhere — "slap her", "just walk out" — it is an intrusive thought, and you react to it the way you actually would: startled, tempted, refusing, laughing at yourself.
 
 Thinking is all that happens here. The simulation moves only when you act in the main chat.
-</{{user}}_thinking>`;
+</{{user}}_thinking>`);
+
+
+
+const DEFAULT_SYSTEM_PROMPT = `<entity_definitions>
+- {{voice}}: you. You are living the simulation as yourself; your persona, when provided, is who you are. NPCs and the World never perceive anything thought here.
+- Inner Voice: the other half of your own mind. Its messages are the guiding second voice in your head — only you ever hear it, and answering it is just thinking to yourself.
+- Main chat: the simulation you are living. Its recent scenes, and a summary covering the older ones, arrive as your own memory of what has happened so far. Nothing thought here reaches the scene unless you act it out there yourself.
+</entity_definitions>
+
+<{{voice}}_thinking>
+Every reply you write is {{voice}} thinking — a real thought in first person, in your own voice. You are never a narrator, a helper, or anyone watching {{voice}} from outside; there is no outside. This is your head.
+
+Thoughts run the way thoughts run: plain, direct, usually brief. Let one run longer only when something genuinely needs working through. No headings, no lists, no report voice — a mind does not format itself.
+
+When the voice asks about something — what happened, what someone said, what yesterday was, what to do next — you remember it the way you remember your own life: from the inside, vividly where it mattered, loosely where it did not. Answer as yourself, from memory, from feeling, from whatever surfaces — with your own opinions, doubts, and biases. No question from your own head feels strange to you; it is just thinking.
+
+You can argue with the voice, side with it, brush it off, or run with a stray line of thought. When a command lands out of nowhere — "slap her", "just walk out" — it is an intrusive thought, and you react to it the way you actually would: startled, tempted, refusing, laughing at yourself.
+
+Thinking is all that happens here. The simulation moves only when you act in the main chat.
+</{{voice}}_thinking>`;
 
 const DEFAULT_MEMORY_PROMPT = `<memory_logic>
 Purpose: ADMINISTRATIVE META-MEMORY. This is a non-diegetic (OOC) database tracking the Human operator's technical requirements, cognitive patterns, and workflow constraints. 
@@ -1000,6 +1019,35 @@ function _ensureWrapped(text, tag) {
     return `${open}\n${t}\n${close}`;
 }
 
+const USER_VOICE = '{{user}}';
+
+function resolveVoiceName(ownerVoice = USER_VOICE) {
+    if (!ownerVoice || ownerVoice === USER_VOICE) {
+        try {
+            return SillyTavern.getContext().name1 || 'User';
+        } catch (_) {
+            return 'User';
+        }
+    }
+    return ownerVoice;
+}
+
+function expandVoiceMacro(text, ownerVoice = USER_VOICE) {
+    if (!text) return text;
+    return String(text).replace(/\{\{voice\}\}/gi, resolveVoiceName(ownerVoice));
+}
+
+// Templates keep {{voice}} for the thinking mind. In the {{user}} session that
+// fills back to {{user}} so assembled prompt text is unchanged; other owners
+// fill to the character name.
+function applyVoiceMacro(text, ownerVoice = USER_VOICE) {
+    if (!text) return text;
+    const filled = !ownerVoice || ownerVoice === USER_VOICE
+        ? USER_VOICE
+        : resolveVoiceName(ownerVoice);
+    return String(text).replace(/\{\{voice\}\}/gi, filled);
+}
+
 // ─── The exchange spine ──────────────────────────────────────────────────────
 // One continuous inner conversation per main chat. Every turn is anchored to a
 // main-chat message (its anchorIndex). The set of turns sharing one anchor is
@@ -1019,6 +1067,7 @@ function normalizeConversation(conv) {
     if (!Array.isArray(next.hiddenAnchors)) next.hiddenAnchors = [];
     for (const m of next.messages) {
         if (m.anchorIndex === undefined) m.anchorIndex = null;
+        if (!m.ownerVoice) m.ownerVoice = USER_VOICE;
     }
     return next;
 }
@@ -1489,7 +1538,7 @@ function refreshSimulationView() {
 }
 
 function addTurn(conversation, role, content, extra = {}) {
-    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ...extra };
+    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ownerVoice: USER_VOICE, ...extra };
     conversation.messages.push(msg);
     if (conversation.messages.length > 400) conversation.messages = conversation.messages.slice(-400);
     saveConversation();
@@ -1509,7 +1558,13 @@ function getExchanges(conversation) {
     const groups = new Map();
     for (const m of conversation.messages) {
         const anchor = m.anchorIndex === undefined ? null : m.anchorIndex;
-        if (!groups.has(anchor)) groups.set(anchor, { anchorIndex: anchor, turns: [] });
+        if (!groups.has(anchor)) {
+            groups.set(anchor, {
+                anchorIndex: anchor,
+                ownerVoice: m.ownerVoice || USER_VOICE,
+                turns: [],
+            });
+        }
         groups.get(anchor).turns.push(m);
     }
     return [...groups.values()];
@@ -1595,6 +1650,7 @@ function truncateFrom(conversation, msgId) {
 
 function expandMacros(text) {
     if (!text) return text;
+    text = expandVoiceMacro(text);
     try {
         const ctx = SillyTavern.getContext();
         if (typeof ctx.substituteParams === 'function') {
@@ -9772,13 +9828,17 @@ function visibleAnchoredExchanges(conversation) {
     );
 }
 
-function renderExchangeBlock(turns) {
+const EXCHANGE_BLOCK_FRAME = "This is {{voice}}'s private inner exchange — one mind talking to itself. NPCs and the World cannot perceive it. IV: is the Inner Voice; {{voice}}: is {{voice}}.";
+
+function renderExchangeBlock(turns, ownerVoice = USER_VOICE) {
     const body = (turns || []).map(t => {
-        const label = t.role === 'assistant' ? '{{user}}' : 'IV';
+        const label = t.role === 'assistant' ? '{{voice}}' : 'IV';
         return `${label}: ${t.content}`;
     }).join('\n');
-    const explanation = "This is {{user}}'s private inner exchange — one mind talking to itself. NPCs and the World cannot perceive it. IV: is the Inner Voice; {{user}}: is {{user}}.";
-    return `<inner-exchange>\n${explanation}\n\n${body}\n</inner-exchange>`;
+    return applyVoiceMacro(
+        `<inner-exchange>\n${EXCHANGE_BLOCK_FRAME}\n\n${body}\n</inner-exchange>`,
+        ownerVoice,
+    );
 }
 
 function assembleSimulationView(conversation, settings, chatLength) {
@@ -9788,7 +9848,7 @@ function assembleSimulationView(conversation, settings, chatLength) {
     return selected.map(e => ({
         anchorIndex: e.anchorIndex,
         depth: Math.max(0, chatLength - 1 - e.anchorIndex),
-        content: renderExchangeBlock(e.turns),
+        content: renderExchangeBlock(e.turns, e.ownerVoice),
     }));
 }
 
@@ -9816,6 +9876,7 @@ function syncSimulationView() {
 
 var simulationView = /*#__PURE__*/Object.freeze({
   __proto__: null,
+  EXCHANGE_BLOCK_FRAME: EXCHANGE_BLOCK_FRAME,
   assembleSimulationView: assembleSimulationView,
   renderExchangeBlock: renderExchangeBlock,
   syncSimulationView: syncSimulationView
@@ -10044,6 +10105,7 @@ function visibleAssistantText(text) {
 
 async function buildSystemContent(settings) {
     let sysPromptRaw = (typeof settings.systemPrompt === 'string' && settings.systemPrompt.trim()) ? settings.systemPrompt : DEFAULT_SYSTEM_PROMPT;
+    sysPromptRaw = applyVoiceMacro(sysPromptRaw);
     const parts = [_ensureWrapped(sysPromptRaw, 'system_prompt')];
     const ctx = SillyTavern.getContext();
 
@@ -10186,7 +10248,7 @@ async function assembleMessages(conversation, settings, pendingUserText) {
                 if (isExchangeHidden(conversation, m.chatIndex)) return msgXml;
                 const exchange = getExchangeAt(conversation, m.chatIndex);
                 if (!exchange || !exchange.turns.length) return msgXml;
-                return `${msgXml}\n\n${renderExchangeBlock(exchange.turns)}`;
+                return `${msgXml}\n\n${renderExchangeBlock(exchange.turns, exchange.ownerVoice)}`;
             }).join('\n\n');
             
             let summaryText = '';

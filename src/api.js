@@ -1,4 +1,5 @@
 import { DEFAULT_SYSTEM_PROMPT, EXT_DISPLAY } from './constants.js';
+import { applyVoiceMacro } from './voice.js';
 import { state } from './state.js';
 import { getEffectiveSettings, saveConversation, addTurn, getConversation, getLiveEdgeIndex, getExchangeAt, isExchangeHidden } from './conversation.js';
 import { renderExchangeBlock } from './simulation-view.js';
@@ -43,6 +44,7 @@ function visibleAssistantText(text) {
 
 export async function buildSystemContent(settings) {
     let sysPromptRaw = (typeof settings.systemPrompt === 'string' && settings.systemPrompt.trim()) ? settings.systemPrompt : DEFAULT_SYSTEM_PROMPT;
+    sysPromptRaw = applyVoiceMacro(sysPromptRaw);
     const parts = [_ensureWrapped(sysPromptRaw, 'system_prompt')];
     const ctx = SillyTavern.getContext();
 
@@ -185,7 +187,7 @@ export async function assembleMessages(conversation, settings, pendingUserText) 
                 if (isExchangeHidden(conversation, m.chatIndex)) return msgXml;
                 const exchange = getExchangeAt(conversation, m.chatIndex);
                 if (!exchange || !exchange.turns.length) return msgXml;
-                return `${msgXml}\n\n${renderExchangeBlock(exchange.turns)}`;
+                return `${msgXml}\n\n${renderExchangeBlock(exchange.turns, exchange.ownerVoice)}`;
             }).join('\n\n');
             
             let summaryText = '';

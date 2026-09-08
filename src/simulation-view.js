@@ -1,4 +1,5 @@
 import { getConversation, getExchanges, isExchangeHidden, getEffectiveSettings } from './conversation.js';
+import { USER_VOICE, applyVoiceMacro } from './voice.js';
 
 // SillyTavern in-chat injection. Depth 0 is after the last message.
 const IN_CHAT = 1;
@@ -24,13 +25,17 @@ function visibleAnchoredExchanges(conversation) {
     );
 }
 
-export function renderExchangeBlock(turns) {
+export const EXCHANGE_BLOCK_FRAME = "This is {{voice}}'s private inner exchange — one mind talking to itself. NPCs and the World cannot perceive it. IV: is the Inner Voice; {{voice}}: is {{voice}}.";
+
+export function renderExchangeBlock(turns, ownerVoice = USER_VOICE) {
     const body = (turns || []).map(t => {
-        const label = t.role === 'assistant' ? '{{user}}' : 'IV';
+        const label = t.role === 'assistant' ? '{{voice}}' : 'IV';
         return `${label}: ${t.content}`;
     }).join('\n');
-    const explanation = "This is {{user}}'s private inner exchange — one mind talking to itself. NPCs and the World cannot perceive it. IV: is the Inner Voice; {{user}}: is {{user}}.";
-    return `<inner-exchange>\n${explanation}\n\n${body}\n</inner-exchange>`;
+    return applyVoiceMacro(
+        `<inner-exchange>\n${EXCHANGE_BLOCK_FRAME}\n\n${body}\n</inner-exchange>`,
+        ownerVoice,
+    );
 }
 
 export function assembleSimulationView(conversation, settings, chatLength) {
@@ -40,7 +45,7 @@ export function assembleSimulationView(conversation, settings, chatLength) {
     return selected.map(e => ({
         anchorIndex: e.anchorIndex,
         depth: Math.max(0, chatLength - 1 - e.anchorIndex),
-        content: renderExchangeBlock(e.turns),
+        content: renderExchangeBlock(e.turns, e.ownerVoice),
     }));
 }
 

@@ -13,6 +13,7 @@ import {
 } from './constants.js';
 import { _dbgAdd, _dbgDiffSettings } from './utils/util-debug.js';
 import { _repairJSON } from './utils/util-text.js';
+import { USER_VOICE, expandVoiceMacro } from './voice.js';
 
 // ─── The exchange spine ──────────────────────────────────────────────────────
 // One continuous inner conversation per main chat. Every turn is anchored to a
@@ -33,6 +34,7 @@ function normalizeConversation(conv) {
     if (!Array.isArray(next.hiddenAnchors)) next.hiddenAnchors = [];
     for (const m of next.messages) {
         if (m.anchorIndex === undefined) m.anchorIndex = null;
+        if (!m.ownerVoice) m.ownerVoice = USER_VOICE;
     }
     return next;
 }
@@ -503,7 +505,7 @@ function refreshSimulationView() {
 }
 
 export function addTurn(conversation, role, content, extra = {}) {
-    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ...extra };
+    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ownerVoice: USER_VOICE, ...extra };
     conversation.messages.push(msg);
     if (conversation.messages.length > 400) conversation.messages = conversation.messages.slice(-400);
     saveConversation();
@@ -523,7 +525,13 @@ export function getExchanges(conversation) {
     const groups = new Map();
     for (const m of conversation.messages) {
         const anchor = m.anchorIndex === undefined ? null : m.anchorIndex;
-        if (!groups.has(anchor)) groups.set(anchor, { anchorIndex: anchor, turns: [] });
+        if (!groups.has(anchor)) {
+            groups.set(anchor, {
+                anchorIndex: anchor,
+                ownerVoice: m.ownerVoice || USER_VOICE,
+                turns: [],
+            });
+        }
         groups.get(anchor).turns.push(m);
     }
     return [...groups.values()];
@@ -609,6 +617,7 @@ export function truncateFrom(conversation, msgId) {
 
 export function expandMacros(text) {
     if (!text) return text;
+    text = expandVoiceMacro(text);
     try {
         const ctx = SillyTavern.getContext();
         if (typeof ctx.substituteParams === 'function') {

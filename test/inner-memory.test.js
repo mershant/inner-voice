@@ -78,6 +78,7 @@ const {
     addTurn,
     setExchangeHidden,
     isExchangeHidden,
+    expandMacros,
 } = await import('../src/conversation.js');
 const { assembleMessages, buildSystemContent } = await import('../src/api.js');
 const { DEFAULT_SYSTEM_PROMPT, LEGACY_SYSTEM_PROMPTS, DEFAULT_MEMORY_PROMPT, LEGACY_MEMORY_PROMPTS, DEFAULT_TOOLS_PROMPT } = await import('../src/constants.js');
@@ -439,16 +440,23 @@ test('a stored copy of the superseded tools prompt empties back to the current d
 
 // ─── Voice repair (ticket #11) ─────────────────────────────────────────────────
 
-test('the system prompt casts the model as {{user}} in first person', async () => {
-    // The answering voice is {{user}} themselves, thinking.
-    assert.match(DEFAULT_SYSTEM_PROMPT, /\{\{user\}\}:\s*you\b/i);
+test('the system prompt casts the model as {{voice}} in first person', async () => {
+    // The answering voice is the mind this session belongs to.
+    assert.match(DEFAULT_SYSTEM_PROMPT, /\{\{voice\}\}:\s*you\b/i);
     assert.match(DEFAULT_SYSTEM_PROMPT, /first person/i);
 
     // The player's side is the Inner Voice, and the live system content
     // still defines both entities.
     const sys = await buildSystemContent(getEffectiveSettings());
     assert.ok(sys.includes('Inner Voice'));
+    // In the {{user}} session the assembled prompt still names the persona
+    // with {{user}}, so nothing visible changes.
     assert.match(sys, /\{\{user\}\}:\s*you\b/i);
+});
+
+test('expanding the default system prompt in the {{user}} session matches the previous {{user}}-worded default', () => {
+    const previous = LEGACY_SYSTEM_PROMPTS[LEGACY_SYSTEM_PROMPTS.length - 1];
+    assert.equal(expandMacros(DEFAULT_SYSTEM_PROMPT), expandMacros(previous));
 });
 
 test('no assistant or co-writer framing remains in the default prompt', async () => {

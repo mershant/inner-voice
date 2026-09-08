@@ -96,6 +96,18 @@ test('a new turn anchors to the live edge', () => {
     assert.equal(turn.anchorIndex, 2);
 });
 
+test('every exchange carries an owner voice, defaulting to {{user}}', () => {
+    stub.chat = [mainMsg('one'), mainMsg('two')];
+    const conv = getConversation();
+    addTurn(conv, 'user', 'she is lying, right?');
+    addTurn(conv, 'assistant', 'Watch her hands.');
+
+    const exchanges = getExchanges(conv);
+    assert.equal(exchanges.length, 1);
+    assert.equal(exchanges[0].ownerVoice, '{{user}}');
+    assert.equal(getLiveExchange(conv).ownerVoice, '{{user}}');
+});
+
 test('turns under the same main-chat message form one exchange', () => {
     stub.chat = [mainMsg('one'), mainMsg('two')];
     const conv = getConversation();
@@ -124,6 +136,7 @@ test('an old segment rejects a new turn', () => {
     assert.equal(rejected, null);
     assert.equal(conv.messages.length, before);
     assert.equal(getExchangeAt(conv, 1).turns.length, 1);
+    assert.equal(getExchangeAt(conv, 1).ownerVoice, '{{user}}');
 });
 
 test('advancing the main chat starts the next exchange at the new live edge', () => {
@@ -140,9 +153,11 @@ test('advancing the main chat starts the next exchange at the new live edge', ()
     // The previous exchange ended where it was left.
     assert.equal(exchanges[0].anchorIndex, 1);
     assert.equal(exchanges[0].turns.length, 2);
+    assert.equal(exchanges[0].ownerVoice, '{{user}}');
     // The next exchange lives at the new live edge.
     assert.equal(exchanges[1].anchorIndex, 2);
     assert.equal(exchanges[1].turns.length, 1);
+    assert.equal(exchanges[1].ownerVoice, '{{user}}');
     assert.deepEqual(getLiveExchange(conv).turns.map(t => t.content), ['new thought']);
 });
 
@@ -181,6 +196,7 @@ test('the inner conversation persists and reloads with its main chat', async () 
     const reloaded = getConversation();
     assert.deepEqual(reloaded.messages.map(m => m.content), ['remember this', 'I will.']);
     assert.deepEqual(reloaded.messages.map(m => m.anchorIndex), [1, 1]);
+    assert.equal(getExchanges(reloaded)[0].ownerVoice, '{{user}}');
 });
 
 test("switching main chats switches to that chat's inner conversation", async () => {
@@ -229,4 +245,32 @@ test('a legacy multi-session bucket migrates into the single conversation', asyn
     assert.deepEqual(conv.messages.map(m => m.content), ['kept thought']);
     assert.equal(conv.overrides.maxTokens, 1234);
     assert.deepEqual(conv.pickedChatIndices, [0]);
+    assert.equal(getExchanges(conv)[0].ownerVoice, '{{user}}');
+});
+
+test('a legacy conversation without owner voice loads as {{user}}-owned', async () => {
+    const payload = {
+        _version: 5,
+        chat_id_reference: 'chat-a',
+        conversation: {
+            messages: [
+                { id: 'm1', role: 'user', content: 'old thought', anchorIndex: 0 },
+                { id: 'm2', role: 'assistant', content: 'old answer', anchorIndex: 0 },
+            ],
+            overrides: {},
+            pickedChatIndices: [],
+            hiddenAnchors: [],
+        },
+    };
+    files.set('legacy-owner.json', btoa(unescape(encodeURIComponent(JSON.stringify(payload)))));
+    stub.chat = [mainMsg('Opening scene.')];
+    stub.chatMetadataByChat['chat-a'] = {
+        inner_voice: { format: 'v5', file_id: 'legacy-owner.json', chat_id: 'chat-a' },
+    };
+    await initConversation();
+
+    const exchanges = getExchanges(getConversation());
+    assert.equal(exchanges.length, 1);
+    assert.equal(exchanges[0].ownerVoice, '{{user}}');
+    assert.deepEqual(exchanges[0].turns.map(t => t.content), ['old thought', 'old answer']);
 });

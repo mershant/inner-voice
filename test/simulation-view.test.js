@@ -80,7 +80,7 @@ const {
     addTurn,
     setExchangeHidden,
 } = await import('../src/conversation.js');
-const { syncSimulationView } = await import('../src/simulation-view.js');
+const { syncSimulationView, EXCHANGE_BLOCK_FRAME } = await import('../src/simulation-view.js');
 
 function mainMsg(text, isUser = false) {
     return { mes: text, is_user: isUser };
@@ -166,6 +166,12 @@ test('depth N injects the N most recent non-hidden exchanges, each below its own
     assert.match(texts[onePos + 1] || '', /middle thought/);
     assert.match(texts[twoPos + 1] || '', /latest thought/);
     assert.ok(!texts.some(t => t.includes('old thought')));
+});
+
+test('the exchange block template uses {{voice}} for the thinking mind', () => {
+    assert.match(EXCHANGE_BLOCK_FRAME, /\{\{voice\}\}'s private inner exchange/);
+    assert.match(EXCHANGE_BLOCK_FRAME, /\{\{voice\}\}: is \{\{voice\}\}/);
+    assert.match(EXCHANGE_BLOCK_FRAME, /IV: is the Inner Voice/);
 });
 
 test('the block frame carries the privacy explanation and IV:/{{user}}: labels', async () => {
