@@ -11,6 +11,7 @@ from playwright.sync_api import sync_playwright
 URL = "http://127.0.0.1:8001"
 STORAGE_STATE = "/home/opc/.local/share/openchamber/playwright/std-storage-state.json"
 CHARACTER = "Seraphina"
+WORLD_NPC = "Lamplighter"
 CHAT_FILE = "ff5-internal-state-toggles-fresh-seraphina"
 
 
@@ -110,6 +111,30 @@ def _open_picker(page):
     )
 
 
+def _assert_picker_in_toolbar_row(page):
+    if page.locator("#iv-sess-cast-list, .iv-sess-cast-item").count():
+        raise SystemExit("cast detection is still in the session picker")
+    if page.locator("#iv-new-sess-btn", has_text="New cast session").count():
+        raise SystemExit("new-session control still talks about the cast")
+    if page.locator("#iv-new-sess-btn", has_text="New Session").count() != 1:
+        raise SystemExit("new-session control is missing")
+    basis = page.evaluate(
+        "() => getComputedStyle(document.querySelector('.iv-sess-wrap')).flexBasis"
+    )
+    if basis == "100%":
+        raise SystemExit("session picker still occupies a full-width row")
+    geometry = page.evaluate(
+        """() => {
+            const wrap = document.querySelector('.iv-sess-wrap').getBoundingClientRect();
+            const depth = document.querySelector('.iv-depth-cluster').getBoundingClientRect();
+            return { wrapTop: wrap.top, wrapBottom: wrap.bottom, depthTop: depth.top, depthBottom: depth.bottom };
+        }"""
+    )
+    same_row = geometry["wrapBottom"] > geometry["depthTop"] and geometry["depthBottom"] > geometry["wrapTop"]
+    if not same_row:
+        raise SystemExit("session picker is not in the toolbar row with the other controls")
+
+
 def _switch_voice(page, owner_voice):
     _open_picker(page)
     item = page.locator(f'.iv-sess-item[data-owner-voice="{owner_voice}"]')
@@ -122,9 +147,9 @@ def _switch_voice(page, owner_voice):
     )
 
 
-def _delete_existing_npc_session(page):
+def _delete_session_if_present(page, owner_voice):
     _open_picker(page)
-    item = page.locator(f'.iv-sess-item[data-owner-voice="{CHARACTER}"]')
+    item = page.locator(f'.iv-sess-item[data-owner-voice="{owner_voice}"]')
     if not item.count():
         page.locator("#iv-sess-trigger").click()
         return
@@ -132,21 +157,23 @@ def _delete_existing_npc_session(page):
     page.locator("#iv-del-sess-btn").click()
     page.wait_for_selector(".iv-dialog-overlay.visible")
     page.locator(".iv-dialog-ok").click()
+    page.wait_for_selector(".iv-dialog-overlay", state="detached")
     page.wait_for_function(
-        "() => !document.querySelector('.iv-sess-item[data-owner-voice=\"Seraphina\"]')"
+        "voice => !document.querySelector(`.iv-sess-item[data-owner-voice=\"${voice}\"]`)",
+        arg=owner_voice,
     )
 
 
-def _create_npc_session(page):
+def _create_npc_session(page, name):
     _open_picker(page)
     page.locator("#iv-new-sess-btn").click()
-    choice = page.locator(".iv-sess-cast-item", has_text=CHARACTER)
-    if choice.count() != 1:
-        raise SystemExit(f"new-session cast picker did not offer {CHARACTER}")
-    choice.click()
+    page.wait_for_selector(".iv-dialog-overlay.visible")
+    page.locator(".iv-dialog-input").fill(name)
+    page.locator(".iv-dialog-ok").click()
+    page.wait_for_selector(".iv-dialog-overlay", state="detached")
     page.wait_for_function(
         "name => document.getElementById('iv-sess-name')?.textContent?.trim() === name",
-        arg=CHARACTER,
+        arg=name,
     )
 
 
@@ -216,15 +243,16 @@ def _visible_exchange_text(page):
 
 def _cleanup(page, default_marker):
     try:
-        if page.locator(f'.iv-sess-item[data-owner-voice="{CHARACTER}"]').count():
-            _switch_voice(page, CHARACTER)
-            hidden = page.locator("#iv-messages .iv-segment.iv-segment-hidden .iv-hide-toggle")
-            if hidden.count():
-                hidden.last.click()
-            page.locator("#iv-del-sess-btn").click()
-            page.wait_for_selector(".iv-dialog-overlay.visible")
-            page.locator(".iv-dialog-ok").click()
-            page.wait_for_timeout(400)
+        for owner_voice in (CHARACTER, WORLD_NPC):
+            if page.locator(f'.iv-sess-item[data-owner-voice="{owner_voice}"]').count():
+                _switch_voice(page, owner_voice)
+                hidden = page.locator("#iv-messages .iv-segment.iv-segment-hidden .iv-hide-toggle")
+                if hidden.count():
+                    hidden.last.click()
+                page.locator("#iv-del-sess-btn").click()
+                page.wait_for_selector(".iv-dialog-overlay.visible")
+                page.locator(".iv-dialog-ok").click()
+                page.wait_for_timeout(400)
         _switch_voice(page, "{{user}}")
         marker_message = page.locator("#iv-messages .iv-msg", has_text=default_marker)
         if marker_message.count():
@@ -276,7 +304,9 @@ def main():
             _select_character(page, CHARACTER)
             _open_chat(page, CHAT_FILE)
             _show_inner_voice(page)
-            _delete_existing_npc_session(page)
+            _delete_session_if_present(page, CHARACTER)
+            _delete_session_if_present(page, WORLD_NPC)
+            _assert_picker_in_toolbar_row(page)
 
             persona = page.evaluate("() => SillyTavern.getContext().name1")
             if page.locator("#iv-sess-name").inner_text().strip() != persona:
@@ -287,7 +317,24 @@ def main():
                 raise SystemExit("the active default voice is not visibly indicated")
 
             _plant_aborted_turn(page, default_marker)
-            _create_npc_session(page)
+
+            has_world_card = page.evaluate(
+                "name => (SillyTavern.getContext().characters || []).some(c => c.name === name)",
+                WORLD_NPC,
+            )
+            if has_world_card:
+                raise SystemExit(f"{WORLD_NPC} unexpectedly has a character card")
+            _create_npc_session(page, WORLD_NPC)
+            world_text = _payload_text(_inspect_payload(page))
+            if default_marker in world_text:
+                raise SystemExit("the default mind leaked into the card-less session inner memory")
+            if not re.search(rf"{re.escape(WORLD_NPC)}:\s*you\b", world_text, re.I):
+                raise SystemExit("the card-less session does not cast the model as the typed name")
+            if f'<character name="{WORLD_NPC}">' in world_text:
+                raise SystemExit("the card-less world NPC received a character card")
+            _delete_session_if_present(page, WORLD_NPC)
+
+            _create_npc_session(page, CHARACTER)
             if page.locator("#iv-char-badge").inner_text().strip() != f"Mind: {CHARACTER}":
                 raise SystemExit("the active NPC voice is not visibly indicated")
             if page.locator("#iv-del-sess-btn").is_disabled():
@@ -347,8 +394,9 @@ def main():
     if len(model_requests) < 2:
         raise SystemExit(f"expected an aborted default request and an NPC request, got {len(model_requests)}")
     print(
-        f"ok: created cast-bound {CHARACTER} session; active marker, scoped view/memory/card, "
-        f"first-person answer, per-voice hide, and stable switching passed; model requests: {len(model_requests)}"
+        f"ok: typed-name sessions for card-less {WORLD_NPC} and matching-card {CHARACTER}; "
+        f"picker in toolbar row; scoped view/memory/card, first-person answer, per-voice hide, "
+        f"and stable switching passed; model requests: {len(model_requests)}"
     )
     return 0
 

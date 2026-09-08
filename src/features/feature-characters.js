@@ -37,14 +37,20 @@ export function getEffectiveCharFieldForChar(settings, charId, field) {
     return ov !== undefined ? ov : getEffectiveCharField(settings, field);
 }
 
+function characterEntity(char) {
+    if (!char) return null;
+    return { id: char.avatar, name: char.name, avatar: char.avatar, char, isPersona: false };
+}
+
 export function getActiveCharacterEntities() {
     const ctx = SillyTavern.getContext();
     const entities = [];
     const seen = new Set();
     const pushChar = char => {
-        if (char && !seen.has(char.avatar)) {
-            seen.add(char.avatar);
-            entities.push({ id: char.avatar, name: char.name, avatar: char.avatar, char, isPersona: false });
+        const entity = characterEntity(char);
+        if (entity && !seen.has(entity.avatar)) {
+            seen.add(entity.avatar);
+            entities.push(entity);
         }
     };
 
@@ -58,6 +64,12 @@ export function getActiveCharacterEntities() {
         pushChar(ctx.characters?.[ctx.characterId]);
     }
     return entities;
+}
+
+function findCharacterEntityByName(name) {
+    if (!name) return null;
+    const ctx = SillyTavern.getContext();
+    return characterEntity((ctx.characters || []).find(char => char?.name === name));
 }
 
 function buildSingleCharacterBlock(settings, entity) {
@@ -119,11 +131,7 @@ function buildSingleCharacterBlock(settings, entity) {
 export function buildCharacterContextBlock(settings, voiceSession = null) {
     let entities = getActiveCharacterEntities();
     if (voiceSession?.ownerVoice && voiceSession.ownerVoice !== USER_VOICE) {
-        const bound = entities.find(entity =>
-            (voiceSession.characterId !== null && voiceSession.characterId !== undefined
-                && String(entity.id) === String(voiceSession.characterId))
-            || entity.name === voiceSession.ownerVoice
-        );
+        const bound = findCharacterEntityByName(voiceSession.ownerVoice);
         entities = bound ? [bound] : [];
     }
     if (!entities.length) return '';

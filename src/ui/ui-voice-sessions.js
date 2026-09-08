@@ -1,4 +1,4 @@
-import { EXT_DISPLAY, I } from '../constants.js';
+import { EXT_DISPLAY } from '../constants.js';
 import { state } from '../state.js';
 import {
     createVoiceSession,
@@ -9,16 +9,12 @@ import {
     getVoiceTurns,
     setActiveVoice,
 } from '../conversation.js';
-import { getActiveCharacterEntities } from '../features/feature-characters.js';
 import { resolveVoiceName, USER_VOICE } from '../voice.js';
 import { showCustomDialog } from '../utils/util-dom.js';
 import { _dbgAdd } from '../utils/util-debug.js';
 import { renderConversation } from './ui-chat.js';
 
-let castListOpen = false;
-
 function closePicker() {
-    castListOpen = false;
     document.getElementById('iv-sess-panel')?.classList.remove('open');
     document.getElementById('iv-sess-trigger')?.classList.remove('open');
     document.getElementById('iv-sess-trigger')?.setAttribute('aria-expanded', 'false');
@@ -58,58 +54,49 @@ function renderSessionList(conversation) {
         const name = document.createElement('span');
         name.className = 'iv-sess-item-name';
         name.textContent = resolveVoiceName(session.ownerVoice);
-        const kind = document.createElement('span');
-        kind.className = 'iv-sess-item-kind';
-        kind.textContent = session.ownerVoice === USER_VOICE ? 'You' : 'Cast';
         const count = document.createElement('span');
         count.className = 'iv-sess-item-count';
         count.textContent = String(getVoiceTurns(conversation, session.ownerVoice).length);
 
-        item.append(dot, name, kind, count);
+        item.append(dot, name);
+        if (session.ownerVoice === USER_VOICE) {
+            const kind = document.createElement('span');
+            kind.className = 'iv-sess-item-kind';
+            kind.textContent = 'You';
+            item.append(kind);
+        }
+        item.append(count);
         item.addEventListener('click', () => switchToVoice(session.ownerVoice));
         list.appendChild(item);
     }
 }
 
-function renderCastList(conversation) {
-    const list = document.getElementById('iv-sess-cast-list');
-    if (!list) return;
-    list.innerHTML = '';
-    list.style.display = castListOpen ? '' : 'none';
-    if (!castListOpen) return;
-
-    const existing = new Set(getVoiceSessions(conversation).map(session => session.ownerVoice));
-    const available = getActiveCharacterEntities().filter(entity => !existing.has(entity.name));
-    if (!available.length) {
-        const empty = document.createElement('div');
-        empty.className = 'iv-sess-empty-label';
-        empty.textContent = 'No other cast characters available';
-        list.appendChild(empty);
+async function createTypedVoiceSession() {
+    if (state.generating) {
+        toastr.warning('Please wait for generation to finish.', EXT_DISPLAY);
         return;
     }
-
-    for (const character of available) {
-        const item = document.createElement('button');
-        item.type = 'button';
-        item.className = 'iv-sess-cast-item';
-        item.innerHTML = `${I.plus}<span></span>`;
-        item.querySelector('span').textContent = character.name;
-        item.title = `Open ${character.name}'s inner voice`;
-        item.addEventListener('click', () => {
-            if (state.generating) return;
-            const session = createVoiceSession(conversation, character);
-            if (!session) return;
-            setActiveVoice(conversation, session.ownerVoice);
-            renderConversation(conversation);
-            refreshVoiceSessionPicker();
-            closePicker();
-            _dbgAdd('VOICE_SESSION_CREATED', {
-                ownerVoice: session.ownerVoice,
-                characterId: session.characterId,
-            });
-        });
-        list.appendChild(item);
+    closePicker();
+    const typed = await showCustomDialog({
+        type: 'prompt',
+        title: 'New Voice Session',
+        message: "Type the character's name.",
+        placeholder: 'Character name',
+    });
+    const name = typeof typed === 'string' ? typed.trim() : '';
+    if (!name) return;
+    if (name === USER_VOICE) {
+        toastr.warning('The default session already exists.', EXT_DISPLAY);
+        return;
     }
+    const conversation = getConversation();
+    const session = createVoiceSession(conversation, name);
+    if (!session) return;
+    setActiveVoice(conversation, session.ownerVoice);
+    renderConversation(conversation);
+    refreshVoiceSessionPicker();
+    document.getElementById('iv-input')?.focus({ preventScroll: true });
+    _dbgAdd('VOICE_SESSION_CREATED', { ownerVoice: session.ownerVoice });
 }
 
 export function refreshVoiceSessionPicker() {
@@ -140,7 +127,6 @@ export function refreshVoiceSessionPicker() {
     }
 
     renderSessionList(conversation);
-    renderCastList(conversation);
 }
 
 export function setupVoiceSessionPicker() {
@@ -157,13 +143,11 @@ export function setupVoiceSessionPicker() {
         trigger.classList.toggle('open', opening);
         trigger.setAttribute('aria-expanded', opening ? 'true' : 'false');
         if (opening) refreshVoiceSessionPicker();
-        else castListOpen = false;
     });
 
     document.getElementById('iv-new-sess-btn')?.addEventListener('click', event => {
         event.stopPropagation();
-        castListOpen = !castListOpen;
-        refreshVoiceSessionPicker();
+        createTypedVoiceSession();
     });
 
     document.getElementById('iv-del-sess-btn')?.addEventListener('click', async () => {

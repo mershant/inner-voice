@@ -197,12 +197,8 @@
 
 /* ── Voice session picker ────────────────────────────────────── */
 
-.iv-sess-wrap { display: flex; align-items: center; gap: 4px; flex: 1 0 100%; min-width: 0; }
-.iv-sess-dropdown { position: relative; flex: 1 1 auto; min-width: 0; max-width: none; }
-.iv-toolbar-rest {
-    display: flex; align-items: center; gap: 5px;
-    flex: 1 1 auto; min-width: 0; white-space: nowrap;
-}
+.iv-sess-wrap { display: flex; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 120px; }
+.iv-sess-dropdown { position: relative; flex: 1 1 auto; min-width: 60px; max-width: 180px; }
 .iv-sess-trigger {
     width: 100%; height: 26px; box-sizing: border-box;
     display: flex; align-items: center; gap: 4px;
@@ -257,19 +253,13 @@
 }
 .iv-sess-item.active .iv-sess-item-count { background: var(--iv-accent-bg); color: var(--iv-accent); }
 .iv-sess-footer { padding: 5px; border-top: var(--iv-border); }
-.iv-sess-new-btn,
-.iv-sess-cast-item {
+.iv-sess-new-btn {
     width: 100%; display: flex; align-items: center; gap: 7px;
     padding: 7px 9px; border: 0; border-radius: 6px;
     background: none; color: var(--iv-accent); font-family: var(--iv-font); font-size: 11px;
     text-align: left; cursor: pointer; transition: background 0.15s;
 }
-.iv-sess-new-btn:hover,
-.iv-sess-cast-item:hover { background: var(--iv-accent-bg); }
-.iv-sess-cast-list { margin-top: 3px; padding-top: 3px; border-top: 1px solid rgba(255,255,255,0.07); }
-.iv-sess-cast-item { color: var(--iv-text); }
-.iv-sess-cast-item svg { color: var(--iv-accent); flex-shrink: 0; }
-.iv-sess-empty-label { padding: 12px 9px; color: var(--iv-text-muted); font-size: 11px; text-align: center; font-style: italic; }
+.iv-sess-new-btn:hover { background: var(--iv-accent-bg); }
 .iv-tbtn:disabled { opacity: 0.3; cursor: default; pointer-events: none; }
 
 /* ── Toolbar Buttons ─────────────────────────────────────────── */

@@ -180,7 +180,7 @@ test('the payload carries exactly the non-hidden exchanges', async () => {
 test('an NPC session remembers only its own exchanges and names that character as the first-person voice', async () => {
     const conv = getConversation();
     addTurn(conv, 'user', 'persona-only private thought');
-    createVoiceSession(conv, { id: 'kyrine.png', name: 'Kyrine' });
+    createVoiceSession(conv, 'Kyrine');
     setActiveVoice(conv, 'Kyrine');
     addTurn(conv, 'user', 'kyrine-only private doubt');
     addTurn(conv, 'assistant', 'I cannot let Mira see me hesitate.');
@@ -204,7 +204,7 @@ test("an NPC session's inner memory includes that bound character card, not anot
         { name: 'Mira', avatar: 'mira.png', data: { description: 'MIRA-CARD-PRIVATE-GATE' } },
     ];
     const conv = getConversation();
-    createVoiceSession(conv, { id: 'kyrine.png', name: 'Kyrine' });
+    createVoiceSession(conv, 'Kyrine');
     setActiveVoice(conv, 'Kyrine');
 
     const system = (await assembleMessages(conv, getEffectiveSettings(), null))[0].content;
@@ -213,6 +213,41 @@ test("an NPC session's inner memory includes that bound character card, not anot
     assert.ok(system.includes('KYRINE-CARD-PRIVATE-RIVER'));
     assert.ok(!system.includes('<character name="Mira">'));
     assert.ok(!system.includes('MIRA-CARD-PRIVATE-GATE'));
+});
+
+test("a typed-name session pulls a matching character card even when that card is not the scene's active character", async () => {
+    stub.characters = [
+        { name: 'Kyrine', avatar: 'kyrine.png', data: { description: 'KYRINE-CARD-PRIVATE-RIVER' } },
+        { name: 'Mira', avatar: 'mira.png', data: { description: 'MIRA-CARD-PRIVATE-GATE' } },
+    ];
+    stub.characterId = 1;
+    const conv = getConversation();
+    createVoiceSession(conv, 'Kyrine');
+    setActiveVoice(conv, 'Kyrine');
+
+    const system = (await assembleMessages(conv, getEffectiveSettings(), null))[0].content;
+
+    assert.ok(system.includes('<character name="Kyrine">'));
+    assert.ok(system.includes('KYRINE-CARD-PRIVATE-RIVER'));
+    assert.ok(!system.includes('<character name="Mira">'));
+    assert.ok(!system.includes('MIRA-CARD-PRIVATE-GATE'));
+});
+
+test('a typed-name session with no matching character card still assembles inner memory', async () => {
+    const conv = getConversation();
+    createVoiceSession(conv, 'Mira');
+    setActiveVoice(conv, 'Mira');
+    addTurn(conv, 'user', 'world-npc private doubt');
+    addTurn(conv, 'assistant', 'I keep this to myself.');
+
+    const messages = await assembleMessages(conv, getEffectiveSettings(), null);
+    const text = payloadText(messages);
+    const system = messages.find(m => m.role === 'system')?.content || '';
+
+    assert.ok(text.includes('world-npc private doubt'));
+    assert.ok(text.includes('I keep this to myself.'));
+    assert.match(system, /Mira:\s*you\b/i);
+    assert.ok(!system.includes('<character name="Mira">'));
 });
 
 test('unhiding an exchange restores it to the payload', async () => {

@@ -60,8 +60,8 @@ function normalizeConversation(conv) {
         });
     }
     // Owner tags from the #34 prefactor remain reachable even if they predate
-    // the persisted picker list. A newly created session adds the exact card
-    // binding; an inferred one can still show its existing exchanges.
+    // the persisted picker list. A newly created session is the typed name;
+    // a matching character card, when one exists, is a context bonus only.
     for (const m of next.messages) {
         const ownerVoice = m.ownerVoice || USER_VOICE;
         if (ownerVoice === USER_VOICE || seen.has(ownerVoice)) continue;
@@ -530,21 +530,12 @@ export function getVoiceSession(conversation, ownerVoice = _activeVoice) {
     return getVoiceSessions(conversation).find(session => session.ownerVoice === voice) || null;
 }
 
-export function createVoiceSession(conversation, character) {
-    const ownerVoice = typeof character?.name === 'string' ? character.name.trim() : '';
-    const characterId = character?.id === null || character?.id === undefined
-        ? null
-        : String(character.id);
-    if (!ownerVoice || ownerVoice === USER_VOICE || characterId === null) return null;
-    const existing = getVoiceSession(conversation, ownerVoice);
-    if (existing) {
-        if (existing.characterId === null) {
-            existing.characterId = characterId;
-            saveConversation();
-        }
-        return existing;
-    }
-    const session = { ownerVoice, characterId };
+export function createVoiceSession(conversation, ownerVoice) {
+    const name = typeof ownerVoice === 'string' ? ownerVoice.trim() : '';
+    if (!name || name === USER_VOICE) return null;
+    const existing = getVoiceSession(conversation, name);
+    if (existing) return existing;
+    const session = { ownerVoice: name, characterId: null };
     conversation.voiceSessions.push(session);
     saveConversation();
     return session;

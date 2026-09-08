@@ -1093,8 +1093,8 @@ function normalizeConversation(conv) {
         });
     }
     // Owner tags from the #34 prefactor remain reachable even if they predate
-    // the persisted picker list. A newly created session adds the exact card
-    // binding; an inferred one can still show its existing exchanges.
+    // the persisted picker list. A newly created session is the typed name;
+    // a matching character card, when one exists, is a context bonus only.
     for (const m of next.messages) {
         const ownerVoice = m.ownerVoice || USER_VOICE;
         if (ownerVoice === USER_VOICE || seen.has(ownerVoice)) continue;
@@ -1563,21 +1563,12 @@ function getVoiceSession(conversation, ownerVoice = _activeVoice) {
     return getVoiceSessions(conversation).find(session => session.ownerVoice === voice) || null;
 }
 
-function createVoiceSession(conversation, character) {
-    const ownerVoice = typeof character?.name === 'string' ? character.name.trim() : '';
-    const characterId = character?.id === null || character?.id === undefined
-        ? null
-        : String(character.id);
-    if (!ownerVoice || ownerVoice === USER_VOICE || characterId === null) return null;
-    const existing = getVoiceSession(conversation, ownerVoice);
-    if (existing) {
-        if (existing.characterId === null) {
-            existing.characterId = characterId;
-            saveConversation();
-        }
-        return existing;
-    }
-    const session = { ownerVoice, characterId };
+function createVoiceSession(conversation, ownerVoice) {
+    const name = typeof ownerVoice === 'string' ? ownerVoice.trim() : '';
+    if (!name || name === USER_VOICE) return null;
+    const existing = getVoiceSession(conversation, name);
+    if (existing) return existing;
+    const session = { ownerVoice: name, characterId: null };
     conversation.voiceSessions.push(session);
     saveConversation();
     return session;
@@ -10151,14 +10142,20 @@ function getEffectiveCharFieldForChar(settings, charId, field) {
     return ov !== undefined ? ov : getEffectiveCharField(settings, field);
 }
 
+function characterEntity(char) {
+    if (!char) return null;
+    return { id: char.avatar, name: char.name, avatar: char.avatar, char, isPersona: false };
+}
+
 function getActiveCharacterEntities() {
     const ctx = SillyTavern.getContext();
     const entities = [];
     const seen = new Set();
     const pushChar = char => {
-        if (char && !seen.has(char.avatar)) {
-            seen.add(char.avatar);
-            entities.push({ id: char.avatar, name: char.name, avatar: char.avatar, char, isPersona: false });
+        const entity = characterEntity(char);
+        if (entity && !seen.has(entity.avatar)) {
+            seen.add(entity.avatar);
+            entities.push(entity);
         }
     };
 
@@ -10172,6 +10169,12 @@ function getActiveCharacterEntities() {
         pushChar(ctx.characters?.[ctx.characterId]);
     }
     return entities;
+}
+
+function findCharacterEntityByName(name) {
+    if (!name) return null;
+    const ctx = SillyTavern.getContext();
+    return characterEntity((ctx.characters || []).find(char => char?.name === name));
 }
 
 function buildSingleCharacterBlock(settings, entity) {
@@ -10233,11 +10236,7 @@ function buildSingleCharacterBlock(settings, entity) {
 function buildCharacterContextBlock(settings, voiceSession = null) {
     let entities = getActiveCharacterEntities();
     if (voiceSession?.ownerVoice && voiceSession.ownerVoice !== USER_VOICE) {
-        const bound = entities.find(entity =>
-            (voiceSession.characterId !== null && voiceSession.characterId !== undefined
-                && String(entity.id) === String(voiceSession.characterId))
-            || entity.name === voiceSession.ownerVoice
-        );
+        const bound = findCharacterEntityByName(voiceSession.ownerVoice);
         entities = bound ? [bound] : [];
     }
     if (!entities.length) return '';
@@ -12552,10 +12551,7 @@ var uiWidgets = /*#__PURE__*/Object.freeze({
   showQPIconPicker: showQPIconPicker
 });
 
-let castListOpen = false;
-
 function closePicker() {
-    castListOpen = false;
     document.getElementById('iv-sess-panel')?.classList.remove('open');
     document.getElementById('iv-sess-trigger')?.classList.remove('open');
     document.getElementById('iv-sess-trigger')?.setAttribute('aria-expanded', 'false');
@@ -12595,58 +12591,49 @@ function renderSessionList(conversation) {
         const name = document.createElement('span');
         name.className = 'iv-sess-item-name';
         name.textContent = resolveVoiceName(session.ownerVoice);
-        const kind = document.createElement('span');
-        kind.className = 'iv-sess-item-kind';
-        kind.textContent = session.ownerVoice === USER_VOICE ? 'You' : 'Cast';
         const count = document.createElement('span');
         count.className = 'iv-sess-item-count';
         count.textContent = String(getVoiceTurns(conversation, session.ownerVoice).length);
 
-        item.append(dot, name, kind, count);
+        item.append(dot, name);
+        if (session.ownerVoice === USER_VOICE) {
+            const kind = document.createElement('span');
+            kind.className = 'iv-sess-item-kind';
+            kind.textContent = 'You';
+            item.append(kind);
+        }
+        item.append(count);
         item.addEventListener('click', () => switchToVoice(session.ownerVoice));
         list.appendChild(item);
     }
 }
 
-function renderCastList(conversation) {
-    const list = document.getElementById('iv-sess-cast-list');
-    if (!list) return;
-    list.innerHTML = '';
-    list.style.display = castListOpen ? '' : 'none';
-    if (!castListOpen) return;
-
-    const existing = new Set(getVoiceSessions(conversation).map(session => session.ownerVoice));
-    const available = getActiveCharacterEntities().filter(entity => !existing.has(entity.name));
-    if (!available.length) {
-        const empty = document.createElement('div');
-        empty.className = 'iv-sess-empty-label';
-        empty.textContent = 'No other cast characters available';
-        list.appendChild(empty);
+async function createTypedVoiceSession() {
+    if (state.generating) {
+        toastr.warning('Please wait for generation to finish.', EXT_DISPLAY);
         return;
     }
-
-    for (const character of available) {
-        const item = document.createElement('button');
-        item.type = 'button';
-        item.className = 'iv-sess-cast-item';
-        item.innerHTML = `${I.plus}<span></span>`;
-        item.querySelector('span').textContent = character.name;
-        item.title = `Open ${character.name}'s inner voice`;
-        item.addEventListener('click', () => {
-            if (state.generating) return;
-            const session = createVoiceSession(conversation, character);
-            if (!session) return;
-            setActiveVoice(conversation, session.ownerVoice);
-            renderConversation(conversation);
-            refreshVoiceSessionPicker();
-            closePicker();
-            _dbgAdd('VOICE_SESSION_CREATED', {
-                ownerVoice: session.ownerVoice,
-                characterId: session.characterId,
-            });
-        });
-        list.appendChild(item);
+    closePicker();
+    const typed = await showCustomDialog({
+        type: 'prompt',
+        title: 'New Voice Session',
+        message: "Type the character's name.",
+        placeholder: 'Character name',
+    });
+    const name = typeof typed === 'string' ? typed.trim() : '';
+    if (!name) return;
+    if (name === USER_VOICE) {
+        toastr.warning('The default session already exists.', EXT_DISPLAY);
+        return;
     }
+    const conversation = getConversation();
+    const session = createVoiceSession(conversation, name);
+    if (!session) return;
+    setActiveVoice(conversation, session.ownerVoice);
+    renderConversation(conversation);
+    refreshVoiceSessionPicker();
+    document.getElementById('iv-input')?.focus({ preventScroll: true });
+    _dbgAdd('VOICE_SESSION_CREATED', { ownerVoice: session.ownerVoice });
 }
 
 function refreshVoiceSessionPicker() {
@@ -12677,7 +12664,6 @@ function refreshVoiceSessionPicker() {
     }
 
     renderSessionList(conversation);
-    renderCastList(conversation);
 }
 
 function setupVoiceSessionPicker() {
@@ -12694,13 +12680,11 @@ function setupVoiceSessionPicker() {
         trigger.classList.toggle('open', opening);
         trigger.setAttribute('aria-expanded', opening ? 'true' : 'false');
         if (opening) refreshVoiceSessionPicker();
-        else castListOpen = false;
     });
 
     document.getElementById('iv-new-sess-btn')?.addEventListener('click', event => {
         event.stopPropagation();
-        castListOpen = !castListOpen;
-        refreshVoiceSessionPicker();
+        createTypedVoiceSession();
     });
 
     document.getElementById('iv-del-sess-btn')?.addEventListener('click', async () => {

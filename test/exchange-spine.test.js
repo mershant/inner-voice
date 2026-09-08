@@ -124,19 +124,19 @@ test('the default {{user}} voice session always exists, opens by default, and ca
     assert.deepEqual(getVoiceSessions(conv), [{ ownerVoice: '{{user}}', characterId: null }]);
 });
 
-test('a cast-bound voice session becomes active without altering existing exchanges', () => {
+test('a typed-name voice session becomes active without a character card and without altering existing exchanges', () => {
     const conv = getConversation();
     addTurn(conv, 'user', 'the persona thought');
     const before = structuredClone(conv.messages);
 
-    const session = createVoiceSession(conv, { id: 'kyrine.png', name: 'Kyrine' });
-    assert.deepEqual(session, { ownerVoice: 'Kyrine', characterId: 'kyrine.png' });
-    assert.equal(setActiveVoice(conv, 'Kyrine'), true);
-    assert.equal(getActiveVoice(), 'Kyrine');
+    const session = createVoiceSession(conv, 'Mira');
+    assert.deepEqual(session, { ownerVoice: 'Mira', characterId: null });
+    assert.equal(setActiveVoice(conv, 'Mira'), true);
+    assert.equal(getActiveVoice(), 'Mira');
     assert.deepEqual(conv.messages, before);
 
     const npcTurn = addTurn(conv, 'user', 'the NPC thought');
-    assert.equal(npcTurn.ownerVoice, 'Kyrine');
+    assert.equal(npcTurn.ownerVoice, 'Mira');
     assert.equal(setActiveVoice(conv, '{{user}}'), true);
     assert.deepEqual(conv.messages.slice(0, before.length), before);
 });
