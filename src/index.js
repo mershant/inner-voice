@@ -16,7 +16,9 @@ import { refreshVoiceSessionPicker, setupVoiceSessionPicker } from './ui/ui-voic
 import * as apiMod from './api.js';
 import { handleMessageRegen } from './ui/ui-chat.js';
 import { syncSimulationView, injectSimulationView } from './simulation-view.js';
+import { innerVoiceChatSummarySource } from './chat-summary-source.js';
 globalThis.innerVoiceInjectExchanges = injectSimulationView;
+globalThis.innerVoiceChatSummarySource = innerVoiceChatSummarySource;
 import { readFireTimePortrayForm, runPortray, withPortrayAutoTriggerSuppressed } from './portray.js';
 import { executeThinkSubmission, syncThinkCommandHint } from './think-command.js';
 

@@ -36,8 +36,12 @@ Main chat sees eligible IV and Chat together, even when another page is open.
 
 Chat stays in context while its anchor does. Hiding the anchor or leaving the receiving model's
 context removes its raw Chat too; restoring the anchor restores inclusion. There is no separate
-30-exchange limit. IV depth settings still apply only to IV. Summaryception support for summarizing
-Chat is separate work (#40); injecting a conversation does not mark it summarized.
+30-exchange limit. IV depth settings still apply only to IV. Injecting a conversation does not
+mark it summarized. When Summaryception is installed, it can read saved Chat for the range it is
+summarizing — including Chat that never appeared as a main-chat bubble. The open page does not
+limit that source. If Inner Voice has not loaded that chat yet, Summaryception leaves the batch
+alone instead of treating the source as empty. Summaries are lossy and keep the summarizer's
+existing post-summary edit/hide limits. Chat still works with Summaryception absent.
 
 Chat uses the existing independent connection and reasoning settings for one reply, without
 automatically generating a main-chat response, Portray, or recap. IV command prefixes are ordinary
@@ -68,6 +72,9 @@ Existing IV customizations and its freedom to recall and invent remain intact (A
   in dry-run previews; product acceptance must exercise the normal preparation path.
 - `scripts/live-acceptance-chat.py` checks the distributed window and captured requests in STD.
   Its optional `--banter` run uses the configured connection without changing model/preset/reasoning settings.
+- `scripts/live-acceptance-chat-summary.py` checks that a fact stated only in Chat reaches the
+  Summaryception passage and later summary context. Default is mocked summarizer requests;
+  `--summarize` permits one real summarizer request.
 
 ## License
 

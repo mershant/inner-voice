@@ -1350,6 +1350,16 @@ function hasConversationOverrides() {
 let _conversation = emptyConversation();
 let _currentFileId = null;
 const _saveQueue = new Map();
+let _chatSourceState = { status: 'uninitialized', chatId: null };
+
+function getChatSourceState() {
+    return { status: _chatSourceState.status, chatId: _chatSourceState.chatId };
+}
+
+function markChatSourceReady() {
+    const { chatId } = getBindingKey();
+    _chatSourceState = { status: 'ready', chatId };
+}
 
 function freshFileId() {
     return `inner_voice_conv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
@@ -1430,6 +1440,7 @@ async function initConversation({ forceReset = false } = {}) {
     const ctx = SillyTavern.getContext();
     if (!ctx.chatMetadata) ctx.chatMetadata = {};
     const { charId, chatId } = getBindingKey();
+    _chatSourceState = { status: 'loading', chatId };
 
     if (forceReset) {
         const prevMeta = ctx.chatMetadata.inner_voice || null;
@@ -1440,6 +1451,7 @@ async function initConversation({ forceReset = false } = {}) {
         _conversation = emptyConversation();
         await commitConversation(true);
         _dbgAdd('CONVERSATION_FORCE_RESET', { charId, chatId, prevFileId: prevMeta?.file_id || null, newFileId: freshId });
+        markChatSourceReady();
         refreshSimulationView();
         return;
     }
@@ -1500,6 +1512,7 @@ async function initConversation({ forceReset = false } = {}) {
         await commitConversation(true);
 
         toastr.error('The inner conversation file was corrupted and could not be recovered. Started fresh storage for this chat; the broken file was kept on disk for manual recovery.', EXT_DISPLAY, { timeOut: 15000 });
+        markChatSourceReady();
         refreshSimulationView();
         return;
     }
@@ -1516,6 +1529,7 @@ async function initConversation({ forceReset = false } = {}) {
     if (!payload || !payload.conversation || meta?.format !== 'v5' || meta?.chat_id !== chatId) {
         await commitConversation(true);
     }
+    markChatSourceReady();
     refreshSimulationView();
 }
 
@@ -1871,6 +1885,7 @@ var conversation = /*#__PURE__*/Object.freeze({
   getActiveMode: getActiveMode,
   getActiveVoice: getActiveVoice,
   getBindingKey: getBindingKey,
+  getChatSourceState: getChatSourceState,
   getConversation: getConversation,
   getConversationOverrides: getConversationOverrides,
   getEffectiveSettings: getEffectiveSettings,
@@ -12915,6 +12930,64 @@ var uiVoiceSessions = /*#__PURE__*/Object.freeze({
   setupVoiceSessionPicker: setupVoiceSessionPicker
 });
 
+function collectChatSummarySource({
+    chatId,
+    startIndex,
+    endIndex,
+    sourceStatus,
+    loadedChatId,
+    conversation,
+    personaName,
+}) {
+    if (sourceStatus !== 'ready') {
+        return { status: 'unavailable', reason: 'not-ready' };
+    }
+    if (chatId !== undefined && chatId !== null && String(chatId) !== String(loadedChatId)) {
+        return { status: 'unavailable', reason: 'chat-mismatch' };
+    }
+    if (!conversation || !Array.isArray(conversation.messages)) {
+        return { status: 'unavailable', reason: 'not-ready' };
+    }
+    if (!Number.isInteger(startIndex) || !Number.isInteger(endIndex)) {
+        return { status: 'unavailable', reason: 'not-ready' };
+    }
+
+    const parts = [];
+    for (const run of getOrderedExchangeParts(conversation, turn => {
+        if (turnMode(turn) !== 'chat') return false;
+        if (!turn.content || turn._tcTemp) return false;
+        const anchor = turn.anchorIndex;
+        if (!Number.isInteger(anchor) || anchor < startIndex || anchor > endIndex) return false;
+        const ownerVoice = turn.ownerVoice || USER_VOICE;
+        if (isExchangeManuallyHidden(conversation, anchor, ownerVoice, 'chat')) return false;
+        return true;
+    })) {
+        const ownerVoice = run.ownerVoice || USER_VOICE;
+        parts.push({
+            anchorIndex: run.anchorIndex,
+            ownerVoice,
+            personaLabel: personaName || resolveVoiceName(USER_VOICE),
+            characterLabel: resolveVoiceName(ownerVoice),
+            turns: run.turns.map(turn => ({ role: turn.role, content: turn.content })),
+        });
+    }
+
+    return { status: 'ok', parts };
+}
+
+function innerVoiceChatSummarySource({ chatId, startIndex, endIndex } = {}) {
+    const state = getChatSourceState();
+    return collectChatSummarySource({
+        chatId,
+        startIndex,
+        endIndex,
+        sourceStatus: state.status,
+        loadedChatId: state.chatId,
+        conversation: getConversation(),
+        personaName: resolveVoiceName(USER_VOICE),
+    });
+}
+
 const PORTRAY_STYLES = ['rp', 'summary'];
 const PORTRAY_PERSONS = ['first', 'second', 'third'];
 
@@ -13146,6 +13219,7 @@ var portray = /*#__PURE__*/Object.freeze({
 });
 
 globalThis.innerVoiceInjectExchanges = injectSimulationView;
+globalThis.innerVoiceChatSummarySource = innerVoiceChatSummarySource;
 
 let extVersion = '?';
 let __extPath = null;

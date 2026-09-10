@@ -312,6 +312,16 @@ export function hasConversationOverrides() {
 let _conversation = emptyConversation();
 let _currentFileId = null;
 const _saveQueue = new Map();
+let _chatSourceState = { status: 'uninitialized', chatId: null };
+
+export function getChatSourceState() {
+    return { status: _chatSourceState.status, chatId: _chatSourceState.chatId };
+}
+
+function markChatSourceReady() {
+    const { chatId } = getBindingKey();
+    _chatSourceState = { status: 'ready', chatId };
+}
 
 function freshFileId() {
     return `inner_voice_conv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.json`;
@@ -392,6 +402,7 @@ export async function initConversation({ forceReset = false } = {}) {
     const ctx = SillyTavern.getContext();
     if (!ctx.chatMetadata) ctx.chatMetadata = {};
     const { charId, chatId } = getBindingKey();
+    _chatSourceState = { status: 'loading', chatId };
 
     if (forceReset) {
         const prevMeta = ctx.chatMetadata.inner_voice || null;
@@ -402,6 +413,7 @@ export async function initConversation({ forceReset = false } = {}) {
         _conversation = emptyConversation();
         await commitConversation(true);
         _dbgAdd('CONVERSATION_FORCE_RESET', { charId, chatId, prevFileId: prevMeta?.file_id || null, newFileId: freshId });
+        markChatSourceReady();
         refreshSimulationView();
         return;
     }
@@ -462,6 +474,7 @@ export async function initConversation({ forceReset = false } = {}) {
         await commitConversation(true);
 
         toastr.error('The inner conversation file was corrupted and could not be recovered. Started fresh storage for this chat; the broken file was kept on disk for manual recovery.', EXT_DISPLAY, { timeOut: 15000 });
+        markChatSourceReady();
         refreshSimulationView();
         return;
     }
@@ -478,6 +491,7 @@ export async function initConversation({ forceReset = false } = {}) {
     if (!payload || !payload.conversation || meta?.format !== 'v5' || meta?.chat_id !== chatId) {
         await commitConversation(true);
     }
+    markChatSourceReady();
     refreshSimulationView();
 }
 
