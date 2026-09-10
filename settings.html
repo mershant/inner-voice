@@ -310,7 +310,7 @@
                 <!-- ── System Prompt ──────────────────────────── -->
                 <div class="inline-drawer iv-settings-drawer">
                     <div class="inline-drawer-toggle inline-drawer-header">
-                        <b><i class="fa-solid fa-message" style="margin-right:6px"></i>System Prompt</b>
+                        <b><i class="fa-solid fa-message" style="margin-right:6px"></i>IV System Prompt</b>
                         <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
                     </div>
                     <div class="inline-drawer-content">
@@ -319,6 +319,26 @@
                         <button id="iv-reset-prompt" class="menu_button interactable" style="margin-top:6px; align-self:flex-start">
                             <i class="fa-solid fa-arrow-rotate-left"></i> Reset to Default
                         </button>
+                    </div>
+                </div>
+
+                <div class="inline-drawer iv-settings-drawer">
+                    <div class="inline-drawer-toggle inline-drawer-header">
+                        <b>Chat Prompts</b>
+                        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+                    </div>
+                    <div class="inline-drawer-content">
+                        <div class="iv-sp-hint">{{user}} is your persona speaking to {{voice}}, this session's character. Dialogue and actions happen in the scene. Set dialogue-only or *asterisk actions* here; IV prompts stay separate.</div>
+                        <label for="iv-chat-sysprompt">Chat system prompt</label>
+                        <textarea id="iv-chat-sysprompt" class="text_pole autoSetHeight" rows="6"></textarea>
+                        <button id="iv-reset-chat-prompt" class="menu_button interactable">Reset Chat to Default</button>
+                        <label for="iv-chat-post-history-text">Chat post-history prompt (optional)</label>
+                        <textarea id="iv-chat-post-history-text" class="text_pole" rows="3"></textarea>
+                        <label for="iv-chat-post-history-role">Role</label>
+                        <select id="iv-chat-post-history-role" class="text_pole">
+                            <option value="system">System</option><option value="user">User</option><option value="assistant">Assistant</option>
+                        </select>
+                        <div class="iv-sp-hint">Leave post-history blank to insert nothing. Assistant as the final message is a prefill, which not every backend accepts.</div>
                     </div>
                 </div>
 

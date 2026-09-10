@@ -128,11 +128,15 @@ function buildSingleCharacterBlock(settings, entity) {
     return `<character name="${escHtml(char.name)}">\n${parts.join('\n\n')}\n</character>`;
 }
 
-export function buildCharacterContextBlock(settings, voiceSession = null) {
+export function buildCharacterContextBlock(settings, voiceSession = null, includeScene = false) {
     let entities = getActiveCharacterEntities();
     if (voiceSession?.ownerVoice && voiceSession.ownerVoice !== USER_VOICE) {
         const bound = findCharacterEntityByName(voiceSession.ownerVoice);
-        entities = bound ? [bound] : [];
+        if (includeScene) {
+            if (bound && !entities.some(entity => entity.id === bound.id)) entities.push(bound);
+        } else {
+            entities = bound ? [bound] : [];
+        }
     }
     if (!entities.length) return '';
     const excluded = new Set(settings.charMgrExcluded || []);

@@ -1,7 +1,8 @@
 import { I, EXT_DISPLAY, THEME_PRESETS, WIN_ID } from '../constants.js';
 import { state } from '../state.js';
 import { getSettings, saveSettings, getConversation, saveConversation, deleteMsg, truncateAfter, truncateFrom, expandMacros, getEffectiveSettings, getBindingKey, initConversation, getVisibleTurns, getVoiceTurns, getExchanges, getLiveEdgeIndex, getActiveVoice, isExchangeHidden, isExchangeManuallyHidden, isAnchorHiddenInMainChat, setExchangeHidden } from '../conversation.js';
-import { USER_VOICE } from '../voice.js';
+import { getActiveMode, turnMode } from '../conversation.js';
+import { USER_VOICE, resolveVoiceName } from '../voice.js';
 import { _dbgAdd } from '../utils/util-debug.js';
 import { escHtml, autoResize, showCustomDialog, copyText } from '../utils/util-dom.js';
 import { getCharInfo } from '../utils/util-st.js';
@@ -69,14 +70,14 @@ export function isSegmentClosed(anchorIndex) {
 }
 
 export function nearestSegmentAbove(conversation, anchorIndex) {
-    const segments = getExchanges(conversation, getActiveVoice());
+    const segments = getExchanges(conversation, getActiveVoice(), getActiveMode(conversation));
     const idx = segments.findIndex(s => s.anchorIndex === anchorIndex);
     if (idx <= 0) return null;
     return segments[idx - 1].anchorIndex;
 }
 
 export function nearestSegmentBelow(conversation, anchorIndex) {
-    const segments = getExchanges(conversation, getActiveVoice());
+    const segments = getExchanges(conversation, getActiveVoice(), getActiveMode(conversation));
     const idx = segments.findIndex(s => s.anchorIndex === anchorIndex);
     if (idx === -1 || idx === segments.length - 1) return null;
     return segments[idx + 1].anchorIndex;
@@ -417,18 +418,19 @@ export function _renderMsgBodyContent(msgEl, msg) {
     msgEl.querySelectorAll('.iv-lb-proposal-card').forEach(c => c.remove());
     msgEl.querySelectorAll('.iv-msg-hist-wrap').forEach(c => c.remove());
 
-    const cleanContent = stripMemoryBlock(splitPortraySignal(msg.content).visible);
+    const isChat = turnMode(msg) === 'chat';
+    const cleanContent = isChat ? msg.content : stripMemoryBlock(splitPortraySignal(msg.content).visible);
     let displayText = cleanContent;
     let reasoning = msg.reasoning !== undefined ? (msg.reasoning || null) : null;
 
     let tcIndex = 0;
-    if (reasoning) {
+    if (reasoning && !isChat) {
         const resR = extractToolCallPlaceholders(reasoning, tcIndex);
         reasoning = resR.text;
         tcIndex = resR.nextIndex;
     }
     
-    const resC = extractToolCallPlaceholders(displayText, tcIndex);
+    const resC = isChat ? { text: displayText, nextIndex: tcIndex } : extractToolCallPlaceholders(displayText, tcIndex);
     displayText = resC.text;
     tcIndex = resC.nextIndex;
 
@@ -461,7 +463,7 @@ export function _renderMsgBodyContent(msgEl, msg) {
     const contentEl = msgEl.querySelector('.iv-msg-content');
 
     if (contentEl) {
-        const lbChanges = parseLBChangesFromText(msg.content);
+        const lbChanges = isChat ? null : parseLBChangesFromText(msg.content);
         if (lbChanges?.length) {
             const stripped = stripLBChangesBlock(displayText);
             contentEl.innerHTML = renderMarkdown(getDisplayContent(stripped, settings).content);
@@ -546,6 +548,10 @@ export function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
 
     const content = document.createElement('div');
     content.className = 'iv-msg-content';
+    const speaker = document.createElement('div');
+    speaker.className = 'iv-msg-speaker';
+    speaker.textContent = isUser ? (turnMode(msg) === 'chat' ? resolveVoiceName(USER_VOICE) : 'IV') : resolveVoiceName(msg.ownerVoice || USER_VOICE);
+    body.appendChild(speaker);
     body.appendChild(content);
 
     const meta = document.createElement('div');
@@ -669,7 +675,7 @@ export function getLastAssistantMsgId(conversation) {
     const ownerVoice = getActiveVoice();
     for (let i = conversation.messages.length - 1; i >= 0; i--) {
         const m = conversation.messages[i];
-        if ((m.ownerVoice || USER_VOICE) !== ownerVoice) continue;
+        if ((m.ownerVoice || USER_VOICE) !== ownerVoice || turnMode(m) !== getActiveMode(conversation)) continue;
         if (m.role === 'user') return null;
         if (m.role === 'assistant') {
             return m.id;
@@ -737,6 +743,7 @@ export async function _runSwipeRegen(conversation, msgId, wrapEl) {
     const msgData = conversation.messages.find(m => m.id === msgId);
     if (!msgData) return;
     const ownerVoice = msgData.ownerVoice || USER_VOICE;
+    const mode = turnMode(msgData);
 
     if (!msgData.swipes) {
         msgData.swipes = [{ content: msgData.content, reasoning: msgData.reasoning || null }];
@@ -787,15 +794,15 @@ export async function _runSwipeRegen(conversation, msgId, wrapEl) {
         }
         if (streamContentEl) {
             let procReasoning = reasoning || '';
-            let procText = stripMemoryBlock(splitPortraySignal(text).visible);
+            let procText = mode === 'chat' ? text : stripMemoryBlock(splitPortraySignal(text).visible);
             let tcIndex = 0;
             
-            if (procReasoning) {
+            if (procReasoning && mode !== 'chat') {
                 const resR = extractToolCallPlaceholders(procReasoning, tcIndex);
                 procReasoning = resR.text;
                 tcIndex = resR.nextIndex;
             }
-            const resC = extractToolCallPlaceholders(procText, tcIndex);
+            const resC = mode === 'chat' ? { text: procText, nextIndex: tcIndex } : extractToolCallPlaceholders(procText, tcIndex);
             procText = resC.text;
 
             const { content: disp } = getDisplayContent(procText, settings);
@@ -818,11 +825,11 @@ export async function _runSwipeRegen(conversation, msgId, wrapEl) {
         const tempConversation = { ...conversation, messages: conversation.messages.filter(m => m.id !== msgId) };
         if (!apiMod) throw new Error("API module not loaded");
         
-        const builtMessages = await apiMod.assembleMessages(tempConversation, settings, null, ownerVoice);
+        const builtMessages = await apiMod.assembleMessages(tempConversation, settings, null, ownerVoice, mode);
         const fullPromptText = builtMessages.map(m => m.content).join('\n');
         const tokensIn = await apiMod.estimateTokens(fullPromptText);
 
-        const result = await apiMod.callGenerate(tempConversation, settings, null, onChunk, undefined, ownerVoice);
+        const result = await apiMod.callGenerate(tempConversation, settings, null, onChunk, builtMessages, ownerVoice, mode);
         cleanupCursor();
 
         if (result === null) {
@@ -837,9 +844,9 @@ export async function _runSwipeRegen(conversation, msgId, wrapEl) {
         }
 
         const { text: rawText, reasoning: fullReasoning } = result;
-        const rawNormalized = normalizeCharNamesInBlock(rawText);
+        const rawNormalized = mode === 'chat' ? rawText : normalizeCharNamesInBlock(rawText);
         const { visible, triggered } = splitPortraySignal(rawNormalized);
-        const fullText = stripMemoryBlock(visible);
+        const fullText = mode === 'chat' ? rawText : stripMemoryBlock(visible);
 
         msgData.swipes[msgData.swipeIndex] = { content: fullText, reasoning: fullReasoning || null };
         msgData.content = fullText;
@@ -851,7 +858,7 @@ export async function _runSwipeRegen(conversation, msgId, wrapEl) {
 
         updateMsgCount(conversation);
         if (uiWdgMod) uiWdgMod.playCompletionSound();
-        if (triggered) await apiMod.notePortrayAutoTrigger(msgData, { triggered: true });
+        if (mode !== 'chat' && triggered) await apiMod.notePortrayAutoTrigger(msgData, { triggered: true });
 
     } catch(err) {
         cleanupCursor();
@@ -1012,6 +1019,7 @@ export function handleEdit(wrapEl, msg) {
     const conversation = getConversation();
     const contentEl = wrapEl.querySelector('.iv-msg-content');
     const original = msg.content;
+    const canResend = msg.role === 'user' && !isSegmentClosed(msg.anchorIndex);
 
     const ta = document.createElement('textarea');
     ta.className = 'iv-edit-ta';
@@ -1022,11 +1030,11 @@ export function handleEdit(wrapEl, msg) {
 
     const saveBtn = document.createElement('button');
     saveBtn.className = 'iv-edit-btn iv-edit-save';
-    saveBtn.innerHTML = msg.role === 'user'
+    saveBtn.innerHTML = canResend
         ? `${I.check}<span>Save & Resend</span>`
         : `${I.check}<span>Save</span>`;
 
-    const saveOnlyBtn = msg.role === 'user' ? document.createElement('button') : null;
+    const saveOnlyBtn = canResend ? document.createElement('button') : null;
     if (saveOnlyBtn) {
         saveOnlyBtn.className = 'iv-edit-btn iv-edit-cancel';
         saveOnlyBtn.innerHTML = `${I.check}<span>Save</span>`;
@@ -1048,7 +1056,7 @@ export function handleEdit(wrapEl, msg) {
         const nc = document.createElement('div');
         nc.className = 'iv-msg-content';
 
-        const lbChanges = parseLBChangesFromText(textToRender);
+        const lbChanges = turnMode(msg) === 'chat' ? null : parseLBChangesFromText(textToRender);
         let stripped = textToRender;
         if (lbChanges?.length) {
             stripped = stripLBChangesBlock(stripped);
@@ -1056,7 +1064,7 @@ export function handleEdit(wrapEl, msg) {
         } else document.querySelector(`.iv-lb-proposal-card[data-for="${msg.id}"]`)?.remove();
 
         let tcIndex = 0;
-        const resR = extractToolCallPlaceholders(stripped, tcIndex);
+        const resR = turnMode(msg) === 'chat' ? { text: stripped } : extractToolCallPlaceholders(stripped, tcIndex);
         const displayString = getDisplayContent(resR.text, getSettings()).content;
 
         nc.innerHTML = renderMarkdown(displayString);
@@ -1075,7 +1083,7 @@ export function handleEdit(wrapEl, msg) {
         saveOnlyBtn.addEventListener('click', () => {
             const rawText = ta.value.trim();
             if (!rawText) return;
-            const newText = expandMacros(rawText);
+            const newText = expandMacros(rawText, msg.ownerVoice || USER_VOICE);
             
             const msgObj = conversation.messages.find(m => m.id === msg.id);
             if (msgObj) { msgObj.content = newText; saveConversation(); }
@@ -1093,7 +1101,7 @@ export function handleEdit(wrapEl, msg) {
     saveBtn.addEventListener('click', async () => {
         const rawText = ta.value.trim();
         if (!rawText) return;
-        const newText = expandMacros(rawText);
+        const newText = expandMacros(rawText, msg.ownerVoice || USER_VOICE);
         
         const msgObj = conversation.messages.find(m => m.id === msg.id);
         if (msgObj) { msgObj.content = newText; saveConversation(); }
@@ -1106,14 +1114,16 @@ export function handleEdit(wrapEl, msg) {
         restoreMessageDOM(newText);
         _updateMsgTokenCount(wrapEl, newText, true);
         
-        truncateAfter(conversation, msg.id);
-        removeMsgElAfter(msg.id);
-        if (msg.role === 'user' && apiMod) await apiMod.runGenerate(conversation, newText, false);
+        if (!isSegmentClosed(msg.anchorIndex)) {
+            truncateAfter(conversation, msg.id);
+            removeMsgElAfter(msg.id);
+            if (canResend && apiMod) await apiMod.runGenerate(conversation, null, false, msg.ownerVoice || USER_VOICE, turnMode(msg));
+        }
     });
 }
 
 export async function handleMessageRegen(wrapEl, msg) {
-    if (state.generating) return;
+    if (state.generating || isSegmentClosed(msg.anchorIndex)) return;
     const conversation = getConversation();
     const idx = conversation.messages.findIndex(m => m.id === msg.id);
     if (idx === -1) return;
@@ -1121,7 +1131,7 @@ export async function handleMessageRegen(wrapEl, msg) {
     const isUser = msg.role === 'user';
     const ownerVoice = msg.ownerVoice || USER_VOICE;
     const actualMsgsAfter = conversation.messages.slice(idx + 1)
-        .filter(m => (m.ownerVoice || USER_VOICE) === ownerVoice);
+        .filter(m => (m.ownerVoice || USER_VOICE) === ownerVoice && turnMode(m) === turnMode(msg));
     const msgsAfterCount = actualMsgsAfter.length;
 
     let needsConfirm = false;
@@ -1139,7 +1149,7 @@ export async function handleMessageRegen(wrapEl, msg) {
         const ok = await showCustomDialog({
             type: 'confirm',
             title: 'Regenerate Message',
-            message: 'Regenerating will delete all subsequent messages. Continue?'
+            message: 'Regenerating will delete subsequent messages on this page only. Continue?'
         });
         if (!ok) return;
     }
@@ -1148,7 +1158,7 @@ export async function handleMessageRegen(wrapEl, msg) {
         truncateAfter(conversation, msg.id);
         removeMsgElAfter(msg.id);
         updateMsgCount(conversation);
-        if (apiMod) apiMod.runGenerate(conversation, null, false);
+        if (apiMod) apiMod.runGenerate(conversation, null, false, ownerVoice, turnMode(msg));
     } else {
         if (msgsAfterCount > 0) {
             truncateAfter(conversation, msg.id);
@@ -1165,7 +1175,7 @@ export async function handleDelete(wrapEl, msg) {
         type: 'confirm',
         title: 'Delete Message',
         message: isUser
-            ? 'Delete this message and all subsequent messages?'
+            ? 'Delete this message and subsequent messages on this page only?'
             : 'Delete this assistant message?',
     });
     if (!confirmed) return;
@@ -1178,7 +1188,7 @@ export async function handleDelete(wrapEl, msg) {
         removeMsgEl(msg.id);
     }
     updateMsgCount(conversation);
-    if (!getVoiceTurns(conversation).length) renderConversation(conversation);
+    if (!getVoiceTurns(conversation, getActiveVoice(), getActiveMode()).length) renderConversation(conversation);
 }
 
 function encodeAnchor(anchorIndex) {
@@ -1193,8 +1203,9 @@ function decodeAnchor(value) {
 
 function paintHideControl(segment, conversation, anchorIndex) {
     const ownerVoice = getActiveVoice();
-    const hidden = isExchangeHidden(conversation, anchorIndex, ownerVoice);
-    const locked = isAnchorHiddenInMainChat(anchorIndex) && !isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice);
+    const mode = getActiveMode(conversation);
+    const hidden = isExchangeHidden(conversation, anchorIndex, ownerVoice, mode);
+    const locked = isAnchorHiddenInMainChat(anchorIndex) && !isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice, mode);
     segment.classList.toggle('iv-segment-hidden', hidden);
     const btn = segment.querySelector('.iv-hide-toggle');
     if (!btn) return;
@@ -1250,7 +1261,8 @@ function createSegment(conversation, anchorIndex) {
         e.stopPropagation();
         const conv = getConversation();
         const ownerVoice = getActiveVoice();
-        setExchangeHidden(conv, anchorIndex, !isExchangeManuallyHidden(conv, anchorIndex, ownerVoice), ownerVoice);
+        const mode = getActiveMode(conv);
+        setExchangeHidden(conv, anchorIndex, !isExchangeManuallyHidden(conv, anchorIndex, ownerVoice, mode), ownerVoice, mode);
         syncExchangeHiddenUi(conv);
     });
 
@@ -1365,13 +1377,13 @@ export function renderConversation(conversation) {
     const c = document.getElementById('iv-messages');
     if (!c) return;
     c.innerHTML = '';
-    const messages = getVoiceTurns(conversation);
+    const messages = getVoiceTurns(conversation, getActiveVoice(), getActiveMode(conversation));
     if (!messages.length) {
         c.innerHTML = `
             <div class="iv-empty-state">
                 <div class="iv-empty-icon">${I.bot}</div>
-                <div class="iv-empty-title">Inner Voice</div>
-                <div class="iv-empty-sub">A private space to think, plan, and talk with yourself. Nothing here enters the scene.</div>
+                <div class="iv-empty-title">${getActiveMode() === 'chat' ? 'Chat' : 'Inner Voice'}</div>
+                <div class="iv-empty-sub">${getActiveMode() === 'chat' ? 'Talk here as your persona. This conversation happens in the scene.' : 'A private space to think, plan, and talk with yourself. Nothing thought here is spoken aloud.'}</div>
             </div>`;
         updateMsgCount(conversation);
         return;
@@ -1395,7 +1407,7 @@ export function renderConversation(conversation) {
 export function appendMsgEl(msg, isStreamInit = false) {
     const c = document.getElementById('iv-messages');
     if (!c) return;
-    if ((msg.ownerVoice || USER_VOICE) !== getActiveVoice()) return;
+    if ((msg.ownerVoice || USER_VOICE) !== getActiveVoice() || turnMode(msg) !== getActiveMode()) return;
     c.querySelector('.iv-empty-state')?.remove();
 
     const conversation = getConversation();
@@ -1468,7 +1480,7 @@ let _pendingTokenCalc = false;
 
 export function updateMsgCount(conversation) {
     const el = document.getElementById('iv-msg-count');
-    if (el && conversation) el.textContent = `${getVoiceTurns(conversation).length} msgs`;
+    if (el && conversation) el.textContent = `${getVoiceTurns(conversation, getActiveVoice(), getActiveMode()).length} msgs`;
 
     const tel = document.getElementById('iv-token-count');
     if (!tel || !conversation) return;
@@ -1494,6 +1506,7 @@ export function updateMsgCount(conversation) {
                                 timestamp: Date.now(),
                                 anchorIndex: getLiveEdgeIndex(),
                                 ownerVoice: getActiveVoice(),
+                                mode: getActiveMode(),
                             });
                         }
                         const builtMsgs = await apiMod.assembleMessages(tempConv, settings, null);

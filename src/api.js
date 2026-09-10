@@ -1,7 +1,7 @@
-import { DEFAULT_SYSTEM_PROMPT, EXT_DISPLAY } from './constants.js';
+import { DEFAULT_SYSTEM_PROMPT, DEFAULT_CHAT_SYSTEM_PROMPT, EXT_DISPLAY } from './constants.js';
 import { prepareVoiceMacroForHostPrompt } from './voice.js';
 import { state } from './state.js';
-import { getEffectiveSettings, saveConversation, addTurn, getConversation, getLiveEdgeIndex, getExchangeAt, isExchangeHidden, getActiveVoice, getVoiceSession } from './conversation.js';
+import { getEffectiveSettings, saveConversation, addTurn, getConversation, getLiveEdgeIndex, getOrderedExchangeParts, isExchangeHidden, getActiveVoice, getActiveMode, turnMode, getVoiceSession, expandMacros } from './conversation.js';
 import { renderExchangeBlock } from './simulation-view.js';
 import { _dbgAdd } from './utils/util-debug.js';
 import { escHtml } from './utils/util-dom.js';
@@ -28,6 +28,7 @@ function sanitizeToolCallsForSave(toolCalls) {
 }
 
 export async function notePortrayAutoTrigger(turn, opts = {}) {
+    if (turnMode(turn) === 'chat') return;
     const { considerAutoTriggerPortray } = await import('./portray.js');
     await considerAutoTriggerPortray(turn, opts);
 }
@@ -37,13 +38,15 @@ export async function flushPortrayAutoTrigger() {
     await flushPendingAutoPortray();
 }
 
-function visibleAssistantText(text) {
+function visibleAssistantText(text, mode = 'iv') {
     const raw = typeof text === 'string' ? text : '';
+    if (mode === 'chat') return raw;
     return stripMemoryBlock(splitPortraySignal(raw).visible);
 }
 
-export async function buildSystemContent(settings, ownerVoice = getActiveVoice(), conversation = getConversation()) {
-    let sysPromptRaw = (typeof settings.systemPrompt === 'string' && settings.systemPrompt.trim()) ? settings.systemPrompt : DEFAULT_SYSTEM_PROMPT;
+export async function buildSystemContent(settings, ownerVoice = getActiveVoice(), conversation = getConversation(), mode = getActiveMode(conversation)) {
+    const prompt = mode === 'chat' ? settings.chatSystemPrompt : settings.systemPrompt;
+    let sysPromptRaw = (typeof prompt === 'string' && prompt.trim()) ? prompt : mode === 'chat' ? DEFAULT_CHAT_SYSTEM_PROMPT : DEFAULT_SYSTEM_PROMPT;
     sysPromptRaw = prepareVoiceMacroForHostPrompt(sysPromptRaw, ownerVoice);
     const parts = [_ensureWrapped(sysPromptRaw, 'system_prompt')];
     const ctx = SillyTavern.getContext();
@@ -72,7 +75,7 @@ export async function buildSystemContent(settings, ownerVoice = getActiveVoice()
     const lorebookBlock = await buildLorebookContextBlock(settings);
     if (lorebookBlock) parts.push(lorebookBlock);
 
-    const characterBlock = buildCharacterContextBlock(settings, getVoiceSession(conversation, ownerVoice));
+    const characterBlock = buildCharacterContextBlock(settings, getVoiceSession(conversation, ownerVoice), mode === 'chat');
     if (characterBlock) parts.push('\n\n' + characterBlock);
 
     {
@@ -97,6 +100,9 @@ export async function buildSystemContent(settings, ownerVoice = getActiveVoice()
         parts.push(`\n\n<{{user}}_persona>\n${inner}\n</{{user}}_persona>`);
     }
 
+    // Chat is a conversational reply, not an administrative or tool-running job.
+    // Knowledge inclusions above remain available without their write instructions.
+    if (mode === 'chat') return parts.join('\n');
     const memoryAIInstr = buildMemoryAIInstructions(settings).trim();
     const aiInstructions = buildLBAIInstructions(settings).trim();
     const toolsBlock = buildToolCallsSystemBlock().trim();
@@ -140,8 +146,8 @@ export function getMainChatSlice(depth) {
     return ctx.chat.slice(start).map((m, i) => extractData(m, start + i));
 }
 
-export async function assembleMessages(conversation, settings, pendingUserText, ownerVoice = getActiveVoice()) {
-    const messages = [{ role: 'system', content: await buildSystemContent(settings, ownerVoice, conversation) }];
+export async function assembleMessages(conversation, settings, pendingUserText, ownerVoice = getActiveVoice(), mode = getActiveMode(conversation)) {
+    const messages = [{ role: 'system', content: await buildSystemContent(settings, ownerVoice, conversation, mode) }];
     const depth = Math.max(0, parseInt(settings.contextDepth) || 0);
     const hasPicked = !!(conversation.pickedChatIndices && conversation.pickedChatIndices.length > 0);
     
@@ -182,12 +188,17 @@ export async function assembleMessages(conversation, settings, pendingUserText, 
             // Inner memory: each non-hidden exchange sits directly below its
             // anchor inside this slice. Hidden or out-of-slice anchors take
             // their exchanges with them; the UI keeps every exchange readable.
+            const parts = getOrderedExchangeParts(conversation, turn => {
+                const voice = turn.ownerVoice || '{{user}}';
+                const kind = turnMode(turn);
+                const canRead = voice === ownerVoice || (ownerVoice === '{{user}}' && kind === 'chat');
+                return canRead && !isExchangeHidden(conversation, turn.anchorIndex, voice, kind);
+            });
             const block = visibleSlice.map(m => {
                 const msgXml = `<msg index="${m.chatIndex}" role="${m.role === 'user' ? 'user' : 'assistant'}">\n${m.content}\n</msg>`;
-                if (isExchangeHidden(conversation, m.chatIndex, ownerVoice)) return msgXml;
-                const exchange = getExchangeAt(conversation, m.chatIndex, ownerVoice);
-                if (!exchange || !exchange.turns.length) return msgXml;
-                return `${msgXml}\n\n${renderExchangeBlock(exchange.turns, exchange.ownerVoice)}`;
+                const attached = parts.filter(p => p.anchorIndex === m.chatIndex)
+                    .map(p => renderExchangeBlock(p.turns, p.ownerVoice, p.mode));
+                return [msgXml, ...attached].join('\n\n');
             }).join('\n\n');
             
             let summaryText = '';
@@ -201,13 +212,15 @@ export async function assembleMessages(conversation, settings, pendingUserText, 
                 role: 'user',
                 content: `<main_chat ${ctxAttr}>\n${summaryText}${block}\n\n</main_chat>`,
             });
-            const postHistoryText = typeof settings.postHistoryText === 'string' ? settings.postHistoryText.trim() : '';
-            if (postHistoryText) {
-                const role = settings.postHistoryRole === 'system' || settings.postHistoryRole === 'assistant'
-                    ? settings.postHistoryRole
-                    : 'user';
-                messages.push({ role, content: postHistoryText });
-            }
+        }
+    }
+    if (mode === 'chat' || messages.length > 1) {
+        const postText = mode === 'chat' ? settings.chatPostHistoryText : settings.postHistoryText;
+        const postRole = mode === 'chat' ? settings.chatPostHistoryRole : settings.postHistoryRole;
+        const postHistoryText = typeof postText === 'string' ? prepareVoiceMacroForHostPrompt(postText.trim(), ownerVoice) : '';
+        if (postHistoryText) {
+            const role = postRole === 'system' || postRole === 'assistant' ? postRole : 'user';
+            messages.push({ role, content: postHistoryText });
         }
     }
     if (pendingUserText !== null && pendingUserText !== undefined && pendingUserText !== '') {
@@ -300,9 +313,12 @@ export async function estimateTokens(text) {
     }
 }
 
-export async function callGenerate(conversation, settings, pendingText, onChunk, messagesOverride, ownerVoice = getActiveVoice()) {
+export async function callGenerate(conversation, settings, pendingText, onChunk, messagesOverride, ownerVoice = getActiveVoice(), mode = getActiveMode(conversation)) {
     const ctx = SillyTavern.getContext();
-    const messages = messagesOverride || await assembleMessages(conversation, settings, pendingText, ownerVoice);
+    const assembled = messagesOverride || await assembleMessages(conversation, settings, pendingText, ownerVoice, mode);
+    const messages = assembled.map(m => ({ ...m, content: typeof m.content === 'string'
+        ? expandMacros(m.content, ownerVoice)
+        : Array.isArray(m.content) ? m.content.map(p => p.type === 'text' ? { ...p, text: expandMacros(p.text, ownerVoice) } : p) : m.content }));
     const maxTokens = parseInt(settings.maxTokens) || 8200;
 
     const abort = new AbortController();
@@ -590,9 +606,9 @@ export async function callGenerate(conversation, settings, pendingText, onChunk,
         if (useConnectionManager && service && typeof service.sendRequest === 'function') {
             asyncGeneratorFn = await sendViaConnectionManager(useStream);
         } else {
-            const mainApi = window.main_api || ctx.main_api;
+            const mainApi = ctx.mainApi || window.main_api || ctx.main_api;
             if (mainApi === 'openai' && ctx.ChatCompletionService) {
-                const oaiSettings = window.oai_settings || ctx.oai_settings || {};
+                const oaiSettings = ctx.chatCompletionSettings || window.oai_settings || ctx.oai_settings || {};
                 asyncGeneratorFn = await ctx.ChatCompletionService.processRequest(
                     chatCompletionPayload(useStream),
                     { presetName: oaiSettings.preset_settings_openai },
@@ -600,12 +616,12 @@ export async function callGenerate(conversation, settings, pendingText, onChunk,
                     abort.signal,
                 );
             } else if (mainApi === 'textgenerationwebui' && ctx.TextCompletionService) {
-                const textGenSettings = window.textgenerationwebui_settings || ctx.textgenerationwebui_settings || {};
+                const textGenSettings = ctx.textCompletionSettings || window.textgenerationwebui_settings || ctx.textgenerationwebui_settings || {};
                 asyncGeneratorFn = await ctx.TextCompletionService.processRequest({
                     prompt: messages,
                     max_tokens: maxTokens,
                     stream: useStream
-                }, { presetName: textGenSettings.preset_settings_textgenerationwebui }, false, abort.signal);
+                }, { presetName: textGenSettings.preset || textGenSettings.preset_settings_textgenerationwebui }, false, abort.signal);
             } else {
                 throw new Error('No active API connection found. Please select a profile in Connection Manager or configure the main API.');
             }
@@ -619,9 +635,9 @@ export async function callGenerate(conversation, settings, pendingText, onChunk,
                 if (useConnectionManager && service && typeof service.sendRequest === 'function') {
                     asyncGeneratorFn = await sendViaConnectionManager(false);
                 } else {
-                    const mainApi = window.main_api || ctx.main_api;
+                    const mainApi = ctx.mainApi || window.main_api || ctx.main_api;
                     if (mainApi === 'openai' && ctx.ChatCompletionService) {
-                        const oaiSettings = window.oai_settings || ctx.oai_settings || {};
+                        const oaiSettings = ctx.chatCompletionSettings || window.oai_settings || ctx.oai_settings || {};
                         asyncGeneratorFn = await ctx.ChatCompletionService.processRequest(
                             chatCompletionPayload(false),
                             { presetName: oaiSettings.preset_settings_openai },
@@ -629,12 +645,12 @@ export async function callGenerate(conversation, settings, pendingText, onChunk,
                             abort.signal,
                         );
                     } else if (mainApi === 'textgenerationwebui' && ctx.TextCompletionService) {
-                        const textGenSettings = window.textgenerationwebui_settings || ctx.textgenerationwebui_settings || {};
+                        const textGenSettings = ctx.textCompletionSettings || window.textgenerationwebui_settings || ctx.textgenerationwebui_settings || {};
                         asyncGeneratorFn = await ctx.TextCompletionService.processRequest({
                             prompt: messages,
                             max_tokens: maxTokens,
                             stream: false
-                        }, { presetName: textGenSettings.preset_settings_textgenerationwebui }, false, abort.signal);
+                        }, { presetName: textGenSettings.preset || textGenSettings.preset_settings_textgenerationwebui }, false, abort.signal);
                     }
                 }
             } catch (err2) {
@@ -727,12 +743,18 @@ export async function callGenerate(conversation, settings, pendingText, onChunk,
     return { text: text.trim(), reasoning, isMaxTokens };
 }
 
-export async function runGenerate(conversation, userText, addUserMsg = true) {
+export async function runGenerate(conversation, userText, addUserMsg = true, requestOwner = getActiveVoice(), requestMode = getActiveMode(conversation)) {
     if (state.generating) return;
     state.generating = true;
     state.activeToolCalls = [];
     const settings = getEffectiveSettings();
-    const ownerVoice = getActiveVoice();
+    const ownerVoice = requestOwner;
+    const mode = requestMode;
+    const anchorIndex = getLiveEdgeIndex();
+    const requestConversation = { ...conversation, messages: [...conversation.messages] };
+    // A resend already has its user turn beside its anchor. Only new input is
+    // pending; the saved transcript must not also be sent as another live line.
+    const pendingText = addUserMsg ? userText || null : null;
     setGeneratingState(true);
 
     let streamMsgId = null;
@@ -757,7 +779,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
         streamAccumReasoning = reasoning;
 
         if (!streamMsgId) {
-            const placeholder = { id: `msg_${Date.now()}`, role: 'assistant', content: '', reasoning: null, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ownerVoice };
+            const placeholder = { id: `msg_${Date.now()}`, role: 'assistant', content: '', reasoning: null, timestamp: Date.now(), anchorIndex, ownerVoice, mode };
             conversation.messages.push(placeholder);
             streamMsgId = placeholder.id;
             
@@ -790,15 +812,15 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
 
         if (streamContentEl) {
             let procReasoning = reasoning || '';
-            let procText = visibleAssistantText(text);
+            let procText = visibleAssistantText(text, mode);
             
             let tcIndex = 0;
-            if (procReasoning) {
+            if (procReasoning && mode !== 'chat') {
                 const resR = extractToolCallPlaceholders(procReasoning, tcIndex);
                 procReasoning = resR.text;
                 tcIndex = resR.nextIndex;
             }
-            const resC = extractToolCallPlaceholders(procText, tcIndex);
+            const resC = mode === 'chat' ? { text: procText, nextIndex: tcIndex } : extractToolCallPlaceholders(procText, tcIndex);
             procText = resC.text;
 
             if (reasoning && streamReasoningBlockEl) {
@@ -828,11 +850,11 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
 
     try {
         if (addUserMsg && userText) {
-            const msgObj = addTurn(conversation, 'user', userText, { ownerVoice });
+            const msgObj = addTurn(conversation, 'user', userText, { ownerVoice, mode, anchorIndex });
             appendMsgEl(msgObj);
         }
 
-        const fullMessages = await assembleMessages(conversation, settings, userText || null, ownerVoice);
+        const fullMessages = await assembleMessages(requestConversation, settings, pendingText, ownerVoice, mode);
         const fullPromptText = fullMessages.map(m => m.content).join('\n');
         const tokensIn = await estimateTokens(fullPromptText);
 
@@ -845,7 +867,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
             tokensIn
         });
 
-        let result = await callGenerate(conversation, settings, userText || null, onChunk, undefined, ownerVoice);
+        let result = await callGenerate(requestConversation, settings, pendingText, onChunk, fullMessages, ownerVoice, mode);
 
         cleanupCursor();
         
@@ -853,7 +875,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
             toastr.warning('⚠ Generation failed: AI returned an empty response.', EXT_DISPLAY, { timeOut: 10000 });
         }
 
-        if (result !== null && !splitPortraySignal(result.text || '').triggered
+        if (mode !== 'chat' && result !== null && !splitPortraySignal(result.text || '').triggered
             && settings.toolsEnabled && getEnabledTools().length > 0) {
             const maxRounds = settings.toolsMaxRounds ?? 5;
             let roundText = result.text || '';
@@ -987,7 +1009,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
         if (result === null) {
             if (streamMsgId && isStreaming && streamAccumText) {
                 const msg = conversation.messages.find(m => m.id === streamMsgId);
-                const visible = visibleAssistantText(streamAccumText);
+                const visible = visibleAssistantText(streamAccumText, mode);
                 if (msg) { msg.content = visible; msg.reasoning = streamAccumReasoning || null; saveConversation(); }
                 if (streamContentEl) { streamContentEl.innerHTML = renderMarkdown(visible); postProcessHTMLBlocks(streamContentEl); }
             } else if (streamMsgId) {
@@ -1002,10 +1024,10 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
         }
 
         const { text: rawFullText, reasoning: fullReasoning } = result;
-        const rawNormalized = normalizeCharNamesInBlock(rawFullText);
+        const rawNormalized = mode === 'chat' ? rawFullText : normalizeCharNamesInBlock(rawFullText);
         const { triggered } = splitPortraySignal(rawNormalized);
-        processMemoryUpdates(rawNormalized, streamMsgId);
-        const fullText = visibleAssistantText(rawNormalized);
+        if (mode !== 'chat') processMemoryUpdates(rawNormalized, streamMsgId);
+        const fullText = visibleAssistantText(rawNormalized, mode);
 
         const savedToolCalls = state.activeToolCalls.length ? sanitizeToolCallsForSave(JSON.parse(JSON.stringify(state.activeToolCalls))) : undefined;
 
@@ -1026,14 +1048,14 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
                 _renderMsgBodyContent(streamMsgEl, msg);
             }
         } else {
-            const newMsg = addTurn(conversation, 'assistant', fullText, { ownerVoice, reasoning: fullReasoning || null, toolCalls: savedToolCalls });
+            const newMsg = addTurn(conversation, 'assistant', fullText, { ownerVoice, mode, anchorIndex, reasoning: fullReasoning || null, toolCalls: savedToolCalls });
             newMsg.swipes = [{ content: fullText, reasoning: fullReasoning || null }];
             newMsg.swipeIndex = 0;
             saveConversation();
             appendMsgEl(newMsg);
             completedAssistant = newMsg;
         }
-        if (completedAssistant) await notePortrayAutoTrigger(completedAssistant, { triggered });
+        if (mode !== 'chat' && completedAssistant) await notePortrayAutoTrigger(completedAssistant, { triggered });
 
         _refreshSwipeBars(conversation);
         state.activeToolCalls = [];
@@ -1053,7 +1075,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
         }
         
         const inputEl = document.getElementById('iv-input');
-        if (inputEl && inputEl.value.trim() === '' && userText) {
+        if (inputEl && inputEl.value.trim() === '' && userText && getActiveVoice() === ownerVoice && getActiveMode() === mode) {
             inputEl.value = userText;
         }
 
@@ -1065,7 +1087,7 @@ export async function runGenerate(conversation, userText, addUserMsg = true) {
     } finally {
         state.generating = false;
         setGeneratingState(false);
-        await flushPortrayAutoTrigger();
+        if (mode !== 'chat') await flushPortrayAutoTrigger();
     }
 }
 
@@ -1083,6 +1105,7 @@ export async function runContinue(conversation, targetMsgId) {
     const targetMsg = conversation.messages.find(m => m.id === targetMsgId);
     if (!targetMsg || targetMsg.role !== 'assistant') return;
     const ownerVoice = targetMsg.ownerVoice || getActiveVoice();
+    const mode = turnMode(targetMsg);
 
     state.generating = true;
     state.activeToolCalls = [];
@@ -1116,7 +1139,7 @@ export async function runContinue(conversation, targetMsgId) {
         }
         const combined = _joinContinuation(originalContent, text);
         let tcIndex = 0;
-        const resC = extractToolCallPlaceholders(combined, tcIndex);
+        const resC = mode === 'chat' ? { text: combined, nextIndex: tcIndex } : extractToolCallPlaceholders(combined, tcIndex);
         let procText = resC.text;
 
         const { content: disp } = getDisplayContent(procText, settings);
@@ -1143,7 +1166,7 @@ export async function runContinue(conversation, targetMsgId) {
     };
 
     try {
-        const fullMessages = await assembleMessages(conversation, settings, CONTINUE_PROMPT, ownerVoice);
+        const fullMessages = await assembleMessages(conversation, settings, CONTINUE_PROMPT, ownerVoice, mode);
         const fullPromptText = fullMessages.map(m => m.content).join('\n');
         
         const tokensIn = await estimateTokens(fullPromptText);
@@ -1156,7 +1179,7 @@ export async function runContinue(conversation, targetMsgId) {
             tokensIn
         });
 
-        const result = await callGenerate(conversation, settings, CONTINUE_PROMPT, onChunk, undefined, ownerVoice);
+        const result = await callGenerate(conversation, settings, CONTINUE_PROMPT, onChunk, fullMessages, ownerVoice, mode);
         cleanupCursor();
 
         if (result === null) {
@@ -1173,8 +1196,8 @@ export async function runContinue(conversation, targetMsgId) {
         }
 
         const { text: rawContinuation, isMaxTokens } = result;
-        processMemoryUpdates(rawContinuation, targetMsgId);
-        const continuation = visibleAssistantText(rawContinuation);
+        if (mode !== 'chat') processMemoryUpdates(rawContinuation, targetMsgId);
+        const continuation = visibleAssistantText(rawContinuation, mode);
         const combined = _joinContinuation(originalContent, continuation);
         
         if (isMaxTokens) {

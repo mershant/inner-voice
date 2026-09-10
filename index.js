@@ -78,6 +78,12 @@ Thinking is all that happens here. The simulation moves only when you act in the
 
 
 
+const DEFAULT_CHAT_SYSTEM_PROMPT = `You are {{voice}}, in conversation with {{user}} in the present scene. You have your own temperament, concerns, relationships, and way of speaking; the supplied world, people, and scene are the life you are in. The latest input is what {{user}} says or does toward you. Answer them as yourself, with your next conversational turn, leaving their response to them.
+
+The scene history places completed conversations and private thoughts at the moments they occurred. A conversation's dialogue and actions have happened; continue from where it left off. Your private thoughts inform you without becoming something anyone else heard. Who hears or witnesses a conversation depends on where the people are in the scene.
+
+Write your spoken words in plain text and your actions in *asterisks*, at the scale of this exchange rather than a full scene update.`;
+
 const DEFAULT_SYSTEM_PROMPT = `<entity_definitions>
 - {{voice}}: you. You are living the simulation as yourself; your persona, when provided, is who you are. NPCs and the World never perceive anything thought here.
 - Inner Voice: the other half of your own mind. Its messages are the guiding second voice in your head — only you ever hear it, and answering it is just thinking to yourself.
@@ -1049,10 +1055,9 @@ function prepareVoiceMacroForHostPrompt(text, ownerVoice = USER_VOICE) {
 }
 
 // ─── The exchange spine ──────────────────────────────────────────────────────
-// One continuous inner conversation per main chat. Every turn is anchored to a
-// main-chat message (its anchorIndex) and tagged with an owner voice. The set
-// of turns sharing one (anchor, voice) is an exchange; a main-chat message
-// holds at most one exchange per voice. New turns are only ever created at the
+// One chronological turn list per main chat. Every turn has a main-chat anchor,
+// an owner voice, and an IV/Chat mode. The set of turns sharing an
+// (anchor, voice, mode) is an exchange. New turns are only created at the
 // live edge — the latest main-chat message. Older exchanges stay readable but
 // never grow.
 
@@ -1062,6 +1067,7 @@ function emptyConversation() {
         overrides: {},
         pickedChatIndices: [],
         hiddenAnchors: [],
+        pages: {},
         voiceSessions: [{ ownerVoice: USER_VOICE, characterId: null }],
     };
 }
@@ -1075,9 +1081,11 @@ function normalizeConversation(conv) {
     if (!Array.isArray(next.pickedChatIndices)) next.pickedChatIndices = [];
     if (!Array.isArray(next.hiddenAnchors)) next.hiddenAnchors = [];
     if (!Array.isArray(next.voiceSessions)) next.voiceSessions = [];
+    if (!next.pages || typeof next.pages !== 'object') next.pages = {};
     for (const m of next.messages) {
         if (m.anchorIndex === undefined) m.anchorIndex = null;
         if (!m.ownerVoice) m.ownerVoice = USER_VOICE;
+        m.mode = turnMode(m);
     }
     const sessions = [{ ownerVoice: USER_VOICE, characterId: null }];
     const seen = new Set([USER_VOICE]);
@@ -1154,6 +1162,9 @@ function getSettings() {
         includeUserPersonality: true,
         includeAlternateSwipes: false,
         systemPrompt: DEFAULT_SYSTEM_PROMPT,
+        chatSystemPrompt: DEFAULT_CHAT_SYSTEM_PROMPT,
+        chatPostHistoryText: '',
+        chatPostHistoryRole: 'user',
         memoryManagePrompt: DEFAULT_MEMORY_PROMPT,
         profiles: {},
         activeProfile: '',
@@ -1585,8 +1596,9 @@ function deleteVoiceSession(conversation, ownerVoice) {
     conversation.messages = conversation.messages.filter(m => (m.ownerVoice || USER_VOICE) !== voice);
     conversation.voiceSessions = conversation.voiceSessions.filter(session => session.ownerVoice !== voice);
     conversation.hiddenAnchors = conversation.hiddenAnchors.filter(entry =>
-        ![...removedAnchors].some(anchor => entry === manualHideKey(anchor, voice))
+        ![...removedAnchors].some(anchor => ['iv', 'chat'].some(mode => entry === manualHideKey(anchor, voice, mode)))
     );
+    delete conversation.pages?.[voice];
     if (_activeVoice === voice) _activeVoice = USER_VOICE;
     saveConversation();
     refreshSimulationView();
@@ -1601,6 +1613,24 @@ function setActiveVoice(conversation, ownerVoice) {
     const voice = ownerVoice || USER_VOICE;
     if (!getVoiceSession(conversation, voice)) return false;
     _activeVoice = voice;
+    return true;
+}
+
+// The page controls display and the next request, never the meaning of saved turns.
+function turnMode(turn) {
+    return turn?.mode === 'chat' ? 'chat' : 'iv';
+}
+
+function getActiveMode(conversation = getConversation()) {
+    return _activeVoice !== USER_VOICE && conversation.pages?.[_activeVoice] === 'chat' ? 'chat' : 'iv';
+}
+
+function setActiveMode(conversation, mode) {
+    if (!['iv', 'chat'].includes(mode) || (_activeVoice === USER_VOICE && mode === 'chat')) return false;
+    if (!conversation.pages) conversation.pages = {};
+    // Names are player-authored keys; define an own property even for __proto__.
+    Object.defineProperty(conversation.pages, _activeVoice, { value: mode, enumerable: true, writable: true, configurable: true });
+    saveConversation();
     return true;
 }
 
@@ -1627,33 +1657,30 @@ function refreshSimulationView() {
 }
 
 function addTurn(conversation, role, content, extra = {}) {
-    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ownerVoice: _activeVoice, ...extra };
+    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ownerVoice: _activeVoice, mode: getActiveMode(conversation), ...extra };
     conversation.messages.push(msg);
-    if (conversation.messages.length > 400) conversation.messages = conversation.messages.slice(-400);
+    // Saved transcripts follow their anchors; a context/display limit is not
+    // permission to erase history from this shared chronological list.
     saveConversation();
     refreshSimulationView();
     return msg;
 }
 
-// Adds a turn only if the requested anchor is the live edge; old exchanges
-// reject new turns. Returns the turn, or null when rejected.
-function addTurnAt(conversation, anchorIndex, role, content, extra = {}) {
-    if (anchorIndex !== getLiveEdgeIndex()) return null;
-    return addTurn(conversation, role, content, extra);
-}
-
-// Groups turns into exchanges — one per (anchor, owner voice), in order.
-function getExchanges(conversation, ownerVoice) {
+// Groups exchanges for visibility/depth, not transcript ordering. Model context
+// uses getOrderedExchangeParts to preserve interleaving across these groups.
+function getExchanges(conversation, ownerVoice, mode) {
     const groups = new Map();
     for (const m of conversation.messages) {
         const anchor = m.anchorIndex === undefined ? null : m.anchorIndex;
         const voice = m.ownerVoice || USER_VOICE;
         if (ownerVoice !== undefined && voice !== ownerVoice) continue;
-        const key = JSON.stringify([anchor, voice]);
+        if (mode !== undefined && turnMode(m) !== mode) continue;
+        const key = JSON.stringify([anchor, voice, turnMode(m)]);
         if (!groups.has(key)) {
             groups.set(key, {
                 anchorIndex: anchor,
                 ownerVoice: voice,
+                mode: turnMode(m),
                 turns: [],
             });
         }
@@ -1662,19 +1689,9 @@ function getExchanges(conversation, ownerVoice) {
     return [...groups.values()];
 }
 
-function getExchangeAt(conversation, anchorIndex, ownerVoice = _activeVoice) {
-    return getExchanges(conversation, ownerVoice).find(e => e.anchorIndex === anchorIndex) || null;
-}
-
-// The exchange at the live edge — the only one that can still grow.
-function getLiveExchange(conversation, ownerVoice = _activeVoice) {
-    const edge = getLiveEdgeIndex();
-    if (edge === null) return null;
-    return getExchangeAt(conversation, edge, ownerVoice);
-}
-
-function getVoiceTurns(conversation, ownerVoice = _activeVoice) {
-    return conversation.messages.filter(m => (m.ownerVoice || USER_VOICE) === ownerVoice);
+function getVoiceTurns(conversation, ownerVoice = _activeVoice, mode) {
+    return conversation.messages.filter(m => (m.ownerVoice || USER_VOICE) === ownerVoice
+        && (mode === undefined || turnMode(m) === mode));
 }
 
 // ─── Hide ───────────────────────────────────────────────────────────────────
@@ -1703,22 +1720,23 @@ function isAnchorHiddenInMainChat(anchorIndex) {
     }
 }
 
-function manualHideKey(anchorIndex, ownerVoice = USER_VOICE) {
+function manualHideKey(anchorIndex, ownerVoice = USER_VOICE, mode = 'iv') {
     const anchor = anchorIndex === undefined ? null : anchorIndex;
+    if (mode === 'chat') return JSON.stringify([anchor, ownerVoice, mode]);
     return ownerVoice === USER_VOICE ? anchor : JSON.stringify([anchor, ownerVoice]);
 }
 
-function isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice = _activeVoice) {
-    return conversation.hiddenAnchors.includes(manualHideKey(anchorIndex, ownerVoice));
+function isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice = _activeVoice, mode = 'iv') {
+    return conversation.hiddenAnchors.includes(manualHideKey(anchorIndex, ownerVoice, mode));
 }
 
-function isExchangeHidden(conversation, anchorIndex, ownerVoice = _activeVoice) {
-    return isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice) || isAnchorHiddenInMainChat(anchorIndex);
+function isExchangeHidden(conversation, anchorIndex, ownerVoice = _activeVoice, mode = 'iv') {
+    return isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice, mode) || isAnchorHiddenInMainChat(anchorIndex);
 }
 
-function setExchangeHidden(conversation, anchorIndex, hidden, ownerVoice = _activeVoice) {
-    const key = manualHideKey(anchorIndex, ownerVoice);
-    const has = isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice);
+function setExchangeHidden(conversation, anchorIndex, hidden, ownerVoice = _activeVoice, mode = 'iv') {
+    const key = manualHideKey(anchorIndex, ownerVoice, mode);
+    const has = isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice, mode);
     if (hidden && !has) conversation.hiddenAnchors.push(key);
     if (!hidden && has) conversation.hiddenAnchors = conversation.hiddenAnchors.filter(entry => entry !== key);
     saveConversation();
@@ -1726,10 +1744,29 @@ function setExchangeHidden(conversation, anchorIndex, hidden, ownerVoice = _acti
 }
 
 // The turns the Inner Voice remembers: every turn whose exchange is not hidden.
-function getVisibleTurns(conversation, ownerVoice = _activeVoice) {
-    return getVoiceTurns(conversation, ownerVoice).filter(m =>
-        !isExchangeHidden(conversation, m.anchorIndex, ownerVoice)
+function getVisibleTurns(conversation, ownerVoice = _activeVoice, mode = 'iv') {
+    return getVoiceTurns(conversation, ownerVoice, mode).filter(m =>
+        !isExchangeHidden(conversation, m.anchorIndex, ownerVoice, mode)
     );
+}
+
+// Array order is the saved timeline, including switches within one anchor.
+// Context portions are contiguous runs, not a second canonical transcript.
+function getOrderedExchangeParts(conversation, eligible = () => true) {
+    const parts = [];
+    for (const turn of conversation.messages) {
+        if (!turn.content || turn._tcTemp || !eligible(turn)) continue;
+        const anchorIndex = turn.anchorIndex ?? null;
+        const ownerVoice = turn.ownerVoice || USER_VOICE;
+        const mode = turnMode(turn);
+        const previous = parts.at(-1);
+        if (previous && previous.anchorIndex === anchorIndex && previous.ownerVoice === ownerVoice && previous.mode === mode) {
+            previous.turns.push(turn);
+        } else {
+            parts.push({ anchorIndex, ownerVoice, mode, turns: [turn] });
+        }
+    }
+    return parts;
 }
 
 // ─── Turn Editing Helpers ───────────────────────────────────────────────────
@@ -1738,8 +1775,9 @@ function truncateAfter(conversation, msgId) {
     const idx = conversation.messages.findIndex(m => m.id === msgId);
     if (idx !== -1) {
         const ownerVoice = conversation.messages[idx].ownerVoice || USER_VOICE;
+        const mode = turnMode(conversation.messages[idx]);
         conversation.messages = conversation.messages.filter((m, messageIndex) =>
-            messageIndex <= idx || (m.ownerVoice || USER_VOICE) !== ownerVoice
+            messageIndex <= idx || (m.ownerVoice || USER_VOICE) !== ownerVoice || turnMode(m) !== mode
         );
         saveConversation();
         refreshSimulationView();
@@ -1755,8 +1793,9 @@ function truncateFrom(conversation, msgId) {
     const idx = conversation.messages.findIndex(m => m.id === msgId);
     if (idx !== -1) {
         const ownerVoice = conversation.messages[idx].ownerVoice || USER_VOICE;
+        const mode = turnMode(conversation.messages[idx]);
         conversation.messages = conversation.messages.filter((m, messageIndex) =>
-            messageIndex < idx || (m.ownerVoice || USER_VOICE) !== ownerVoice
+            messageIndex < idx || (m.ownerVoice || USER_VOICE) !== ownerVoice || turnMode(m) !== mode
         );
         saveConversation();
         refreshSimulationView();
@@ -1822,7 +1861,6 @@ function expandMacros(text, ownerVoice = _activeVoice) {
 var conversation = /*#__PURE__*/Object.freeze({
   __proto__: null,
   addTurn: addTurn,
-  addTurnAt: addTurnAt,
   clearAllConversationOverrides: clearAllConversationOverrides,
   commitConversation: commitConversation,
   createVoiceSession: createVoiceSession,
@@ -1830,15 +1868,15 @@ var conversation = /*#__PURE__*/Object.freeze({
   deleteVoiceSession: deleteVoiceSession,
   expandMacros: expandMacros,
   genId: genId,
+  getActiveMode: getActiveMode,
   getActiveVoice: getActiveVoice,
   getBindingKey: getBindingKey,
   getConversation: getConversation,
   getConversationOverrides: getConversationOverrides,
   getEffectiveSettings: getEffectiveSettings,
-  getExchangeAt: getExchangeAt,
   getExchanges: getExchanges,
   getLiveEdgeIndex: getLiveEdgeIndex,
-  getLiveExchange: getLiveExchange,
+  getOrderedExchangeParts: getOrderedExchangeParts,
   getSettings: getSettings,
   getVisibleTurns: getVisibleTurns,
   getVoiceSession: getVoiceSession,
@@ -1853,11 +1891,13 @@ var conversation = /*#__PURE__*/Object.freeze({
   saveConversation: saveConversation,
   saveConversationFile: saveConversationFile,
   saveSettings: saveSettings,
+  setActiveMode: setActiveMode,
   setActiveVoice: setActiveVoice,
   setConversationOverride: setConversationOverride,
   setExchangeHidden: setExchangeHidden,
   truncateAfter: truncateAfter,
-  truncateFrom: truncateFrom
+  truncateFrom: truncateFrom,
+  turnMode: turnMode
 });
 
 function escHtml(str) {
@@ -4158,6 +4198,10 @@ const _SETTINGS_DEF = [
     // ── Prompts ───────────────────────────────────────────────────────────────
     { key: 'systemPrompt', stId: 'iv-sysprompt', spId: 'iv-sp-sysprompt', type: 'textarea', updCtx: true, profileKey: true,
       fromSetting: s => s.systemPrompt || DEFAULT_SYSTEM_PROMPT },
+    { key: 'chatSystemPrompt', stId: 'iv-chat-sysprompt', spId: 'iv-sp-chat-sysprompt', type: 'textarea', updCtx: true, profileKey: true,
+      fromSetting: s => s.chatSystemPrompt || DEFAULT_CHAT_SYSTEM_PROMPT },
+    { key: 'chatPostHistoryText', stId: 'iv-chat-post-history-text', spId: 'iv-sp-chat-post-history-text', type: 'textarea', updCtx: true, profileKey: true },
+    { key: 'chatPostHistoryRole', stId: 'iv-chat-post-history-role', spId: 'iv-sp-chat-post-history-role', type: 'select', updCtx: true, profileKey: true },
 
     // ── Memory ────────────────────────────────────────────────────────────────
     { key: 'memoryEnabled',      stId: 'iv-memory-enabled', spId: 'iv-sp-memory-enabled', type: 'checkbox', updCtx: true },
@@ -4192,6 +4236,7 @@ const _OV_EL_MAP = {
     contextDepth: ['iv-sp-ov-depth-slider', 'iv-sp-ov-depth-val'],
     maxTokens: ['iv-sp-ov-max-tokens'],           localHistoryLimit: ['iv-sp-ov-history-limit'],
     reasoningTrimStrings: ['iv-sp-ov-reasoning-trim'], systemPrompt: ['iv-sp-ov-sysprompt'],
+    chatSystemPrompt: ['iv-sp-ov-chat-sysprompt'],
     connectionSource: ['iv-sp-ov-conn-source'],   customUrl: ['iv-sp-ov-custom-url'],
     customKey: ['iv-sp-ov-custom-key'],           customModel: ['iv-sp-ov-custom-model'],
     connectionProfileId: ['iv-sp-ov-conn-profile'],
@@ -4798,6 +4843,7 @@ function syncSPFromSettings() {
     ovi('iv-sp-ov-custom-url', 'customUrl'); ovi('iv-sp-ov-custom-key', 'customKey'); ovi('iv-sp-ov-custom-model', 'customModel');
     ovi('iv-sp-ov-max-tokens', 'maxTokens'); ovi('iv-sp-ov-history-limit', 'localHistoryLimit');
     ovi('iv-sp-ov-reasoning-trim', 'reasoningTrimStrings'); ovi('iv-sp-ov-sysprompt', 'systemPrompt');
+    ovi('iv-sp-ov-chat-sysprompt', 'chatSystemPrompt');
 
     gC('iv-sp-ov-include-sysprompt', eff.includeSystemPrompt); gC('iv-sp-ov-include-persona', eff.includeUserPersonality);
     gC('iv-sp-ov-include-alt-swipes', eff.includeAlternateSwipes); gC('iv-sp-ov-apply-regex', eff.applyRegexToContext);
@@ -4914,6 +4960,9 @@ function setupSettingsHandlers() {
         toastr.success(`${label} reset.`, EXT_DISPLAY);
     };
     document.getElementById('iv-reset-prompt')?.addEventListener('click', () => _resetPrompt('systemPrompt', DEFAULT_SYSTEM_PROMPT, 'iv-sysprompt', 'iv-sp-sysprompt', 'System Prompt'));
+    for (const id of ['iv-reset-chat-prompt', 'iv-sp-reset-chat-prompt']) {
+        document.getElementById(id)?.addEventListener('click', () => _resetPrompt('chatSystemPrompt', DEFAULT_CHAT_SYSTEM_PROMPT, 'iv-chat-sysprompt', 'iv-sp-chat-sysprompt', 'Chat System Prompt'));
+    }
     document.getElementById('iv-reset-portray-prompt')?.addEventListener('click', () => _resetPrompt('portrayPrompt', DEFAULT_PORTRAY_PROMPT, 'iv-portray-prompt', 'iv-sp-portray-prompt', 'Portray Prompt'));
     document.getElementById('iv-reset-lb-prompt')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Lorebook Prompt', message: 'Reset to default?' }); if (!ok) return;
@@ -5194,6 +5243,7 @@ function setupSettingsPanelListeners() {
     bindOv('iv-sp-ov-max-tokens', 'maxTokens', false, Number); bindOv('iv-sp-ov-history-limit', 'localHistoryLimit', false, Number);
     bindOv('iv-sp-ov-reasoning-trim', 'reasoningTrimStrings');
     document.getElementById('iv-sp-ov-sysprompt')?.addEventListener('input', e => _syncOvToGlobal('systemPrompt', e.target.value || undefined));
+    document.getElementById('iv-sp-ov-chat-sysprompt')?.addEventListener('input', e => _syncOvToGlobal('chatSystemPrompt', e.target.value || undefined));
     bindOv('iv-sp-ov-include-sysprompt',  'includeSystemPrompt',     true);
     bindOv('iv-sp-ov-include-persona',    'includeUserPersonality',   true);
     bindOv('iv-sp-ov-include-alt-swipes', 'includeAlternateSwipes',   true);
@@ -6974,14 +7024,14 @@ function isSegmentClosed(anchorIndex) {
 }
 
 function nearestSegmentAbove(conversation, anchorIndex) {
-    const segments = getExchanges(conversation, getActiveVoice());
+    const segments = getExchanges(conversation, getActiveVoice(), getActiveMode(conversation));
     const idx = segments.findIndex(s => s.anchorIndex === anchorIndex);
     if (idx <= 0) return null;
     return segments[idx - 1].anchorIndex;
 }
 
 function nearestSegmentBelow(conversation, anchorIndex) {
-    const segments = getExchanges(conversation, getActiveVoice());
+    const segments = getExchanges(conversation, getActiveVoice(), getActiveMode(conversation));
     const idx = segments.findIndex(s => s.anchorIndex === anchorIndex);
     if (idx === -1 || idx === segments.length - 1) return null;
     return segments[idx + 1].anchorIndex;
@@ -7322,18 +7372,19 @@ function _renderMsgBodyContent(msgEl, msg) {
     msgEl.querySelectorAll('.iv-lb-proposal-card').forEach(c => c.remove());
     msgEl.querySelectorAll('.iv-msg-hist-wrap').forEach(c => c.remove());
 
-    const cleanContent = stripMemoryBlock(splitPortraySignal(msg.content).visible);
+    const isChat = turnMode(msg) === 'chat';
+    const cleanContent = isChat ? msg.content : stripMemoryBlock(splitPortraySignal(msg.content).visible);
     let displayText = cleanContent;
     let reasoning = msg.reasoning !== undefined ? (msg.reasoning || null) : null;
 
     let tcIndex = 0;
-    if (reasoning) {
+    if (reasoning && !isChat) {
         const resR = extractToolCallPlaceholders(reasoning, tcIndex);
         reasoning = resR.text;
         tcIndex = resR.nextIndex;
     }
     
-    const resC = extractToolCallPlaceholders(displayText, tcIndex);
+    const resC = isChat ? { text: displayText, nextIndex: tcIndex } : extractToolCallPlaceholders(displayText, tcIndex);
     displayText = resC.text;
     tcIndex = resC.nextIndex;
 
@@ -7366,7 +7417,7 @@ function _renderMsgBodyContent(msgEl, msg) {
     const contentEl = msgEl.querySelector('.iv-msg-content');
 
     if (contentEl) {
-        const lbChanges = parseLBChangesFromText(msg.content);
+        const lbChanges = isChat ? null : parseLBChangesFromText(msg.content);
         if (lbChanges?.length) {
             const stripped = stripLBChangesBlock(displayText);
             contentEl.innerHTML = renderMarkdown(getDisplayContent(stripped, settings).content);
@@ -7451,6 +7502,10 @@ function createMsgEl(msg, onCopy, onEdit, onDelete, onRegen) {
 
     const content = document.createElement('div');
     content.className = 'iv-msg-content';
+    const speaker = document.createElement('div');
+    speaker.className = 'iv-msg-speaker';
+    speaker.textContent = isUser ? (turnMode(msg) === 'chat' ? resolveVoiceName(USER_VOICE) : 'IV') : resolveVoiceName(msg.ownerVoice || USER_VOICE);
+    body.appendChild(speaker);
     body.appendChild(content);
 
     const meta = document.createElement('div');
@@ -7574,7 +7629,7 @@ function getLastAssistantMsgId(conversation) {
     const ownerVoice = getActiveVoice();
     for (let i = conversation.messages.length - 1; i >= 0; i--) {
         const m = conversation.messages[i];
-        if ((m.ownerVoice || USER_VOICE) !== ownerVoice) continue;
+        if ((m.ownerVoice || USER_VOICE) !== ownerVoice || turnMode(m) !== getActiveMode(conversation)) continue;
         if (m.role === 'user') return null;
         if (m.role === 'assistant') {
             return m.id;
@@ -7642,6 +7697,7 @@ async function _runSwipeRegen(conversation, msgId, wrapEl) {
     const msgData = conversation.messages.find(m => m.id === msgId);
     if (!msgData) return;
     const ownerVoice = msgData.ownerVoice || USER_VOICE;
+    const mode = turnMode(msgData);
 
     if (!msgData.swipes) {
         msgData.swipes = [{ content: msgData.content, reasoning: msgData.reasoning || null }];
@@ -7692,15 +7748,15 @@ async function _runSwipeRegen(conversation, msgId, wrapEl) {
         }
         if (streamContentEl) {
             let procReasoning = reasoning || '';
-            let procText = stripMemoryBlock(splitPortraySignal(text).visible);
+            let procText = mode === 'chat' ? text : stripMemoryBlock(splitPortraySignal(text).visible);
             let tcIndex = 0;
             
-            if (procReasoning) {
+            if (procReasoning && mode !== 'chat') {
                 const resR = extractToolCallPlaceholders(procReasoning, tcIndex);
                 procReasoning = resR.text;
                 tcIndex = resR.nextIndex;
             }
-            const resC = extractToolCallPlaceholders(procText, tcIndex);
+            const resC = mode === 'chat' ? { text: procText} : extractToolCallPlaceholders(procText, tcIndex);
             procText = resC.text;
 
             const { content: disp } = getDisplayContent(procText, settings);
@@ -7723,11 +7779,11 @@ async function _runSwipeRegen(conversation, msgId, wrapEl) {
         const tempConversation = { ...conversation, messages: conversation.messages.filter(m => m.id !== msgId) };
         if (!apiMod) throw new Error("API module not loaded");
         
-        const builtMessages = await apiMod.assembleMessages(tempConversation, settings, null, ownerVoice);
+        const builtMessages = await apiMod.assembleMessages(tempConversation, settings, null, ownerVoice, mode);
         const fullPromptText = builtMessages.map(m => m.content).join('\n');
         const tokensIn = await apiMod.estimateTokens(fullPromptText);
 
-        const result = await apiMod.callGenerate(tempConversation, settings, null, onChunk, undefined, ownerVoice);
+        const result = await apiMod.callGenerate(tempConversation, settings, null, onChunk, builtMessages, ownerVoice, mode);
         cleanupCursor();
 
         if (result === null) {
@@ -7742,9 +7798,9 @@ async function _runSwipeRegen(conversation, msgId, wrapEl) {
         }
 
         const { text: rawText, reasoning: fullReasoning } = result;
-        const rawNormalized = normalizeCharNamesInBlock(rawText);
+        const rawNormalized = mode === 'chat' ? rawText : normalizeCharNamesInBlock(rawText);
         const { visible, triggered } = splitPortraySignal(rawNormalized);
-        const fullText = stripMemoryBlock(visible);
+        const fullText = mode === 'chat' ? rawText : stripMemoryBlock(visible);
 
         msgData.swipes[msgData.swipeIndex] = { content: fullText, reasoning: fullReasoning || null };
         msgData.content = fullText;
@@ -7756,7 +7812,7 @@ async function _runSwipeRegen(conversation, msgId, wrapEl) {
 
         updateMsgCount(conversation);
         if (uiWdgMod) uiWdgMod.playCompletionSound();
-        if (triggered) await apiMod.notePortrayAutoTrigger(msgData, { triggered: true });
+        if (mode !== 'chat' && triggered) await apiMod.notePortrayAutoTrigger(msgData, { triggered: true });
 
     } catch(err) {
         cleanupCursor();
@@ -7913,10 +7969,11 @@ function handleCopy(msg) { copyText(msg.content); }
 function handleEdit(wrapEl, msg) {
     if (wrapEl.classList.contains('is-editing')) return;
     wrapEl.classList.add('is-editing');
-    const { charId, chatId } = getBindingKey();
+    getBindingKey();
     const conversation = getConversation();
     const contentEl = wrapEl.querySelector('.iv-msg-content');
     const original = msg.content;
+    const canResend = msg.role === 'user' && !isSegmentClosed(msg.anchorIndex);
 
     const ta = document.createElement('textarea');
     ta.className = 'iv-edit-ta';
@@ -7927,11 +7984,11 @@ function handleEdit(wrapEl, msg) {
 
     const saveBtn = document.createElement('button');
     saveBtn.className = 'iv-edit-btn iv-edit-save';
-    saveBtn.innerHTML = msg.role === 'user'
+    saveBtn.innerHTML = canResend
         ? `${I.check}<span>Save & Resend</span>`
         : `${I.check}<span>Save</span>`;
 
-    const saveOnlyBtn = msg.role === 'user' ? document.createElement('button') : null;
+    const saveOnlyBtn = canResend ? document.createElement('button') : null;
     if (saveOnlyBtn) {
         saveOnlyBtn.className = 'iv-edit-btn iv-edit-cancel';
         saveOnlyBtn.innerHTML = `${I.check}<span>Save</span>`;
@@ -7953,7 +8010,7 @@ function handleEdit(wrapEl, msg) {
         const nc = document.createElement('div');
         nc.className = 'iv-msg-content';
 
-        const lbChanges = parseLBChangesFromText(textToRender);
+        const lbChanges = turnMode(msg) === 'chat' ? null : parseLBChangesFromText(textToRender);
         let stripped = textToRender;
         if (lbChanges?.length) {
             stripped = stripLBChangesBlock(stripped);
@@ -7961,7 +8018,7 @@ function handleEdit(wrapEl, msg) {
         } else document.querySelector(`.iv-lb-proposal-card[data-for="${msg.id}"]`)?.remove();
 
         let tcIndex = 0;
-        const resR = extractToolCallPlaceholders(stripped, tcIndex);
+        const resR = turnMode(msg) === 'chat' ? { text: stripped } : extractToolCallPlaceholders(stripped, tcIndex);
         const displayString = getDisplayContent(resR.text, getSettings()).content;
 
         nc.innerHTML = renderMarkdown(displayString);
@@ -7980,7 +8037,7 @@ function handleEdit(wrapEl, msg) {
         saveOnlyBtn.addEventListener('click', () => {
             const rawText = ta.value.trim();
             if (!rawText) return;
-            const newText = expandMacros(rawText);
+            const newText = expandMacros(rawText, msg.ownerVoice || USER_VOICE);
             
             const msgObj = conversation.messages.find(m => m.id === msg.id);
             if (msgObj) { msgObj.content = newText; saveConversation(); }
@@ -7998,7 +8055,7 @@ function handleEdit(wrapEl, msg) {
     saveBtn.addEventListener('click', async () => {
         const rawText = ta.value.trim();
         if (!rawText) return;
-        const newText = expandMacros(rawText);
+        const newText = expandMacros(rawText, msg.ownerVoice || USER_VOICE);
         
         const msgObj = conversation.messages.find(m => m.id === msg.id);
         if (msgObj) { msgObj.content = newText; saveConversation(); }
@@ -8011,14 +8068,16 @@ function handleEdit(wrapEl, msg) {
         restoreMessageDOM(newText);
         _updateMsgTokenCount(wrapEl, newText, true);
         
-        truncateAfter(conversation, msg.id);
-        removeMsgElAfter(msg.id);
-        if (msg.role === 'user' && apiMod) await apiMod.runGenerate(conversation, newText, false);
+        if (!isSegmentClosed(msg.anchorIndex)) {
+            truncateAfter(conversation, msg.id);
+            removeMsgElAfter(msg.id);
+            if (canResend && apiMod) await apiMod.runGenerate(conversation, null, false, msg.ownerVoice || USER_VOICE, turnMode(msg));
+        }
     });
 }
 
 async function handleMessageRegen(wrapEl, msg) {
-    if (state.generating) return;
+    if (state.generating || isSegmentClosed(msg.anchorIndex)) return;
     const conversation = getConversation();
     const idx = conversation.messages.findIndex(m => m.id === msg.id);
     if (idx === -1) return;
@@ -8026,7 +8085,7 @@ async function handleMessageRegen(wrapEl, msg) {
     const isUser = msg.role === 'user';
     const ownerVoice = msg.ownerVoice || USER_VOICE;
     const actualMsgsAfter = conversation.messages.slice(idx + 1)
-        .filter(m => (m.ownerVoice || USER_VOICE) === ownerVoice);
+        .filter(m => (m.ownerVoice || USER_VOICE) === ownerVoice && turnMode(m) === turnMode(msg));
     const msgsAfterCount = actualMsgsAfter.length;
 
     let needsConfirm = false;
@@ -8044,7 +8103,7 @@ async function handleMessageRegen(wrapEl, msg) {
         const ok = await showCustomDialog({
             type: 'confirm',
             title: 'Regenerate Message',
-            message: 'Regenerating will delete all subsequent messages. Continue?'
+            message: 'Regenerating will delete subsequent messages on this page only. Continue?'
         });
         if (!ok) return;
     }
@@ -8053,7 +8112,7 @@ async function handleMessageRegen(wrapEl, msg) {
         truncateAfter(conversation, msg.id);
         removeMsgElAfter(msg.id);
         updateMsgCount(conversation);
-        if (apiMod) apiMod.runGenerate(conversation, null, false);
+        if (apiMod) apiMod.runGenerate(conversation, null, false, ownerVoice, turnMode(msg));
     } else {
         if (msgsAfterCount > 0) {
             truncateAfter(conversation, msg.id);
@@ -8070,7 +8129,7 @@ async function handleDelete(wrapEl, msg) {
         type: 'confirm',
         title: 'Delete Message',
         message: isUser
-            ? 'Delete this message and all subsequent messages?'
+            ? 'Delete this message and subsequent messages on this page only?'
             : 'Delete this assistant message?',
     });
     if (!confirmed) return;
@@ -8083,7 +8142,7 @@ async function handleDelete(wrapEl, msg) {
         removeMsgEl(msg.id);
     }
     updateMsgCount(conversation);
-    if (!getVoiceTurns(conversation).length) renderConversation(conversation);
+    if (!getVoiceTurns(conversation, getActiveVoice(), getActiveMode()).length) renderConversation(conversation);
 }
 
 function encodeAnchor(anchorIndex) {
@@ -8098,8 +8157,9 @@ function decodeAnchor(value) {
 
 function paintHideControl(segment, conversation, anchorIndex) {
     const ownerVoice = getActiveVoice();
-    const hidden = isExchangeHidden(conversation, anchorIndex, ownerVoice);
-    const locked = isAnchorHiddenInMainChat(anchorIndex) && !isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice);
+    const mode = getActiveMode(conversation);
+    const hidden = isExchangeHidden(conversation, anchorIndex, ownerVoice, mode);
+    const locked = isAnchorHiddenInMainChat(anchorIndex) && !isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice, mode);
     segment.classList.toggle('iv-segment-hidden', hidden);
     const btn = segment.querySelector('.iv-hide-toggle');
     if (!btn) return;
@@ -8155,7 +8215,8 @@ function createSegment(conversation, anchorIndex) {
         e.stopPropagation();
         const conv = getConversation();
         const ownerVoice = getActiveVoice();
-        setExchangeHidden(conv, anchorIndex, !isExchangeManuallyHidden(conv, anchorIndex, ownerVoice), ownerVoice);
+        const mode = getActiveMode(conv);
+        setExchangeHidden(conv, anchorIndex, !isExchangeManuallyHidden(conv, anchorIndex, ownerVoice, mode), ownerVoice, mode);
         syncExchangeHiddenUi(conv);
     });
 
@@ -8270,13 +8331,13 @@ function renderConversation(conversation) {
     const c = document.getElementById('iv-messages');
     if (!c) return;
     c.innerHTML = '';
-    const messages = getVoiceTurns(conversation);
+    const messages = getVoiceTurns(conversation, getActiveVoice(), getActiveMode(conversation));
     if (!messages.length) {
         c.innerHTML = `
             <div class="iv-empty-state">
                 <div class="iv-empty-icon">${I.bot}</div>
-                <div class="iv-empty-title">Inner Voice</div>
-                <div class="iv-empty-sub">A private space to think, plan, and talk with yourself. Nothing here enters the scene.</div>
+                <div class="iv-empty-title">${getActiveMode() === 'chat' ? 'Chat' : 'Inner Voice'}</div>
+                <div class="iv-empty-sub">${getActiveMode() === 'chat' ? 'Talk here as your persona. This conversation happens in the scene.' : 'A private space to think, plan, and talk with yourself. Nothing thought here is spoken aloud.'}</div>
             </div>`;
         updateMsgCount(conversation);
         return;
@@ -8300,7 +8361,7 @@ function renderConversation(conversation) {
 function appendMsgEl(msg, isStreamInit = false) {
     const c = document.getElementById('iv-messages');
     if (!c) return;
-    if ((msg.ownerVoice || USER_VOICE) !== getActiveVoice()) return;
+    if ((msg.ownerVoice || USER_VOICE) !== getActiveVoice() || turnMode(msg) !== getActiveMode()) return;
     c.querySelector('.iv-empty-state')?.remove();
 
     const conversation = getConversation();
@@ -8373,7 +8434,7 @@ let _pendingTokenCalc = false;
 
 function updateMsgCount(conversation) {
     const el = document.getElementById('iv-msg-count');
-    if (el && conversation) el.textContent = `${getVoiceTurns(conversation).length} msgs`;
+    if (el && conversation) el.textContent = `${getVoiceTurns(conversation, getActiveVoice(), getActiveMode()).length} msgs`;
 
     const tel = document.getElementById('iv-token-count');
     if (!tel || !conversation) return;
@@ -8399,6 +8460,7 @@ function updateMsgCount(conversation) {
                                 timestamp: Date.now(),
                                 anchorIndex: getLiveEdgeIndex(),
                                 ownerVoice: getActiveVoice(),
+                                mode: getActiveMode(),
                             });
                         }
                         const builtMsgs = await apiMod.assembleMessages(tempConv, settings, null);
@@ -9936,17 +9998,9 @@ var uiWindow = /*#__PURE__*/Object.freeze({
   updateIconVisibility: updateIconVisibility
 });
 
-// SillyTavern in-chat injection. Depth 0 is after the last message.
-const IN_CHAT = 1;
-const SYSTEM_ROLE = 0;
+// Retired depth prompts are cleared on upgrade. Context now belongs to the
+// host's temporary anchor message, so token selection cannot orphan it.
 const KEY_PREFIX = 'inner_voice_exchange_';
-
-const _activeKeys = new Set();
-
-function promptKey(anchorIndex, ownerVoice = USER_VOICE) {
-    if (!ownerVoice || ownerVoice === USER_VOICE) return `${KEY_PREFIX}${anchorIndex}`;
-    return `${KEY_PREFIX}${anchorIndex}:${ownerVoice}`;
-}
 
 function parseDepth(value) {
     if (value === undefined || value === null) return 1;
@@ -9962,13 +10016,17 @@ function depthForVoice(settings, ownerVoice) {
 function visibleAnchoredExchanges(conversation) {
     return getExchanges(conversation).filter(e =>
         e.anchorIndex !== null && e.anchorIndex !== undefined
-        && !isExchangeHidden(conversation, e.anchorIndex, e.ownerVoice)
+        && !isExchangeHidden(conversation, e.anchorIndex, e.ownerVoice, e.mode)
     );
 }
 
 const EXCHANGE_BLOCK_FRAME = "This is {{voice}}'s private inner exchange — one mind talking to itself — imperceptible to everyone except {{voice}}. IV: is the Inner Voice; {{voice}}: is {{voice}}.";
 
-function renderExchangeBlock(turns, ownerVoice = USER_VOICE) {
+function renderExchangeBlock(turns, ownerVoice = USER_VOICE, mode = 'iv') {
+    if (mode === 'chat') {
+        const body = (turns || []).map(t => `${t.role === 'assistant' ? '{{voice}}' : '{{user}}'}: ${t.content}`).join('\n');
+        return prepareVoiceMacroForHostPrompt(`<scene-conversation>\nThis actual conversation between {{user}} and {{voice}}, including its actions, happened at this point in the simulation. Continue after its last turn. Who heard or witnessed it follows the scene, not the model's access to this transcript.\n\n${body}\n</scene-conversation>`, ownerVoice);
+    }
     const body = (turns || []).map(t => {
         const label = t.role === 'assistant' ? '{{voice}}' : 'IV';
         return `${label}: ${t.content}`;
@@ -9982,51 +10040,71 @@ function renderExchangeBlock(turns, ownerVoice = USER_VOICE) {
 function assembleSimulationView(conversation, settings, chatLength) {
     if (!chatLength) return [];
     const byVoice = new Map();
+    const selectedTurns = new Set();
     for (const e of visibleAnchoredExchanges(conversation)) {
+        if (e.anchorIndex < 0 || e.anchorIndex >= chatLength) continue;
+        if (e.mode === 'chat') {
+            e.turns.forEach(t => selectedTurns.add(t));
+            continue;
+        }
         const voice = e.ownerVoice || USER_VOICE;
         if (!byVoice.has(voice)) byVoice.set(voice, []);
         byVoice.get(voice).push(e);
     }
-    const selected = [];
     for (const [voice, exchanges] of byVoice) {
         const n = depthForVoice(settings, voice);
         if (n === 0) continue;
-        selected.push(...exchanges.slice(-n));
+        exchanges.slice(-n).forEach(e => e.turns.forEach(t => selectedTurns.add(t)));
     }
-    return selected.map(e => ({
+    return getOrderedExchangeParts(conversation, t => selectedTurns.has(t)).map(e => ({
         anchorIndex: e.anchorIndex,
         ownerVoice: e.ownerVoice,
+        mode: e.mode,
         depth: Math.max(0, chatLength - 1 - e.anchorIndex),
-        content: renderExchangeBlock(e.turns, e.ownerVoice),
+        content: renderExchangeBlock(e.turns, e.ownerVoice, e.mode),
     }));
 }
 
 function syncSimulationView() {
     const ctx = SillyTavern.getContext();
     if (typeof ctx.setExtensionPrompt !== 'function') return;
+    for (const key of Object.keys(ctx.extensionPrompts || {})) {
+        if (key.startsWith(KEY_PREFIX)) ctx.setExtensionPrompt(key, '', 1, 0, false, 0);
+    }
+}
 
-    const conv = getConversation();
+// ST supplies prompt-only message copies with `index` in its filtered core
+// chat (script.js, before runGenerationInterceptors). Preserve that identity
+// through earlier interceptors; never match by text, which may repeat/regex.
+function injectSimulationView(coreChat) {
+    syncSimulationView();
+    const ctx = SillyTavern.getContext();
     const settings = getEffectiveSettings();
-    const chatLength = Array.isArray(ctx.chat) ? ctx.chat.length : 0;
-    const injections = assembleSimulationView(conv, settings, chatLength);
-
-    const nextKeys = new Set();
-    for (const inj of injections) {
-        const key = promptKey(inj.anchorIndex, inj.ownerVoice);
-        nextKeys.add(key);
-        ctx.setExtensionPrompt(key, inj.content, IN_CHAT, inj.depth, false, SYSTEM_ROLE);
+    if (!settings.enabled || !Array.isArray(coreChat)) return;
+    const canUseTools = ctx.isToolCallingSupported?.() || false;
+    const anchors = (ctx.chat || []).map((m, anchorIndex) => ({ m, anchorIndex }))
+        .filter(({ m }) => !m.is_system || (canUseTools && Array.isArray(m.extra?.tool_invocations)));
+    const attached = new Map();
+    for (const part of assembleSimulationView(getConversation(), settings, ctx.chat?.length || 0)) {
+        if (!attached.has(part.anchorIndex)) attached.set(part.anchorIndex, []);
+        attached.get(part.anchorIndex).push(part.content);
     }
-    for (const key of _activeKeys) {
-        if (!nextKeys.has(key)) ctx.setExtensionPrompt(key, '', IN_CHAT, 0, false, SYSTEM_ROLE);
+    for (let i = 0; i < coreChat.length; i++) {
+        const message = coreChat[i];
+        if (!Number.isInteger(message.index)) continue;
+        const parts = attached.get(anchors[message.index]?.anchorIndex);
+        if (!parts?.length) continue;
+        const content = parts.join('\n\n');
+        const expanded = typeof ctx.substituteParams === 'function' ? ctx.substituteParams(content) : content;
+        coreChat[i] = { ...message, mes: `${message.mes}\n\n${expanded}` };
     }
-    _activeKeys.clear();
-    for (const key of nextKeys) _activeKeys.add(key);
 }
 
 var simulationView = /*#__PURE__*/Object.freeze({
   __proto__: null,
   EXCHANGE_BLOCK_FRAME: EXCHANGE_BLOCK_FRAME,
   assembleSimulationView: assembleSimulationView,
+  injectSimulationView: injectSimulationView,
   renderExchangeBlock: renderExchangeBlock,
   syncSimulationView: syncSimulationView
 });
@@ -10233,11 +10311,15 @@ function buildSingleCharacterBlock(settings, entity) {
     return `<character name="${escHtml(char.name)}">\n${parts.join('\n\n')}\n</character>`;
 }
 
-function buildCharacterContextBlock(settings, voiceSession = null) {
+function buildCharacterContextBlock(settings, voiceSession = null, includeScene = false) {
     let entities = getActiveCharacterEntities();
     if (voiceSession?.ownerVoice && voiceSession.ownerVoice !== USER_VOICE) {
         const bound = findCharacterEntityByName(voiceSession.ownerVoice);
-        entities = bound ? [bound] : [];
+        if (includeScene) {
+            if (bound && !entities.some(entity => entity.id === bound.id)) entities.push(bound);
+        } else {
+            entities = bound ? [bound] : [];
+        }
     }
     if (!entities.length) return '';
     const excluded = new Set(settings.charMgrExcluded || []);
@@ -10254,6 +10336,7 @@ function sanitizeToolCallsForSave(toolCalls) {
 }
 
 async function notePortrayAutoTrigger(turn, opts = {}) {
+    if (turnMode(turn) === 'chat') return;
     const { considerAutoTriggerPortray } = await Promise.resolve().then(function () { return portray; });
     await considerAutoTriggerPortray(turn, opts);
 }
@@ -10263,13 +10346,15 @@ async function flushPortrayAutoTrigger() {
     await flushPendingAutoPortray();
 }
 
-function visibleAssistantText(text) {
+function visibleAssistantText(text, mode = 'iv') {
     const raw = typeof text === 'string' ? text : '';
+    if (mode === 'chat') return raw;
     return stripMemoryBlock(splitPortraySignal(raw).visible);
 }
 
-async function buildSystemContent(settings, ownerVoice = getActiveVoice(), conversation = getConversation()) {
-    let sysPromptRaw = (typeof settings.systemPrompt === 'string' && settings.systemPrompt.trim()) ? settings.systemPrompt : DEFAULT_SYSTEM_PROMPT;
+async function buildSystemContent(settings, ownerVoice = getActiveVoice(), conversation = getConversation(), mode = getActiveMode(conversation)) {
+    const prompt = mode === 'chat' ? settings.chatSystemPrompt : settings.systemPrompt;
+    let sysPromptRaw = (typeof prompt === 'string' && prompt.trim()) ? prompt : mode === 'chat' ? DEFAULT_CHAT_SYSTEM_PROMPT : DEFAULT_SYSTEM_PROMPT;
     sysPromptRaw = prepareVoiceMacroForHostPrompt(sysPromptRaw, ownerVoice);
     const parts = [_ensureWrapped(sysPromptRaw, 'system_prompt')];
     const ctx = SillyTavern.getContext();
@@ -10298,7 +10383,7 @@ async function buildSystemContent(settings, ownerVoice = getActiveVoice(), conve
     const lorebookBlock = await buildLorebookContextBlock(settings);
     if (lorebookBlock) parts.push(lorebookBlock);
 
-    const characterBlock = buildCharacterContextBlock(settings, getVoiceSession(conversation, ownerVoice));
+    const characterBlock = buildCharacterContextBlock(settings, getVoiceSession(conversation, ownerVoice), mode === 'chat');
     if (characterBlock) parts.push('\n\n' + characterBlock);
 
     {
@@ -10323,6 +10408,9 @@ async function buildSystemContent(settings, ownerVoice = getActiveVoice(), conve
         parts.push(`\n\n<{{user}}_persona>\n${inner}\n</{{user}}_persona>`);
     }
 
+    // Chat is a conversational reply, not an administrative or tool-running job.
+    // Knowledge inclusions above remain available without their write instructions.
+    if (mode === 'chat') return parts.join('\n');
     const memoryAIInstr = buildMemoryAIInstructions(settings).trim();
     const aiInstructions = buildLBAIInstructions(settings).trim();
     const toolsBlock = buildToolCallsSystemBlock().trim();
@@ -10366,8 +10454,8 @@ function getMainChatSlice(depth) {
     return ctx.chat.slice(start).map((m, i) => extractData(m, start + i));
 }
 
-async function assembleMessages(conversation, settings, pendingUserText, ownerVoice = getActiveVoice()) {
-    const messages = [{ role: 'system', content: await buildSystemContent(settings, ownerVoice, conversation) }];
+async function assembleMessages(conversation, settings, pendingUserText, ownerVoice = getActiveVoice(), mode = getActiveMode(conversation)) {
+    const messages = [{ role: 'system', content: await buildSystemContent(settings, ownerVoice, conversation, mode) }];
     const depth = Math.max(0, parseInt(settings.contextDepth) || 0);
     const hasPicked = !!(conversation.pickedChatIndices && conversation.pickedChatIndices.length > 0);
     
@@ -10408,12 +10496,17 @@ async function assembleMessages(conversation, settings, pendingUserText, ownerVo
             // Inner memory: each non-hidden exchange sits directly below its
             // anchor inside this slice. Hidden or out-of-slice anchors take
             // their exchanges with them; the UI keeps every exchange readable.
+            const parts = getOrderedExchangeParts(conversation, turn => {
+                const voice = turn.ownerVoice || '{{user}}';
+                const kind = turnMode(turn);
+                const canRead = voice === ownerVoice || (ownerVoice === '{{user}}' && kind === 'chat');
+                return canRead && !isExchangeHidden(conversation, turn.anchorIndex, voice, kind);
+            });
             const block = visibleSlice.map(m => {
                 const msgXml = `<msg index="${m.chatIndex}" role="${m.role === 'user' ? 'user' : 'assistant'}">\n${m.content}\n</msg>`;
-                if (isExchangeHidden(conversation, m.chatIndex, ownerVoice)) return msgXml;
-                const exchange = getExchangeAt(conversation, m.chatIndex, ownerVoice);
-                if (!exchange || !exchange.turns.length) return msgXml;
-                return `${msgXml}\n\n${renderExchangeBlock(exchange.turns, exchange.ownerVoice)}`;
+                const attached = parts.filter(p => p.anchorIndex === m.chatIndex)
+                    .map(p => renderExchangeBlock(p.turns, p.ownerVoice, p.mode));
+                return [msgXml, ...attached].join('\n\n');
             }).join('\n\n');
             
             let summaryText = '';
@@ -10427,13 +10520,15 @@ async function assembleMessages(conversation, settings, pendingUserText, ownerVo
                 role: 'user',
                 content: `<main_chat ${ctxAttr}>\n${summaryText}${block}\n\n</main_chat>`,
             });
-            const postHistoryText = typeof settings.postHistoryText === 'string' ? settings.postHistoryText.trim() : '';
-            if (postHistoryText) {
-                const role = settings.postHistoryRole === 'system' || settings.postHistoryRole === 'assistant'
-                    ? settings.postHistoryRole
-                    : 'user';
-                messages.push({ role, content: postHistoryText });
-            }
+        }
+    }
+    if (mode === 'chat' || messages.length > 1) {
+        const postText = mode === 'chat' ? settings.chatPostHistoryText : settings.postHistoryText;
+        const postRole = mode === 'chat' ? settings.chatPostHistoryRole : settings.postHistoryRole;
+        const postHistoryText = typeof postText === 'string' ? prepareVoiceMacroForHostPrompt(postText.trim(), ownerVoice) : '';
+        if (postHistoryText) {
+            const role = postRole === 'system' || postRole === 'assistant' ? postRole : 'user';
+            messages.push({ role, content: postHistoryText });
         }
     }
     if (pendingUserText !== null && pendingUserText !== undefined && pendingUserText !== '') {
@@ -10526,9 +10621,12 @@ async function estimateTokens(text) {
     }
 }
 
-async function callGenerate(conversation, settings, pendingText, onChunk, messagesOverride, ownerVoice = getActiveVoice()) {
+async function callGenerate(conversation, settings, pendingText, onChunk, messagesOverride, ownerVoice = getActiveVoice(), mode = getActiveMode(conversation)) {
     const ctx = SillyTavern.getContext();
-    const messages = messagesOverride || await assembleMessages(conversation, settings, pendingText, ownerVoice);
+    const assembled = messagesOverride || await assembleMessages(conversation, settings, pendingText, ownerVoice, mode);
+    const messages = assembled.map(m => ({ ...m, content: typeof m.content === 'string'
+        ? expandMacros(m.content, ownerVoice)
+        : Array.isArray(m.content) ? m.content.map(p => p.type === 'text' ? { ...p, text: expandMacros(p.text, ownerVoice) } : p) : m.content }));
     const maxTokens = parseInt(settings.maxTokens) || 8200;
 
     const abort = new AbortController();
@@ -10816,9 +10914,9 @@ async function callGenerate(conversation, settings, pendingText, onChunk, messag
         if (useConnectionManager && service && typeof service.sendRequest === 'function') {
             asyncGeneratorFn = await sendViaConnectionManager(useStream);
         } else {
-            const mainApi = window.main_api || ctx.main_api;
+            const mainApi = ctx.mainApi || window.main_api || ctx.main_api;
             if (mainApi === 'openai' && ctx.ChatCompletionService) {
-                const oaiSettings = window.oai_settings || ctx.oai_settings || {};
+                const oaiSettings = ctx.chatCompletionSettings || window.oai_settings || ctx.oai_settings || {};
                 asyncGeneratorFn = await ctx.ChatCompletionService.processRequest(
                     chatCompletionPayload(useStream),
                     { presetName: oaiSettings.preset_settings_openai },
@@ -10826,12 +10924,12 @@ async function callGenerate(conversation, settings, pendingText, onChunk, messag
                     abort.signal,
                 );
             } else if (mainApi === 'textgenerationwebui' && ctx.TextCompletionService) {
-                const textGenSettings = window.textgenerationwebui_settings || ctx.textgenerationwebui_settings || {};
+                const textGenSettings = ctx.textCompletionSettings || window.textgenerationwebui_settings || ctx.textgenerationwebui_settings || {};
                 asyncGeneratorFn = await ctx.TextCompletionService.processRequest({
                     prompt: messages,
                     max_tokens: maxTokens,
                     stream: useStream
-                }, { presetName: textGenSettings.preset_settings_textgenerationwebui }, false, abort.signal);
+                }, { presetName: textGenSettings.preset || textGenSettings.preset_settings_textgenerationwebui }, false, abort.signal);
             } else {
                 throw new Error('No active API connection found. Please select a profile in Connection Manager or configure the main API.');
             }
@@ -10845,9 +10943,9 @@ async function callGenerate(conversation, settings, pendingText, onChunk, messag
                 if (useConnectionManager && service && typeof service.sendRequest === 'function') {
                     asyncGeneratorFn = await sendViaConnectionManager(false);
                 } else {
-                    const mainApi = window.main_api || ctx.main_api;
+                    const mainApi = ctx.mainApi || window.main_api || ctx.main_api;
                     if (mainApi === 'openai' && ctx.ChatCompletionService) {
-                        const oaiSettings = window.oai_settings || ctx.oai_settings || {};
+                        const oaiSettings = ctx.chatCompletionSettings || window.oai_settings || ctx.oai_settings || {};
                         asyncGeneratorFn = await ctx.ChatCompletionService.processRequest(
                             chatCompletionPayload(false),
                             { presetName: oaiSettings.preset_settings_openai },
@@ -10855,12 +10953,12 @@ async function callGenerate(conversation, settings, pendingText, onChunk, messag
                             abort.signal,
                         );
                     } else if (mainApi === 'textgenerationwebui' && ctx.TextCompletionService) {
-                        const textGenSettings = window.textgenerationwebui_settings || ctx.textgenerationwebui_settings || {};
+                        const textGenSettings = ctx.textCompletionSettings || window.textgenerationwebui_settings || ctx.textgenerationwebui_settings || {};
                         asyncGeneratorFn = await ctx.TextCompletionService.processRequest({
                             prompt: messages,
                             max_tokens: maxTokens,
                             stream: false
-                        }, { presetName: textGenSettings.preset_settings_textgenerationwebui }, false, abort.signal);
+                        }, { presetName: textGenSettings.preset || textGenSettings.preset_settings_textgenerationwebui }, false, abort.signal);
                     }
                 }
             } catch (err2) {
@@ -10953,12 +11051,18 @@ async function callGenerate(conversation, settings, pendingText, onChunk, messag
     return { text: text.trim(), reasoning, isMaxTokens };
 }
 
-async function runGenerate(conversation, userText, addUserMsg = true) {
+async function runGenerate(conversation, userText, addUserMsg = true, requestOwner = getActiveVoice(), requestMode = getActiveMode(conversation)) {
     if (state.generating) return;
     state.generating = true;
     state.activeToolCalls = [];
     const settings = getEffectiveSettings();
-    const ownerVoice = getActiveVoice();
+    const ownerVoice = requestOwner;
+    const mode = requestMode;
+    const anchorIndex = getLiveEdgeIndex();
+    const requestConversation = { ...conversation, messages: [...conversation.messages] };
+    // A resend already has its user turn beside its anchor. Only new input is
+    // pending; the saved transcript must not also be sent as another live line.
+    const pendingText = addUserMsg ? userText || null : null;
     setGeneratingState(true);
 
     let streamMsgId = null;
@@ -10983,7 +11087,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
         streamAccumReasoning = reasoning;
 
         if (!streamMsgId) {
-            const placeholder = { id: `msg_${Date.now()}`, role: 'assistant', content: '', reasoning: null, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ownerVoice };
+            const placeholder = { id: `msg_${Date.now()}`, role: 'assistant', content: '', reasoning: null, timestamp: Date.now(), anchorIndex, ownerVoice, mode };
             conversation.messages.push(placeholder);
             streamMsgId = placeholder.id;
             
@@ -11016,15 +11120,15 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
 
         if (streamContentEl) {
             let procReasoning = reasoning || '';
-            let procText = visibleAssistantText(text);
+            let procText = visibleAssistantText(text, mode);
             
             let tcIndex = 0;
-            if (procReasoning) {
+            if (procReasoning && mode !== 'chat') {
                 const resR = extractToolCallPlaceholders(procReasoning, tcIndex);
                 procReasoning = resR.text;
                 tcIndex = resR.nextIndex;
             }
-            const resC = extractToolCallPlaceholders(procText, tcIndex);
+            const resC = mode === 'chat' ? { text: procText} : extractToolCallPlaceholders(procText, tcIndex);
             procText = resC.text;
 
             if (reasoning && streamReasoningBlockEl) {
@@ -11054,11 +11158,11 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
 
     try {
         if (addUserMsg && userText) {
-            const msgObj = addTurn(conversation, 'user', userText, { ownerVoice });
+            const msgObj = addTurn(conversation, 'user', userText, { ownerVoice, mode, anchorIndex });
             appendMsgEl(msgObj);
         }
 
-        const fullMessages = await assembleMessages(conversation, settings, userText || null, ownerVoice);
+        const fullMessages = await assembleMessages(requestConversation, settings, pendingText, ownerVoice, mode);
         const fullPromptText = fullMessages.map(m => m.content).join('\n');
         const tokensIn = await estimateTokens(fullPromptText);
 
@@ -11071,7 +11175,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
             tokensIn
         });
 
-        let result = await callGenerate(conversation, settings, userText || null, onChunk, undefined, ownerVoice);
+        let result = await callGenerate(requestConversation, settings, pendingText, onChunk, fullMessages, ownerVoice, mode);
 
         cleanupCursor();
         
@@ -11079,7 +11183,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
             toastr.warning('⚠ Generation failed: AI returned an empty response.', EXT_DISPLAY, { timeOut: 10000 });
         }
 
-        if (result !== null && !splitPortraySignal(result.text || '').triggered
+        if (mode !== 'chat' && result !== null && !splitPortraySignal(result.text || '').triggered
             && settings.toolsEnabled && getEnabledTools().length > 0) {
             const maxRounds = settings.toolsMaxRounds ?? 5;
             let roundText = result.text || '';
@@ -11213,7 +11317,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
         if (result === null) {
             if (streamMsgId && isStreaming && streamAccumText) {
                 const msg = conversation.messages.find(m => m.id === streamMsgId);
-                const visible = visibleAssistantText(streamAccumText);
+                const visible = visibleAssistantText(streamAccumText, mode);
                 if (msg) { msg.content = visible; msg.reasoning = streamAccumReasoning || null; saveConversation(); }
                 if (streamContentEl) { streamContentEl.innerHTML = renderMarkdown(visible); postProcessHTMLBlocks(streamContentEl); }
             } else if (streamMsgId) {
@@ -11228,10 +11332,10 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
         }
 
         const { text: rawFullText, reasoning: fullReasoning } = result;
-        const rawNormalized = normalizeCharNamesInBlock(rawFullText);
+        const rawNormalized = mode === 'chat' ? rawFullText : normalizeCharNamesInBlock(rawFullText);
         const { triggered } = splitPortraySignal(rawNormalized);
-        processMemoryUpdates(rawNormalized, streamMsgId);
-        const fullText = visibleAssistantText(rawNormalized);
+        if (mode !== 'chat') processMemoryUpdates(rawNormalized, streamMsgId);
+        const fullText = visibleAssistantText(rawNormalized, mode);
 
         const savedToolCalls = state.activeToolCalls.length ? sanitizeToolCallsForSave(JSON.parse(JSON.stringify(state.activeToolCalls))) : undefined;
 
@@ -11252,14 +11356,14 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
                 _renderMsgBodyContent(streamMsgEl, msg);
             }
         } else {
-            const newMsg = addTurn(conversation, 'assistant', fullText, { ownerVoice, reasoning: fullReasoning || null, toolCalls: savedToolCalls });
+            const newMsg = addTurn(conversation, 'assistant', fullText, { ownerVoice, mode, anchorIndex, reasoning: fullReasoning || null, toolCalls: savedToolCalls });
             newMsg.swipes = [{ content: fullText, reasoning: fullReasoning || null }];
             newMsg.swipeIndex = 0;
             saveConversation();
             appendMsgEl(newMsg);
             completedAssistant = newMsg;
         }
-        if (completedAssistant) await notePortrayAutoTrigger(completedAssistant, { triggered });
+        if (mode !== 'chat' && completedAssistant) await notePortrayAutoTrigger(completedAssistant, { triggered });
 
         _refreshSwipeBars(conversation);
         state.activeToolCalls = [];
@@ -11279,7 +11383,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
         }
         
         const inputEl = document.getElementById('iv-input');
-        if (inputEl && inputEl.value.trim() === '' && userText) {
+        if (inputEl && inputEl.value.trim() === '' && userText && getActiveVoice() === ownerVoice && getActiveMode() === mode) {
             inputEl.value = userText;
         }
 
@@ -11291,7 +11395,7 @@ async function runGenerate(conversation, userText, addUserMsg = true) {
     } finally {
         state.generating = false;
         setGeneratingState(false);
-        await flushPortrayAutoTrigger();
+        if (mode !== 'chat') await flushPortrayAutoTrigger();
     }
 }
 
@@ -11309,6 +11413,7 @@ async function runContinue(conversation, targetMsgId) {
     const targetMsg = conversation.messages.find(m => m.id === targetMsgId);
     if (!targetMsg || targetMsg.role !== 'assistant') return;
     const ownerVoice = targetMsg.ownerVoice || getActiveVoice();
+    const mode = turnMode(targetMsg);
 
     state.generating = true;
     state.activeToolCalls = [];
@@ -11342,7 +11447,7 @@ async function runContinue(conversation, targetMsgId) {
         }
         const combined = _joinContinuation(originalContent, text);
         let tcIndex = 0;
-        const resC = extractToolCallPlaceholders(combined, tcIndex);
+        const resC = mode === 'chat' ? { text: combined, nextIndex: tcIndex } : extractToolCallPlaceholders(combined, tcIndex);
         let procText = resC.text;
 
         const { content: disp } = getDisplayContent(procText, settings);
@@ -11369,7 +11474,7 @@ async function runContinue(conversation, targetMsgId) {
     };
 
     try {
-        const fullMessages = await assembleMessages(conversation, settings, CONTINUE_PROMPT, ownerVoice);
+        const fullMessages = await assembleMessages(conversation, settings, CONTINUE_PROMPT, ownerVoice, mode);
         const fullPromptText = fullMessages.map(m => m.content).join('\n');
         
         const tokensIn = await estimateTokens(fullPromptText);
@@ -11382,7 +11487,7 @@ async function runContinue(conversation, targetMsgId) {
             tokensIn
         });
 
-        const result = await callGenerate(conversation, settings, CONTINUE_PROMPT, onChunk, undefined, ownerVoice);
+        const result = await callGenerate(conversation, settings, CONTINUE_PROMPT, onChunk, fullMessages, ownerVoice, mode);
         cleanupCursor();
 
         if (result === null) {
@@ -11399,8 +11504,8 @@ async function runContinue(conversation, targetMsgId) {
         }
 
         const { text: rawContinuation, isMaxTokens } = result;
-        processMemoryUpdates(rawContinuation, targetMsgId);
-        const continuation = visibleAssistantText(rawContinuation);
+        if (mode !== 'chat') processMemoryUpdates(rawContinuation, targetMsgId);
+        const continuation = visibleAssistantText(rawContinuation, mode);
         const combined = _joinContinuation(originalContent, continuation);
         
         if (isMaxTokens) {
@@ -12551,6 +12656,78 @@ var uiWidgets = /*#__PURE__*/Object.freeze({
   showQPIconPicker: showQPIconPicker
 });
 
+const COMMANDS = ['dp', 'pa', 'p'];
+
+function commandText(raw, command) {
+    const forms = [`${command}:`, `${command} `, `/${command}:`, `/${command} `];
+    const prefix = forms.find(form => raw.startsWith(form));
+    if (prefix) return raw.slice(prefix.length).trim();
+    if (raw === command || raw === `/${command}`) return '';
+    return null;
+}
+
+function parseThinkCommand(value) {
+    const raw = typeof value === 'string' ? value : '';
+    for (const command of COMMANDS) {
+        const text = commandText(raw, command);
+        if (text !== null) return { command, text };
+    }
+    return null;
+}
+
+function syncThinkCommandHint(inputEl, hintEl, mode = 'iv') {
+    const visible = mode !== 'chat' && !!parseThinkCommand(inputEl?.value);
+    if (hintEl) hintEl.hidden = !visible;
+    return visible;
+}
+
+async function executeThinkSubmission(rawValue, {
+    consumeInput,
+    expandExchangeText,
+    sendExchange,
+    suppressAutoTrigger,
+    portray,
+    portrayForm,
+    mode = 'iv',
+}) {
+    const raw = typeof rawValue === 'string' ? rawValue : '';
+    const parsed = mode === 'chat' ? null : parseThinkCommand(raw);
+
+    if (!parsed) {
+        const text = raw.trim();
+        if (!text) return { kind: 'empty' };
+        const expanded = expandExchangeText(text);
+        consumeInput();
+        return { kind: 'exchange', exchangeResult: await sendExchange(expanded) };
+    }
+
+    if (parsed.command === 'dp' && parsed.text) {
+        const exchangeText = expandExchangeText(parsed.text);
+        consumeInput();
+        const exchangeResult = await suppressAutoTrigger(() => sendExchange(exchangeText));
+        const portrayResult = exchangeResult
+            ? await portray(portrayForm, {
+                seedText: '',
+                consumeSeed: false,
+                forceSend: false,
+            })
+            : null;
+
+        return { kind: 'delayed-portray', exchangeResult, portrayResult };
+    }
+
+    const forceSend = parsed.command === 'pa';
+    const portrayResult = await portray(portrayForm, {
+        seedText: parsed.text,
+        consumeSeed: true,
+        forceSend,
+    });
+    return {
+        kind: forceSend ? 'portray-and-send' : 'portray',
+        portrayResult,
+    };
+}
+
 function closePicker() {
     document.getElementById('iv-sess-panel')?.classList.remove('open');
     document.getElementById('iv-sess-trigger')?.classList.remove('open');
@@ -12640,8 +12817,18 @@ function refreshVoiceSessionPicker() {
     const conversation = getConversation();
     const activeVoice = getActiveVoice();
     const label = resolveVoiceName(activeVoice);
+    const mode = getActiveMode(conversation);
     const name = document.getElementById('iv-sess-name');
-    if (name) name.textContent = label;
+    if (name) name.textContent = activeVoice === USER_VOICE ? label : `${label} · ${mode === 'chat' ? 'Chat' : 'IV'}`;
+    const pageSwitch = document.getElementById('iv-page-switch');
+    if (pageSwitch) pageSwitch.hidden = activeVoice === USER_VOICE;
+    document.querySelectorAll('.iv-page-btn').forEach(button => {
+        button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
+    });
+    const input = document.getElementById('iv-input');
+    if (input) input.placeholder = mode === 'chat' ? `Talk to ${label}…` : 'Think to yourself…';
+    syncThinkCommandHint(input, document.getElementById('iv-think-command-hint'), mode);
+    document.getElementById('iv-window')?.classList.toggle('iv-chat-page', mode === 'chat');
 
     const trigger = document.getElementById('iv-sess-trigger');
     if (trigger) {
@@ -12651,7 +12838,7 @@ function refreshVoiceSessionPicker() {
 
     const badge = document.getElementById('iv-char-badge');
     if (badge) {
-        badge.textContent = `Mind: ${label}`;
+        badge.textContent = `${mode === 'chat' ? 'Chat' : 'Mind'}: ${label}`;
         badge.title = `Active voice session: ${label}`;
         badge.style.display = '';
     }
@@ -12667,6 +12854,15 @@ function refreshVoiceSessionPicker() {
 }
 
 function setupVoiceSessionPicker() {
+    document.querySelectorAll('.iv-page-btn').forEach(button => button.addEventListener('click', () => {
+        if (state.generating) return;
+        const conversation = getConversation();
+        if (!setActiveMode(conversation, button.dataset.mode)) return;
+        renderConversation(conversation);
+        refreshVoiceSessionPicker();
+        closePicker();
+        document.getElementById('iv-input')?.focus({ preventScroll: true });
+    }));
     const trigger = document.getElementById('iv-sess-trigger');
     trigger?.addEventListener('click', event => {
         event.stopPropagation();
@@ -12949,76 +13145,7 @@ var portray = /*#__PURE__*/Object.freeze({
   withPortrayAutoTriggerSuppressed: withPortrayAutoTriggerSuppressed
 });
 
-const COMMANDS = ['dp', 'pa', 'p'];
-
-function commandText(raw, command) {
-    const forms = [`${command}:`, `${command} `, `/${command}:`, `/${command} `];
-    const prefix = forms.find(form => raw.startsWith(form));
-    if (prefix) return raw.slice(prefix.length).trim();
-    if (raw === command || raw === `/${command}`) return '';
-    return null;
-}
-
-function parseThinkCommand(value) {
-    const raw = typeof value === 'string' ? value : '';
-    for (const command of COMMANDS) {
-        const text = commandText(raw, command);
-        if (text !== null) return { command, text };
-    }
-    return null;
-}
-
-function syncThinkCommandHint(inputEl, hintEl) {
-    const visible = !!parseThinkCommand(inputEl?.value);
-    if (hintEl) hintEl.hidden = !visible;
-    return visible;
-}
-
-async function executeThinkSubmission(rawValue, {
-    consumeInput,
-    expandExchangeText,
-    sendExchange,
-    suppressAutoTrigger,
-    portray,
-    portrayForm,
-}) {
-    const raw = typeof rawValue === 'string' ? rawValue : '';
-    const parsed = parseThinkCommand(raw);
-
-    if (!parsed) {
-        const text = raw.trim();
-        if (!text) return { kind: 'empty' };
-        const expanded = expandExchangeText(text);
-        consumeInput();
-        return { kind: 'exchange', exchangeResult: await sendExchange(expanded) };
-    }
-
-    if (parsed.command === 'dp' && parsed.text) {
-        const exchangeText = expandExchangeText(parsed.text);
-        consumeInput();
-        const exchangeResult = await suppressAutoTrigger(() => sendExchange(exchangeText));
-        const portrayResult = exchangeResult
-            ? await portray(portrayForm, {
-                seedText: '',
-                consumeSeed: false,
-                forceSend: false,
-            })
-            : null;
-
-        return { kind: 'delayed-portray', exchangeResult, portrayResult };
-    }
-
-    const forceSend = parsed.command === 'pa';
-    const portrayResult = await portray(portrayForm, {
-        seedText: parsed.text,
-        consumeSeed: true,
-        forceSend,
-    });
-    return {
-        kind: forceSend ? 'portray-and-send' : 'portray',
-        portrayResult,
-    };
-}
+globalThis.innerVoiceInjectExchanges = injectSimulationView;
 
 let extVersion = '?';
 let __extPath = null;
@@ -13163,15 +13290,14 @@ function attachWindowListeners() {
     // Toolbar actions
     document.getElementById('iv-regen-btn')?.addEventListener('click', () => {
         const conv = getConversation();
-        const voiceTurns = getVoiceTurns(conv, getActiveVoice());
+        const voiceTurns = getVoiceTurns(conv, getActiveVoice(), getActiveMode());
         if (!voiceTurns.length || state.generating) return;
         let lastUserIdx = -1;
         for (let i = voiceTurns.length - 1; i >= 0; i--) { if (voiceTurns[i].role === 'user') { lastUserIdx = i; break; } }
         if (lastUserIdx === -1) return;
         const userMsg = voiceTurns[lastUserIdx];
-        Promise.resolve().then(function () { return conversation; }).then(m => m.truncateAfter(conv, userMsg.id));
-        Promise.resolve().then(function () { return uiChat; }).then(m => m.removeMsgElAfter(userMsg.id));
-        runGenerate(conv, userMsg.content, false);
+        const element = document.querySelector(`.iv-msg[data-id="${userMsg.id}"]`);
+        if (element) handleMessageRegen(element, userMsg);
     });
 
     document.getElementById('iv-search-btn')?.addEventListener('click', () => { state.searchOpen ? closeSearch() : openSearch(); });
@@ -13199,6 +13325,7 @@ function attachWindowListeners() {
 
     document.getElementById('iv-inspect-btn')?.addEventListener('click', () => openInspector());
     document.getElementById('iv-portray-btn')?.addEventListener('click', () => {
+        if (getActiveMode() === 'chat') return;
         runPortray(readFireTimePortrayForm()).catch(console.error);
     });
 
@@ -13242,7 +13369,7 @@ function attachWindowListeners() {
         inputEl.addEventListener('input', () => {
             autoResize(inputEl);
             updateMsgCount(getConversation());
-            syncThinkCommandHint(inputEl, commandHintEl);
+            syncThinkCommandHint(inputEl, commandHintEl, getActiveMode());
         });
         inputEl.addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -13267,6 +13394,7 @@ function attachWindowListeners() {
         };
 
         executeThinkSubmission(rawText, {
+            mode: getActiveMode(),
             consumeInput,
             expandExchangeText: text => settings.autoExpandMacros ? expandMacros(text) : text,
             sendExchange: text => runGenerate(getConversation(), text, true),

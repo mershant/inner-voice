@@ -142,8 +142,8 @@ def _switch_voice(page, owner_voice):
         raise SystemExit(f"voice session not found in picker: {owner_voice!r}")
     item.click()
     page.wait_for_function(
-        "voice => document.getElementById('iv-sess-name')?.textContent?.trim() === voice",
-        arg=(page.evaluate("() => SillyTavern.getContext().name1") if owner_voice == "{{user}}" else owner_voice),
+        "voice => document.querySelector('.iv-sess-item.active')?.dataset.ownerVoice === voice",
+        arg=owner_voice,
     )
 
 
@@ -172,7 +172,7 @@ def _create_npc_session(page, name):
     page.locator(".iv-dialog-ok").click()
     page.wait_for_selector(".iv-dialog-overlay", state="detached")
     page.wait_for_function(
-        "name => document.getElementById('iv-sess-name')?.textContent?.trim() === name",
+        "name => document.querySelector('.iv-sess-item.active')?.dataset.ownerVoice === name",
         arg=name,
     )
 

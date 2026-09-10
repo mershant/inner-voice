@@ -88,9 +88,9 @@ globalThis.SillyTavern = {
     },
 };
 
-const { callGenerate } = await import('../src/api.js');
+const { callGenerate, runGenerate } = await import('../src/api.js');
 const { innerReasoningOverride } = await import('../src/reasoning-level.js');
-const { getSettings, getEffectiveSettings, initConversation, getConversation } = await import('../src/conversation.js');
+const { getSettings, getEffectiveSettings, initConversation, getConversation, createVoiceSession, setActiveVoice, setActiveMode, addTurn } = await import('../src/conversation.js');
 
 const MESSAGES = Object.freeze([
     Object.freeze({ role: 'user', content: 'think' }),
@@ -129,6 +129,23 @@ test('reasoning level defaults to Unset', () => {
     assert.equal(getSettings().reasoningLevel, 'unset');
 });
 
+test('the actual Chat request has the captured speaker, Chat instructions, and one independent dispatch', async () => {
+    await initConversation({ forceReset: true });
+    stub.chat = [{ mes: 'A card-less merchant waits.', is_user: false }];
+    const settings = { ...getEffectiveSettings(), ...baseSettings({ connectionSource: 'profile', connectionProfileId: 'p1', reasoningLevel: 'off' }),
+        systemPrompt: 'IV-ONLY', postHistoryText: 'IV-POST',
+        chatSystemPrompt: '{{voice}} answers {{user}} in plain dialogue.', chatPostHistoryText: 'Reply as {{voice}}, to {{user}}.' };
+    await callGenerate(getConversation(), settings, 'How much?', null, undefined, 'Mira', 'chat');
+    assert.equal(stub.cmCalls.length, 1);
+    assert.equal(stub.ccCalls.length, 0);
+    const text = stub.cmCalls[0][1].map(m => m.content).join('\n');
+    assert.match(text, /Mira answers User in plain dialogue/);
+    assert.match(text, /Reply as Mira, to User/);
+    assert.doesNotMatch(text, /IV-ONLY|IV-POST|\{\{voice\}\}|\{\{user\}\}|<modules>/);
+    assert.match(text, /How much\?/);
+    assert.equal(getSettings().systemPrompt === 'IV-ONLY', false, 'request settings do not overwrite globals');
+});
+
 test('current-chat override inherits and clears like neighboring connection fields', async () => {
     stub.extensionSettings = {};
     await initConversation({ forceReset: true });
@@ -138,6 +155,77 @@ test('current-chat override inherits and clears like neighboring connection fiel
     assert.equal(getEffectiveSettings().reasoningLevel, 'off');
     delete getConversation().overrides.reasoningLevel;
     assert.equal(getEffectiveSettings().reasoningLevel, 'high');
+});
+
+test('Chat saves into its request page after selection changes and sends the entered turn only once', async () => {
+    await initConversation({ forceReset: true });
+    stub.chat = [{ mes: 'the scene', is_user: false }];
+    const conv = getConversation();
+    createVoiceSession(conv, 'Mira');
+    setActiveVoice(conv, 'Mira');
+    setActiveMode(conv, 'chat');
+    Object.assign(getSettings(), baseSettings({ connectionSource: 'profile', connectionProfileId: 'p1' }), { portrayAutoTrigger: true });
+    const send = stub.cm.sendRequest;
+    stub.cm.sendRequest = async (...args) => {
+        stub.cmCalls.push(args);
+        setActiveMode(conv, 'iv');
+        setActiveVoice(conv, '{{user}}');
+        return { content: 'A spoken reply. <scene-now />' };
+    };
+    try {
+        await runGenerate(conv, 'UNIQUE-QUESTION');
+        assert.equal(stub.cmCalls.length, 1, 'no Portray/tool/recap request');
+        const text = stub.cmCalls[0][1].map(m => m.content).join('\n');
+        assert.equal(text.split('UNIQUE-QUESTION').length - 1, 1);
+        assert.deepEqual(conv.messages.map(m => [m.ownerVoice, m.mode, m.anchorIndex]), [['Mira', 'chat', 0], ['Mira', 'chat', 0]]);
+        assert.equal(conv.messages.at(-1).content, 'A spoken reply. <scene-now />', 'Chat text is not an IV command');
+    } finally { stub.cm.sendRequest = send; }
+});
+
+test('resending a saved Chat turn includes it once and preserves interleaved private history', async () => {
+    await initConversation({ forceReset: true });
+    stub.chat = [{ mes: 'the scene', is_user: false }];
+    const conv = getConversation();
+    createVoiceSession(conv, 'Mira');
+    setActiveVoice(conv, 'Mira');
+    setActiveMode(conv, 'chat');
+    Object.assign(getSettings(), baseSettings({ connectionSource: 'profile', connectionProfileId: 'p1' }));
+    addTurn(conv, 'user', 'SAVED-QUESTION');
+    addTurn(conv, 'assistant', 'PRIVATE-DOUBT', { mode: 'iv' });
+    await runGenerate(conv, 'SAVED-QUESTION', false);
+    const text = stub.cmCalls[0][1].map(m => m.content).join('\n');
+    assert.equal(text.split('SAVED-QUESTION').length - 1, 1);
+    assert.equal(text.split('PRIVATE-DOUBT').length - 1, 1);
+    assert.equal(conv.messages.filter(m => m.mode === 'iv').length, 1);
+    assert.equal(conv.messages.at(-1).mode, 'chat');
+});
+
+test('streaming Chat keeps its original owner, mode, and anchor when selection changes between chunks', async () => {
+    await initConversation({ forceReset: true });
+    stub.chat = [{ mes: 'the scene', is_user: false }];
+    const conv = getConversation();
+    createVoiceSession(conv, 'Mira');
+    setActiveVoice(conv, 'Mira');
+    setActiveMode(conv, 'chat');
+    Object.assign(getSettings(), baseSettings({ connectionSource: 'profile', connectionProfileId: 'p1', forceStreaming: 'on' }));
+    const send = stub.cm.sendRequest;
+    stub.cm.sendRequest = async (...args) => {
+        stub.cmCalls.push(args);
+        return async function* () {
+            yield { text: 'First words' };
+            setActiveMode(conv, 'iv');
+            setActiveVoice(conv, '{{user}}');
+            stub.chat.push({ mes: 'next main moment', is_user: false });
+            yield { text: 'First words, finished.' };
+        };
+    };
+    try {
+        await runGenerate(conv, 'Question');
+        assert.equal(stub.cmCalls.length, 1);
+        assert.equal(conv.messages.length, 2);
+        assert.deepEqual(conv.messages.map(m => [m.ownerVoice, m.mode, m.anchorIndex]), [['Mira', 'chat', 0], ['Mira', 'chat', 0]]);
+        assert.equal(conv.messages.at(-1).content, 'First words, finished.');
+    } finally { stub.cm.sendRequest = send; }
 });
 
 test('Specific Profile passes the override as sendRequest fifth argument', async () => {

@@ -270,10 +270,25 @@
         </div>
 
         <div class="iv-sp-group">
-          <div class="iv-sp-group-title"><i class="fa-solid fa-message"></i> System Prompt</div>
+          <div class="iv-sp-group-title"><i class="fa-solid fa-message"></i> IV System Prompt</div>
           <div class="iv-sp-hint">{{voice}} is the mind this chat belongs to. {{user}} is your persona. Custom prompts that mean the thinking mind should use {{voice}}.</div>
           <textarea class="iv-sp-textarea iv-sp-textarea-lg" id="iv-sp-sysprompt" rows="7"></textarea>
           <button class="iv-action-btn" id="iv-sp-reset-prompt" style="margin-top:6px">${I.refresh}<span>Reset to Default</span></button>
+        </div>
+
+        <div class="iv-sp-group">
+          <div class="iv-sp-group-title">Chat Prompts</div>
+          <div class="iv-sp-hint">{{user}} is your persona speaking to {{voice}}, this session's character. Dialogue and actions happen in the scene. Set dialogue-only or *asterisk actions* here; IV prompts stay separate.</div>
+          <label class="iv-sp-label" for="iv-sp-chat-sysprompt">Chat system prompt</label>
+          <textarea class="iv-sp-textarea iv-sp-textarea-lg" id="iv-sp-chat-sysprompt" rows="7"></textarea>
+          <button class="iv-action-btn" id="iv-sp-reset-chat-prompt">${I.refresh}<span>Reset Chat to Default</span></button>
+          <label class="iv-sp-label" for="iv-sp-chat-post-history-text">Chat post-history prompt (optional)</label>
+          <textarea class="iv-sp-textarea" id="iv-sp-chat-post-history-text" rows="3"></textarea>
+          <label class="iv-sp-label" for="iv-sp-chat-post-history-role">Role</label>
+          <select class="iv-sp-input" id="iv-sp-chat-post-history-role">
+            <option value="system">System</option><option value="user">User</option><option value="assistant">Assistant</option>
+          </select>
+          <div class="iv-sp-hint">Leave post-history blank to insert nothing. Assistant as the final message is a prefill, which not every backend accepts.</div>
         </div>
 
         <div class="iv-sp-group">
@@ -529,6 +544,8 @@
             <div id="iv-sp-prompt-preset-manager"></div>
           </div>
           <textarea class="iv-sp-textarea iv-sp-textarea-lg" id="iv-sp-ov-sysprompt" placeholder="Using global system prompt…"></textarea>
+          <label class="iv-sp-label" for="iv-sp-ov-chat-sysprompt">Chat system prompt override</label>
+          <textarea class="iv-sp-textarea iv-sp-textarea-lg" id="iv-sp-ov-chat-sysprompt" placeholder="Using global Chat system prompt…"></textarea>
         </div>
 
       <!-- ══ MEMORY TAB ══ -->

@@ -4,6 +4,8 @@ import {
     createVoiceSession,
     deleteVoiceSession,
     getActiveVoice,
+    getActiveMode,
+    setActiveMode,
     getConversation,
     getVoiceSessions,
     getVoiceTurns,
@@ -13,6 +15,7 @@ import { resolveVoiceName, USER_VOICE } from '../voice.js';
 import { showCustomDialog } from '../utils/util-dom.js';
 import { _dbgAdd } from '../utils/util-debug.js';
 import { renderConversation } from './ui-chat.js';
+import { syncThinkCommandHint } from '../think-command.js';
 
 function closePicker() {
     document.getElementById('iv-sess-panel')?.classList.remove('open');
@@ -103,8 +106,18 @@ export function refreshVoiceSessionPicker() {
     const conversation = getConversation();
     const activeVoice = getActiveVoice();
     const label = resolveVoiceName(activeVoice);
+    const mode = getActiveMode(conversation);
     const name = document.getElementById('iv-sess-name');
-    if (name) name.textContent = label;
+    if (name) name.textContent = activeVoice === USER_VOICE ? label : `${label} · ${mode === 'chat' ? 'Chat' : 'IV'}`;
+    const pageSwitch = document.getElementById('iv-page-switch');
+    if (pageSwitch) pageSwitch.hidden = activeVoice === USER_VOICE;
+    document.querySelectorAll('.iv-page-btn').forEach(button => {
+        button.setAttribute('aria-pressed', String(button.dataset.mode === mode));
+    });
+    const input = document.getElementById('iv-input');
+    if (input) input.placeholder = mode === 'chat' ? `Talk to ${label}…` : 'Think to yourself…';
+    syncThinkCommandHint(input, document.getElementById('iv-think-command-hint'), mode);
+    document.getElementById('iv-window')?.classList.toggle('iv-chat-page', mode === 'chat');
 
     const trigger = document.getElementById('iv-sess-trigger');
     if (trigger) {
@@ -114,7 +127,7 @@ export function refreshVoiceSessionPicker() {
 
     const badge = document.getElementById('iv-char-badge');
     if (badge) {
-        badge.textContent = `Mind: ${label}`;
+        badge.textContent = `${mode === 'chat' ? 'Chat' : 'Mind'}: ${label}`;
         badge.title = `Active voice session: ${label}`;
         badge.style.display = '';
     }
@@ -130,6 +143,15 @@ export function refreshVoiceSessionPicker() {
 }
 
 export function setupVoiceSessionPicker() {
+    document.querySelectorAll('.iv-page-btn').forEach(button => button.addEventListener('click', () => {
+        if (state.generating) return;
+        const conversation = getConversation();
+        if (!setActiveMode(conversation, button.dataset.mode)) return;
+        renderConversation(conversation);
+        refreshVoiceSessionPicker();
+        closePicker();
+        document.getElementById('iv-input')?.focus({ preventScroll: true });
+    }));
     const trigger = document.getElementById('iv-sess-trigger');
     trigger?.addEventListener('click', event => {
         event.stopPropagation();

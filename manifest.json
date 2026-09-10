@@ -4,6 +4,7 @@
     "requires": [],
     "optional": [],
     "js": "index.js",
+    "generate_interceptor": "innerVoiceInjectExchanges",
     "css": "style.css",
     "author": "mershant. Forked from ST-Copilot by Quaren / QQ-Corporation (MIT).",
     "version": "0.1.0",

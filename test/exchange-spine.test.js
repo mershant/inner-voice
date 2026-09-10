@@ -77,6 +77,9 @@ const {
     getActiveVoice,
     setActiveVoice,
     getVoiceTurns,
+    getActiveMode,
+    setActiveMode,
+    truncateFrom,
 } = await import('../src/conversation.js');
 
 function mainMsg(text, isUser = false) {
@@ -93,7 +96,52 @@ async function resetChats() {
 
 beforeEach(resetChats);
 
+test('one card-less session retains IV and Chat pages, ordered turns, and legacy IV across reload', async () => {
+    const conv = getConversation();
+    createVoiceSession(conv, 'Mira');
+    setActiveVoice(conv, 'Mira');
+    const legacy = addTurn(conv, 'user', 'private first');
+    delete legacy.mode;
+    assert.equal(setActiveMode(conv, 'chat'), true);
+    addTurn(conv, 'user', 'spoken next');
+    setActiveMode(conv, 'iv');
+    addTurn(conv, 'assistant', 'private last');
+    assert.deepEqual(getVoiceTurns(conv, 'Mira', 'chat').map(m => m.content), ['spoken next']);
+    assert.deepEqual(getVoiceTurns(conv, 'Mira', 'iv').map(m => m.content), ['private first', 'private last']);
+    await commitConversation(true);
+    await initConversation();
+    const loaded = getConversation();
+    assert.deepEqual(loaded.messages.map(m => [m.content, m.mode, m.anchorIndex]), [
+        ['private first', 'iv', 0], ['spoken next', 'chat', 0], ['private last', 'iv', 0],
+    ]);
+    assert.equal(setActiveMode(loaded, 'chat'), false, 'persona has no self-chat page');
+    setActiveVoice(loaded, 'Mira');
+    assert.equal(getActiveMode(), 'iv');
+    assert.equal(getVoiceSessions(loaded).length, 2);
+});
+
 // ─── Anchoring ────────────────────────────────────────────────────────────────
+
+test('page-scoped truncation preserves interleaved IV, Chat, and other characters', () => {
+    const conv = getConversation();
+    const first = addTurn(conv, 'user', 'hello', { ownerVoice: 'Mira', mode: 'chat' });
+    const thought = addTurn(conv, 'assistant', 'private', { ownerVoice: 'Mira', mode: 'iv' });
+    const other = addTurn(conv, 'assistant', 'other', { ownerVoice: 'Ada', mode: 'chat' });
+    addTurn(conv, 'assistant', 'reply', { ownerVoice: 'Mira', mode: 'chat' });
+    truncateAfter(conv, first.id);
+    assert.deepEqual(conv.messages.map(m => m.id), [first.id, thought.id, other.id]);
+    truncateFrom(conv, first.id);
+    assert.deepEqual(conv.messages.map(m => m.id), [thought.id, other.id]);
+});
+
+test('eligible Chat survives the old shared 400-turn cap and storage reload', async () => {
+    const conv = getConversation();
+    addTurn(conv, 'user', 'permanent conversation', { ownerVoice: 'Mira', mode: 'chat' });
+    for (let i = 0; i < 405; i++) addTurn(conv, 'assistant', `turn ${i}`);
+    await commitConversation(true);
+    await initConversation();
+    assert.equal(getVoiceTurns(getConversation(), 'Mira', 'chat')[0]?.content, 'permanent conversation');
+});
 
 test('a new turn anchors to the live edge', () => {
     stub.chat = [mainMsg('one'), mainMsg('two'), mainMsg('three')];

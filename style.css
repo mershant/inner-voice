@@ -253,6 +253,14 @@
 }
 .iv-sess-item.active .iv-sess-item-count { background: var(--iv-accent-bg); color: var(--iv-accent); }
 .iv-sess-footer { padding: 5px; border-top: var(--iv-border); }
+.iv-page-switch { display: flex; gap: 4px; padding: 8px; border-bottom: var(--iv-border); }
+.iv-page-switch[hidden] { display: none; }
+.iv-page-btn { flex: 1; min-height: 40px; border: var(--iv-border); border-radius: 6px; background: var(--iv-input-bg); color: var(--iv-text-muted); font: inherit; cursor: pointer; }
+.iv-page-btn:hover, .iv-page-btn[aria-pressed="true"] { background: var(--iv-accent-bg); color: var(--iv-accent); }
+.iv-page-btn[aria-pressed="true"] { font-weight: 600; border-color: var(--iv-text-muted); }
+.iv-page-btn:focus-visible { outline: 2px solid var(--iv-accent); outline-offset: 2px; }
+.iv-chat-page .iv-portray-controls, .iv-chat-page #iv-think-command-hint { display: none; }
+.iv-msg-speaker { font-size: 11px; font-weight: 600; color: var(--iv-text-muted); margin-bottom: 4px; }
 .iv-sess-new-btn {
     width: 100%; display: flex; align-items: center; gap: 7px;
     padding: 7px 9px; border: 0; border-radius: 6px;

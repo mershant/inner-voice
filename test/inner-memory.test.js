@@ -121,6 +121,75 @@ async function reset() {
 
 beforeEach(reset);
 
+test('Chat and IV share an anchored chronology without competing prompts or duplicate history', async () => {
+    const conv = getConversation();
+    createVoiceSession(conv, 'Mira');
+    addTurn(conv, 'user', 'CHAT-FIRST', { ownerVoice: 'Mira', mode: 'chat' });
+    addTurn(conv, 'assistant', 'NPC-PRIVATE', { ownerVoice: 'Mira', mode: 'iv' });
+    addTurn(conv, 'assistant', 'CHAT-LAST *nods*', { ownerVoice: 'Mira', mode: 'chat' });
+    addTurn(conv, 'assistant', 'PERSONA-PRIVATE');
+    const settings = { ...getEffectiveSettings(), systemPrompt: 'IV-INSTRUCTIONS {{voice}}', postHistoryText: 'IV-POST',
+        chatSystemPrompt: 'CHAT-INSTRUCTIONS {{voice}} talking with {{user}}', chatPostHistoryText: 'CHAT-POST {{voice}}',
+        portrayAutoTrigger: true, toolsEnabled: true };
+    const chat = payloadText(await assembleMessages(conv, settings, null, 'Mira', 'chat'));
+    assert.match(chat, /CHAT-INSTRUCTIONS Mira talking with \{\{user\}\}/);
+    assert.match(chat, /CHAT-POST Mira/);
+    assert.doesNotMatch(chat, /IV-INSTRUCTIONS|IV-POST|PERSONA-PRIVATE|<modules>/);
+    assert.ok(chat.indexOf('CHAT-FIRST') < chat.indexOf('NPC-PRIVATE'));
+    assert.ok(chat.indexOf('NPC-PRIVATE') < chat.indexOf('CHAT-LAST'));
+    assert.equal(chat.split('CHAT-FIRST').length - 1, 1);
+    assert.match(chat, /actual conversation|conversation.*happened/i);
+    assert.match(chat, /Mira's private inner exchange/);
+    const self = payloadText(await assembleMessages(conv, settings, null, '{{user}}', 'iv'));
+    assert.match(self, /CHAT-FIRST/);
+    assert.match(self, /CHAT-LAST/);
+    assert.match(self, /PERSONA-PRIVATE/);
+    assert.doesNotMatch(self, /NPC-PRIVATE|CHAT-INSTRUCTIONS|CHAT-POST/);
+});
+
+test('Chat from outside the receiving slice or under hidden anchors is absent, but remains stored', async () => {
+    const conv = getConversation();
+    addTurn(conv, 'assistant', 'OLD-CHAT', { ownerVoice: 'Mira', mode: 'chat' });
+    stub.chat.push(mainMsg('second scene'));
+    addTurn(conv, 'assistant', 'NEW-CHAT', { ownerVoice: 'Mira', mode: 'chat' });
+    const text = async depth => payloadText(await assembleMessages(conv, { ...getEffectiveSettings(), contextDepth: depth }, null, '{{user}}', 'iv'));
+    assert.doesNotMatch(await text(1), /OLD-CHAT/);
+    assert.match(await text(1), /NEW-CHAT/);
+    stub.chat[1].is_hidden = true;
+    assert.doesNotMatch(await text(2), /NEW-CHAT/);
+    delete stub.chat[1].is_hidden;
+    assert.match(await text(2), /OLD-CHAT[\s\S]*NEW-CHAT/);
+    assert.equal(conv.messages.length, 2);
+});
+
+test('Chat post-history remains the selected instruction even with no main-chat slice, and clearing it is valid', async () => {
+    const conv = getConversation();
+    const settings = { ...getEffectiveSettings(), contextDepth: 0, chatPostHistoryText: 'Speak as {{voice}}.', chatPostHistoryRole: 'system' };
+    const messages = await assembleMessages(conv, settings, 'Hello', 'Mira', 'chat');
+    assert.deepEqual(messages.at(-2), { role: 'system', content: 'Speak as Mira.' });
+    assert.deepEqual(messages.at(-1), { role: 'user', content: 'Hello' });
+    settings.chatPostHistoryText = '';
+    assert.equal((await assembleMessages(conv, settings, 'Hello', 'Mira', 'chat')).length, 2);
+});
+
+test('Chat keeps the world card for a card-less NPC and adds a matching character without replacing the scene', async () => {
+    stub.characters = [
+        { name: 'Market World', avatar: 'world.png', data: { description: 'WORLD-KNOWLEDGE: the lantern guild controls this market.' } },
+        { name: 'Ada', avatar: 'ada.png', data: { description: 'ADA-KNOWLEDGE: a guild courier.' } },
+    ];
+    const conv = getConversation();
+    createVoiceSession(conv, 'Mira');
+    createVoiceSession(conv, 'Ada');
+    const settings = getEffectiveSettings();
+    const cardless = payloadText(await assembleMessages(conv, settings, null, 'Mira', 'chat'));
+    assert.match(cardless, /WORLD-KNOWLEDGE/);
+    assert.doesNotMatch(cardless, /ADA-KNOWLEDGE/);
+    const withCard = payloadText(await assembleMessages(conv, settings, null, 'Ada', 'chat'));
+    assert.match(withCard, /WORLD-KNOWLEDGE/);
+    assert.match(withCard, /ADA-KNOWLEDGE/);
+    assert.equal(withCard.split('WORLD-KNOWLEDGE').length - 1, 1);
+});
+
 // ─── The main-chat slice ──────────────────────────────────────────────────────
 
 test('the payload carries the depth-limited main-chat slice', async () => {

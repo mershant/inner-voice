@@ -1,6 +1,6 @@
 import { EXT_DISPLAY, CHANGELOG, I, WIN_ID, ICON_ID, MODAL_ID, ICON_STORAGE_KEY } from './constants.js';
 import { state } from './state.js';
-import { getSettings, saveSettings, getConversation, getActiveVoice, getVoiceTurns } from './conversation.js';
+import { getSettings, saveSettings, getConversation, getActiveVoice, getActiveMode, getVoiceTurns } from './conversation.js';
 import { _dbgSetupGlobalErrorHandlers, _dbgSnapshotSettings } from './utils/util-debug.js';
 import { autoResize, copyText } from './utils/util-dom.js';
 
@@ -14,7 +14,9 @@ import { setupLorebookManagerListeners, openLorebookManager } from './features/f
 import { refreshVoiceSessionPicker, setupVoiceSessionPicker } from './ui/ui-voice-sessions.js';
 
 import * as apiMod from './api.js';
-import { syncSimulationView } from './simulation-view.js';
+import { handleMessageRegen } from './ui/ui-chat.js';
+import { syncSimulationView, injectSimulationView } from './simulation-view.js';
+globalThis.innerVoiceInjectExchanges = injectSimulationView;
 import { readFireTimePortrayForm, runPortray, withPortrayAutoTriggerSuppressed } from './portray.js';
 import { executeThinkSubmission, syncThinkCommandHint } from './think-command.js';
 
@@ -162,15 +164,14 @@ function attachWindowListeners() {
     // Toolbar actions
     document.getElementById('iv-regen-btn')?.addEventListener('click', () => {
         const conv = getConversation();
-        const voiceTurns = getVoiceTurns(conv, getActiveVoice());
+        const voiceTurns = getVoiceTurns(conv, getActiveVoice(), getActiveMode());
         if (!voiceTurns.length || state.generating) return;
         let lastUserIdx = -1;
         for (let i = voiceTurns.length - 1; i >= 0; i--) { if (voiceTurns[i].role === 'user') { lastUserIdx = i; break; } }
         if (lastUserIdx === -1) return;
         const userMsg = voiceTurns[lastUserIdx];
-        import('./conversation.js').then(m => m.truncateAfter(conv, userMsg.id));
-        import('./ui/ui-chat.js').then(m => m.removeMsgElAfter(userMsg.id));
-        apiMod.runGenerate(conv, userMsg.content, false);
+        const element = document.querySelector(`.iv-msg[data-id="${userMsg.id}"]`);
+        if (element) handleMessageRegen(element, userMsg);
     });
 
     document.getElementById('iv-search-btn')?.addEventListener('click', () => { state.searchOpen ? closeSearch() : openSearch(); });
@@ -198,6 +199,7 @@ function attachWindowListeners() {
 
     document.getElementById('iv-inspect-btn')?.addEventListener('click', () => openInspector());
     document.getElementById('iv-portray-btn')?.addEventListener('click', () => {
+        if (getActiveMode() === 'chat') return;
         runPortray(readFireTimePortrayForm()).catch(console.error);
     });
 
@@ -241,7 +243,7 @@ function attachWindowListeners() {
         inputEl.addEventListener('input', () => {
             autoResize(inputEl);
             updateMsgCount(getConversation());
-            syncThinkCommandHint(inputEl, commandHintEl);
+            syncThinkCommandHint(inputEl, commandHintEl, getActiveMode());
         });
         inputEl.addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -266,6 +268,7 @@ function attachWindowListeners() {
         };
 
         executeThinkSubmission(rawText, {
+            mode: getActiveMode(),
             consumeInput,
             expandExchangeText: text => settings.autoExpandMacros ? expandMacros(text) : text,
             sendExchange: text => apiMod.runGenerate(getConversation(), text, true),

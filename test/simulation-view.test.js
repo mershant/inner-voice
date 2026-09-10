@@ -80,33 +80,20 @@ const {
     addTurn,
     setExchangeHidden,
 } = await import('../src/conversation.js');
-const { renderExchangeBlock, syncSimulationView } = await import('../src/simulation-view.js');
+const { renderExchangeBlock, syncSimulationView, injectSimulationView, assembleSimulationView } = await import('../src/simulation-view.js');
 
 function mainMsg(text, isUser = false) {
     return { mes: text, is_user: isUser };
 }
 
-// SillyTavern in-chat injection: depth 0 sits after the last message. The
-// test copies that host rule so "below the anchor" is checked independently
-// of how the extension computes depth.
-function placeInChat(chat, extensionPrompts) {
-    const messages = chat.map(m => ({ mes: m.mes }));
-    messages.reverse();
-    let totalInserted = 0;
-    const depths = Object.values(extensionPrompts)
-        .filter(p => p && p.value && p.position === 1)
-        .map(p => p.depth ?? 0);
-    const maxDepth = depths.length ? Math.max(...depths) : -1;
-    for (let i = 0; i <= maxDepth; i++) {
-        const atDepth = Object.values(extensionPrompts)
-            .filter(p => p && p.value && p.position === 1 && p.depth === i);
-        if (!atDepth.length) continue;
-        const injectIdx = Math.min(i + totalInserted, messages.length);
-        messages.splice(injectIdx, 0, ...atDepth.map(p => ({ mes: p.value, injected: true })));
-        totalInserted += atDepth.length;
-    }
-    messages.reverse();
-    return messages;
+// Exercise the actual host interceptor seam. Split each message into its
+// original text and appended context only to make placement assertions readable.
+function placeInChat(chat) {
+    const core = chat.filter(m => !m.is_system).map((m, index) => ({ ...m, index }));
+    const originals = core.map(m => m.mes);
+    injectSimulationView(core);
+    return core.flatMap((m, i) => [{ mes: originals[i] },
+        ...(m.mes.length > originals[i].length ? [{ mes: m.mes.slice(originals[i].length), injected: true }] : [])]);
 }
 
 async function reset() {
@@ -120,6 +107,57 @@ async function reset() {
 }
 
 beforeEach(reset);
+
+test('simulation view preserves cross-character Chat → IV → Chat order without spending IV slots', () => {
+    const conv = getConversation();
+    addTurn(conv, 'user', 'FIRST-CHAT', { ownerVoice: 'Mira', mode: 'chat' });
+    addTurn(conv, 'assistant', 'SELF-THOUGHT');
+    addTurn(conv, 'assistant', 'OTHER-CHAT', { ownerVoice: 'Ada', mode: 'chat' });
+    addTurn(conv, 'assistant', 'LAST-CHAT', { ownerVoice: 'Mira', mode: 'chat' });
+    const text = assembleSimulationView(conv, { exchangeDepth: 1, otherVoicesDepth: 0 }, 1).map(p => p.content).join('\n');
+    const tokens = ['FIRST-CHAT', 'SELF-THOUGHT', 'OTHER-CHAT', 'LAST-CHAT'];
+    assert.deepEqual(tokens.map(t => text.indexOf(t)).slice().sort((a,b) => a-b), tokens.map(t => text.indexOf(t)));
+    for (const t of tokens) assert.equal(text.split(t).length - 1, 1, t);
+    assert.match(text, /Continue after its last turn/);
+});
+
+test('host context selection keeps or drops anchor and exchanges as one message, without editing saved chat', () => {
+    const conv = getConversation();
+    addTurn(conv, 'assistant', 'OLD-CHAT', { ownerVoice: 'Mira', mode: 'chat' });
+    stub.chat.push(mainMsg('latest scene'));
+    addTurn(conv, 'assistant', 'NEW-CHAT', { ownerVoice: 'Mira', mode: 'chat' });
+    const before = structuredClone(stub.chat);
+    const coreChat = stub.chat.map((m, index) => ({ ...m, index }));
+    injectSimulationView(coreChat);
+    assert.deepEqual(stub.chat, before);
+    assert.equal(coreChat.length, 2, 'no independently retained injected message');
+    assert.match(coreChat[0].mes, /OLD-CHAT/);
+    assert.doesNotMatch(coreChat.slice(-1).map(m => m.mes).join('\n'), /OLD-CHAT/);
+    assert.match(coreChat.at(-1).mes, /NEW-CHAT/);
+});
+
+test('more than 30 Chat exchanges stay anchor-bound, with independent hides and unchanged IV depth', () => {
+    const conv = getConversation();
+    for (let i = 0; i < 35; i++) {
+        if (i) stub.chat.push(mainMsg(`scene ${i}`));
+        addTurn(conv, 'user', `CHAT-${i}-END`, { ownerVoice: 'Mira', mode: 'chat' });
+        addTurn(conv, 'assistant', `IV-${i}-END`, { ownerVoice: 'Mira', mode: 'iv' });
+    }
+    const text = () => assembleSimulationView(conv, { otherVoicesDepth: 1 }, 35).map(p => p.content).join('\n');
+    assert.equal((text().match(/CHAT-\d+-END/g) || []).length, 35);
+    assert.equal((text().match(/IV-\d+-END/g) || []).length, 1);
+    setExchangeHidden(conv, 34, true, 'Mira', 'chat');
+    assert.doesNotMatch(text(), /CHAT-34-END/);
+    assert.match(text(), /IV-34-END/);
+    stub.chat[0].is_system = true;
+    assert.doesNotMatch(text(), /CHAT-0-END/);
+    delete stub.chat[0].is_system;
+    setExchangeHidden(conv, 34, false, 'Mira', 'chat');
+    assert.equal((text().match(/CHAT-\d+-END/g) || []).length, 35);
+    const filtered = stub.chat.filter((_, i) => i !== 1).map((m, index) => ({ ...m, index: index ? index + 1 : 0 }));
+    injectSimulationView(filtered);
+    assert.doesNotMatch(filtered.map(m => m.mes).join('\n'), /CHAT-1-END/, 'omitted anchor has no raw Chat');
+});
 
 test('default depth 1 injects only the most recent non-hidden exchange, below its anchor', async () => {
     stub.chat = [mainMsg('scene zero')];

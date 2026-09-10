@@ -13,6 +13,19 @@ const COMMAND_FORMS = command => [
     `/${command} carry it through`,
 ];
 
+test('Chat treats IV command spelling as conversation and shows no command hint', async () => {
+    for (const raw of ['p hello', 'dp:hello', '/pa hello']) {
+        const harness = commandHarness();
+        const result = await executeThinkSubmission(raw, { ...harness.deps, mode: 'chat' });
+        assert.equal(result.kind, 'exchange');
+        assert.ok(harness.calls.some(([kind, text]) => kind === 'exchange' && text === `expanded:${raw}`));
+        assert.ok(!harness.calls.some(([kind]) => kind === 'portray'));
+        const hint = { hidden: false };
+        syncThinkCommandHint({ value: raw }, hint, 'chat');
+        assert.equal(hint.hidden, true);
+    }
+});
+
 function commandHarness({ exchangeResult = { role: 'assistant' } } = {}) {
     const calls = [];
     let suppressionActive = false;

@@ -1,5 +1,6 @@
 import { THEME_PRESETS, THEME_VAR_DEFS, THEME_CSS_MAP, EXT_DISPLAY, DEFAULT_SYSTEM_PROMPT, DEFAULT_TOOLS_PROMPT, DEFAULT_MEMORY_PROMPT, DEFAULT_PORTRAY_PROMPT, DEFAULT_LB_MANAGE_PROMPT, I } from '../constants.js';
 import { REASONING_LEVELS } from '../reasoning-level.js';
+import { DEFAULT_CHAT_SYSTEM_PROMPT } from '../constants.js';
 import { state } from '../state.js';
 import { getSettings, saveSettings, getEffectiveSettings, setConversationOverride, clearAllConversationOverrides, getBindingKey, hasConversationOverrides, saveConversation, getConversation, getConversationOverrides, initConversation } from '../conversation.js';
 import { showCustomDialog, escHtml } from '../utils/util-dom.js';
@@ -125,6 +126,10 @@ const _SETTINGS_DEF = [
     // ── Prompts ───────────────────────────────────────────────────────────────
     { key: 'systemPrompt', stId: 'iv-sysprompt', spId: 'iv-sp-sysprompt', type: 'textarea', updCtx: true, profileKey: true,
       fromSetting: s => s.systemPrompt || DEFAULT_SYSTEM_PROMPT },
+    { key: 'chatSystemPrompt', stId: 'iv-chat-sysprompt', spId: 'iv-sp-chat-sysprompt', type: 'textarea', updCtx: true, profileKey: true,
+      fromSetting: s => s.chatSystemPrompt || DEFAULT_CHAT_SYSTEM_PROMPT },
+    { key: 'chatPostHistoryText', stId: 'iv-chat-post-history-text', spId: 'iv-sp-chat-post-history-text', type: 'textarea', updCtx: true, profileKey: true },
+    { key: 'chatPostHistoryRole', stId: 'iv-chat-post-history-role', spId: 'iv-sp-chat-post-history-role', type: 'select', updCtx: true, profileKey: true },
 
     // ── Memory ────────────────────────────────────────────────────────────────
     { key: 'memoryEnabled',      stId: 'iv-memory-enabled', spId: 'iv-sp-memory-enabled', type: 'checkbox', updCtx: true },
@@ -159,6 +164,7 @@ const _OV_EL_MAP = {
     contextDepth: ['iv-sp-ov-depth-slider', 'iv-sp-ov-depth-val'],
     maxTokens: ['iv-sp-ov-max-tokens'],           localHistoryLimit: ['iv-sp-ov-history-limit'],
     reasoningTrimStrings: ['iv-sp-ov-reasoning-trim'], systemPrompt: ['iv-sp-ov-sysprompt'],
+    chatSystemPrompt: ['iv-sp-ov-chat-sysprompt'],
     connectionSource: ['iv-sp-ov-conn-source'],   customUrl: ['iv-sp-ov-custom-url'],
     customKey: ['iv-sp-ov-custom-key'],           customModel: ['iv-sp-ov-custom-model'],
     connectionProfileId: ['iv-sp-ov-conn-profile'],
@@ -765,6 +771,7 @@ export function syncSPFromSettings() {
     ovi('iv-sp-ov-custom-url', 'customUrl'); ovi('iv-sp-ov-custom-key', 'customKey'); ovi('iv-sp-ov-custom-model', 'customModel');
     ovi('iv-sp-ov-max-tokens', 'maxTokens'); ovi('iv-sp-ov-history-limit', 'localHistoryLimit');
     ovi('iv-sp-ov-reasoning-trim', 'reasoningTrimStrings'); ovi('iv-sp-ov-sysprompt', 'systemPrompt');
+    ovi('iv-sp-ov-chat-sysprompt', 'chatSystemPrompt');
 
     gC('iv-sp-ov-include-sysprompt', eff.includeSystemPrompt); gC('iv-sp-ov-include-persona', eff.includeUserPersonality);
     gC('iv-sp-ov-include-alt-swipes', eff.includeAlternateSwipes); gC('iv-sp-ov-apply-regex', eff.applyRegexToContext);
@@ -881,6 +888,9 @@ export function setupSettingsHandlers() {
         toastr.success(`${label} reset.`, EXT_DISPLAY);
     };
     document.getElementById('iv-reset-prompt')?.addEventListener('click', () => _resetPrompt('systemPrompt', DEFAULT_SYSTEM_PROMPT, 'iv-sysprompt', 'iv-sp-sysprompt', 'System Prompt'));
+    for (const id of ['iv-reset-chat-prompt', 'iv-sp-reset-chat-prompt']) {
+        document.getElementById(id)?.addEventListener('click', () => _resetPrompt('chatSystemPrompt', DEFAULT_CHAT_SYSTEM_PROMPT, 'iv-chat-sysprompt', 'iv-sp-chat-sysprompt', 'Chat System Prompt'));
+    }
     document.getElementById('iv-reset-portray-prompt')?.addEventListener('click', () => _resetPrompt('portrayPrompt', DEFAULT_PORTRAY_PROMPT, 'iv-portray-prompt', 'iv-sp-portray-prompt', 'Portray Prompt'));
     document.getElementById('iv-reset-lb-prompt')?.addEventListener('click', async () => {
         const ok = await showCustomDialog({ type: 'confirm', title: 'Reset Lorebook Prompt', message: 'Reset to default?' }); if (!ok) return;
@@ -1161,6 +1171,7 @@ export function setupSettingsPanelListeners() {
     bindOv('iv-sp-ov-max-tokens', 'maxTokens', false, Number); bindOv('iv-sp-ov-history-limit', 'localHistoryLimit', false, Number);
     bindOv('iv-sp-ov-reasoning-trim', 'reasoningTrimStrings');
     document.getElementById('iv-sp-ov-sysprompt')?.addEventListener('input', e => _syncOvToGlobal('systemPrompt', e.target.value || undefined));
+    document.getElementById('iv-sp-ov-chat-sysprompt')?.addEventListener('input', e => _syncOvToGlobal('chatSystemPrompt', e.target.value || undefined));
     bindOv('iv-sp-ov-include-sysprompt',  'includeSystemPrompt',     true);
     bindOv('iv-sp-ov-include-persona',    'includeUserPersonality',   true);
     bindOv('iv-sp-ov-include-alt-swipes', 'includeAlternateSwipes',   true);

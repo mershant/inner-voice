@@ -84,7 +84,7 @@ const {
     getVisibleTurns,
 } = await import('../src/conversation.js');
 const { assembleMessages } = await import('../src/api.js');
-const { syncSimulationView } = await import('../src/simulation-view.js');
+const { syncSimulationView, injectSimulationView } = await import('../src/simulation-view.js');
 
 function mainMsg(text, isUser = false) {
     return { mes: text, is_user: isUser };
@@ -94,23 +94,9 @@ function payloadText(messages) {
     return messages.map(m => m.content).join('\n');
 }
 
-function placeInChat(chat, extensionPrompts) {
-    const messages = chat.map(m => ({ mes: m.mes }));
-    messages.reverse();
-    let totalInserted = 0;
-    const depths = Object.values(extensionPrompts)
-        .filter(p => p && p.value && p.position === 1)
-        .map(p => p.depth ?? 0);
-    const maxDepth = depths.length ? Math.max(...depths) : -1;
-    for (let i = 0; i <= maxDepth; i++) {
-        const atDepth = Object.values(extensionPrompts)
-            .filter(p => p && p.value && p.position === 1 && p.depth === i);
-        if (!atDepth.length) continue;
-        const injectIdx = Math.min(i + totalInserted, messages.length);
-        messages.splice(injectIdx, 0, ...atDepth.map(p => ({ mes: p.value, injected: true })));
-        totalInserted += atDepth.length;
-    }
-    messages.reverse();
+function placeInChat(chat) {
+    const messages = chat.filter(m => !m.is_system).map((m, index) => ({ ...m, index }));
+    injectSimulationView(messages);
     return messages;
 }
 

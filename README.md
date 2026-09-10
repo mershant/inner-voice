@@ -1,8 +1,8 @@
 # Inner Voice
 
-A SillyTavern extension hosting a private chat between the **Inner Voice** — the guiding second
-voice {{user}} experiences as their own mind — and {{user}}. Nothing said here enters the scene:
-NPCs and the World never perceive it.
+A SillyTavern extension for private thinking and quick conversations inside the simulation.
+In **IV**, the Inner Voice talks privately with one mind. In **Chat**, your persona talks to
+the named character, and the conversation happens in the scene.
 
 This repository is a fork of [ST-Copilot](https://github.com/QQ-Corporation/ST-Copilot)
 (MIT, Quaren / QQ-Corporation). The chat window, streaming pipeline, scroll behavior,
@@ -24,17 +24,50 @@ ordinary {{user}} reply also decides whether the completed exchange should portr
 triggered exchange costs two model requests and an untriggered one costs one.
 Remaining product behavior — the drawer cleanup — lands in a later issue.
 
-## Prompt macros
+## IV / Chat pages
 
-`{{voice}}` is the mind this inner chat belongs to. `{{user}}` is your persona.
+Create a character by typing their name in **New Session**. A character card is not required.
+Open that character's dropdown to choose **IV** or **Chat**. Each page keeps its own readable
+history; the default persona session remains IV only.
 
-Today those are the same person, so custom prompts that still say `{{user}}` keep working. When you write or update a prompt, use `{{voice}}` wherever you mean the mind doing the thinking. Keep `{{user}}` when you mean the persona — Portray always writes the persona's next turn.
+The pages share eligible context beside their main-chat anchors in the order it happened.
+Your own IV can remember your conversations with NPCs without hearing their private thoughts.
+Main chat sees eligible IV and Chat together, even when another page is open.
+
+Chat stays in context while its anchor does. Hiding the anchor or leaving the receiving model's
+context removes its raw Chat too; restoring the anchor restores inclusion. There is no separate
+30-exchange limit. IV depth settings still apply only to IV. Summaryception support for summarizing
+Chat is separate work (#40); injecting a conversation does not mark it summarized.
+
+Chat uses the existing independent connection and reasoning settings for one reply, without
+automatically generating a main-chat response, Portray, or recap. IV command prefixes are ordinary
+text on the Chat page.
+
+## Writing prompts
+
+`{{voice}}` is the session's named character (or your persona in the default IV session).
+`{{user}}` always means the active persona. Use `{{voice}}` for the responding mind and keep
+`{{user}}` for the persona; SillyTavern's global macros are not changed.
+
+**Chat Prompts** in the extension drawer and window settings holds Chat's editable system and
+post-history instructions, separate from IV. Blank post-history means no additional instruction.
+Set dialogue-only or dialogue with `*asterisk actions*` in these prompts, not a mode setting.
+The reply is this character's next conversational turn, not a full scene update. Dialogue and
+actions in its transcript are already part of the scene; private IV history remains unspoken.
+Existing IV customizations and its freedom to recall and invent remain intact (ADR 0002).
 
 ## Development
 
 - Live testing runs only in the isolated SillyTavern-Dev install, never main SillyTavern.
 - `npm run build` bundles `src/` into `index.js`.
 - `npm test` runs the unit tests.
+- There is no separate typecheck: this is JavaScript. Build and focused Node tests are the local checks.
+- The simulation view uses SillyTavern's `generate_interceptor` to append context to **temporary
+  prompt copies** of anchor messages before token selection, not saved or visible main-chat text.
+  The host therefore keeps or drops the anchor and its context together. ST skips interceptors
+  in dry-run previews; product acceptance must exercise the normal preparation path.
+- `scripts/live-acceptance-chat.py` checks the distributed window and captured requests in STD.
+  Its optional `--banter` run uses the configured connection without changing model/preset/reasoning settings.
 
 ## License
 

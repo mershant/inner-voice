@@ -1,7 +1,7 @@
 # Inner Voice
 
-This context names the entities and boundaries of the Inner Voice SillyTavern extension: a private
-chat where the Inner Voice and {{user}} think together under main-chat checkpoints.
+This context names the entities and boundaries of the Inner Voice SillyTavern extension: private
+thinking and in-scene conversations under main-chat checkpoints.
 
 The concept descends from the Self family (`/self`, `s:`, `/selfq`, `sq:`, `sr:`) defined in
 `/home/opc/rp-prompting/prompts/perspective/prompt.md`.
@@ -21,22 +21,28 @@ The ordinary SillyTavern chat where the simulation happens, outside the Inner Vo
 What the main chat's model actually receives when generating. Exchanges may enter it or be hidden from it.
 
 **Voice session**:
-A private inner chat bound to one mind. The default session is {{user}}. Additional sessions are bound to a character from the cast. Each session is that character's brain: the Inner Voice talks with that character, and the model answers as them in first person.
+A session belonging to one named character. The default session is {{user}}'s private thinking. Additional sessions are created by typing a name; a matching character card is optional. Each named character has IV and Chat pages within the same session.
+
+**Page**:
+The displayed IV or Chat history inside a character session. A page determines who is speaking in the next response and which editable instructions apply. Separate displayed histories do not mean separate model context. Switching pages changes neither the main-chat checkpoint nor what saved turns mean.
+
+**Chat**:
+An actual conversation in the scene: the player speaks as the active persona ({{user}}) to the named character ({{voice}}), and the model answers as that character. Dialogue and any actions written under the editable Chat instructions have happened in the simulation. Who heard or witnessed them follows the scene. Chat is not private IV, a proposal to act later, or self-chat for the persona.
 
 **Exchange**:
-The single private conversation between the Inner Voice and one mind, anchored under one main-chat message. A main-chat message holds at most one exchange per voice, which grows as that checkpoint's conversation continues.
+One voice's IV or Chat conversation anchored under one main-chat message. A main-chat message can hold both kinds for each voice. Their turns share the order in which they occurred, including switches between pages or characters within that checkpoint. Legacy exchanges are IV.
 
 **Exchange block**:
-The form a visible exchange takes inside the outgoing prompt: the full transcript wrapped in an `<inner-exchange>` frame. The opening explanation names the owning mind: this is [voice]'s private inner exchange — one mind talking to itself — imperceptible to everyone except [voice]; `IV:` is the Inner Voice; `[voice]:` is [voice]. For the {{user}} session that is equivalent to today's {{user}} frame. It sits directly below its anchor message. Multiple voices' blocks can sit under the same anchor.
+The framed transcript beside its main-chat anchor. An IV block names its owning mind and says the thoughts are private, not speech anyone else heard. A Chat block names the persona and character and says the conversation and its actions have happened; the simulation continues after its last turn. Interleaved exchanges appear in chronological portions, not sorted by page or character.
 
 **Live edge**:
 The latest main-chat message — the only place a new exchange turn can occur. {{user}} thinks through the story linearly; older exchanges remain readable and hideable but never extendable.
 
 **Inner memory**:
-What the extension chat's model sees: the depth-limited main chat with the summary integration covering older parts, the non-hidden exchanges whose anchor messages are inside that visible slice, each placed directly below its anchor, and — when those inclusions are on — the character cards as established knowledge about the people in the scene and the active lorebook entries as established world knowledge, ahead of that slice. A thought is visible to a model only where its anchor message is visible to that model — hidden or out-of-depth messages take their exchanges with them. The UI keeps every exchange readable regardless. The Inner Voice may recall, answer, or invent from it freely; invented callbacks can become true.
+What the extension's model sees: the selected main-chat slice with its available summary, eligible exchanges beside their anchors, and the enabled character, world, and persona knowledge. Each character's IV and Chat can read that character's exchanges in both modes. The persona's IV also sees the conversations the persona has had in named characters' Chat pages, but not those characters' private IV. Reading history does not import another page's system or post-history instructions. Hidden or out-of-context anchors take their exchanges with them; the UI keeps them readable. The Inner Voice may recall, answer, or invent freely; invented callbacks can become true.
 
 **Hide**:
-A reversible per-exchange toggle that makes both models forget the exchange: it leaves the outgoing prompt and the extension chat's own context, and stops counting toward depth. It stays readable in the UI. Unhiding restores it everywhere. An exchange whose anchor message is hidden in the main chat is hidden with it automatically. Hiding is not deletion.
+A reversible per-exchange toggle that removes that voice's IV or Chat exchange from both models' context while keeping it readable. The other page is unaffected. IV stops counting toward its depth. An exchange whose anchor is hidden in main chat is hidden with it automatically. Unhiding restores eligibility, not a new copy; hiding is not deletion or a change to what happened.
 
 **Portray**:
 The extension's impersonate: it writes {{user}}'s next main-chat input as an action responding to the world given the present circumstances. The seed is the extension's own input box beside the Portray button: text there has already decided what {{user}} does — pressing Portray consumes it as authored conduct (it does not become an exchange turn), and the turn performs that conduct first, at the same scale and substance, in {{user}}'s established voice. The live exchange is a supporting opinion that tilts how {{user}} acts — never material to restage, summarize, or synthesize into the turn. With an empty seed box and no exchange, the turn comes from {{user}}'s standing state. Scope is {{user}}'s actions and dialogue only, never other characters. The main-chat input box is only where the result lands — editable for the player to send by default, sent immediately as an option — and is never read as a seed.
@@ -52,3 +58,5 @@ What fires a portray. A manual button always exists. Auto-trigger, when enabled,
 
 **Simulation view**:
 What the outgoing prompt carries from the inner life. Two depth settings: exchange depth for {{user}} (default 1) and a separate exchange depth for all other voices (default 1). Depth is judged per voice: every voice whose non-hidden exchange falls within its applicable depth shows at its anchor. Voices never compete for slots, so one talkative mind cannot crowd another out. Multiple voices' blocks coexist under the same anchor. Hide always overrides. The main chat receives each mind's present private state, not the whole inner history.
+
+Chat does not use these IV depth slots. It stays included for as long as its anchor is visible and present in the actual receiving model's context, with no independent exchange-count expiry. This is permanent but anchor-bound, not a pin into every request. All eligible IV and Chat turns at an anchor retain their shared order, regardless of the open page. Inclusion in a main-model request does not mean a conversation has been summarized; Chat summary integration belongs to the companion work.

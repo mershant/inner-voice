@@ -17,8 +17,8 @@ export function parseThinkCommand(value) {
     return null;
 }
 
-export function syncThinkCommandHint(inputEl, hintEl) {
-    const visible = !!parseThinkCommand(inputEl?.value);
+export function syncThinkCommandHint(inputEl, hintEl, mode = 'iv') {
+    const visible = mode !== 'chat' && !!parseThinkCommand(inputEl?.value);
     if (hintEl) hintEl.hidden = !visible;
     return visible;
 }
@@ -30,9 +30,10 @@ export async function executeThinkSubmission(rawValue, {
     suppressAutoTrigger,
     portray,
     portrayForm,
+    mode = 'iv',
 }) {
     const raw = typeof rawValue === 'string' ? rawValue : '';
-    const parsed = parseThinkCommand(raw);
+    const parsed = mode === 'chat' ? null : parseThinkCommand(raw);
 
     if (!parsed) {
         const text = raw.trim();

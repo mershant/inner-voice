@@ -60,7 +60,7 @@ globalThis.SillyTavern = {
     },
 };
 
-const { initConversation, getConversation, addTurn } = await import('../src/conversation.js');
+const { initConversation, getConversation, addTurn, createVoiceSession, setActiveVoice, setActiveMode } = await import('../src/conversation.js');
 const {
     segmentAnchorLabel,
     isSegmentClosed,
@@ -142,6 +142,24 @@ test('a live-edge exchange is open regardless of turn count', () => {
 });
 
 // ─── Jump navigation: move between exchanges ─────────────────────────────────
+
+test('page navigation skips anchors belonging only to the other page', () => {
+    const conv = getConversation();
+    createVoiceSession(conv, 'Mira');
+    setActiveVoice(conv, 'Mira');
+    setActiveMode(conv, 'chat');
+    addTurn(conv, 'user', 'chat at zero');
+    addTurn(conv, 'assistant', 'private at zero', { mode: 'iv' });
+    stub.chat.push(mainMsg('second scene'));
+    addTurn(conv, 'assistant', 'private at one', { mode: 'iv' });
+    stub.chat.push(mainMsg('third scene'));
+    addTurn(conv, 'assistant', 'chat at two');
+    assert.equal(nearestSegmentBelow(conv, 0), 2);
+    assert.equal(nearestSegmentAbove(conv, 2), 0);
+    setActiveMode(conv, 'iv');
+    assert.equal(nearestSegmentBelow(conv, 0), 1);
+    assert.equal(nearestSegmentBelow(conv, 1), null);
+});
 
 test('nearestSegmentAbove steps to the previous distinct anchor', () => {
     stub.chat = [mainMsg('one')];

@@ -2,6 +2,7 @@ import {
     EXT_NAME,
     EXT_DISPLAY,
     DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_CHAT_SYSTEM_PROMPT,
     LEGACY_SYSTEM_PROMPTS,
     DEFAULT_MEMORY_PROMPT,
     LEGACY_MEMORY_PROMPTS,
@@ -16,10 +17,9 @@ import { _repairJSON } from './utils/util-text.js';
 import { USER_VOICE, resolveVoiceMacroForInnerChat } from './voice.js';
 
 // ─── The exchange spine ──────────────────────────────────────────────────────
-// One continuous inner conversation per main chat. Every turn is anchored to a
-// main-chat message (its anchorIndex) and tagged with an owner voice. The set
-// of turns sharing one (anchor, voice) is an exchange; a main-chat message
-// holds at most one exchange per voice. New turns are only ever created at the
+// One chronological turn list per main chat. Every turn has a main-chat anchor,
+// an owner voice, and an IV/Chat mode. The set of turns sharing an
+// (anchor, voice, mode) is an exchange. New turns are only created at the
 // live edge — the latest main-chat message. Older exchanges stay readable but
 // never grow.
 
@@ -29,6 +29,7 @@ function emptyConversation() {
         overrides: {},
         pickedChatIndices: [],
         hiddenAnchors: [],
+        pages: {},
         voiceSessions: [{ ownerVoice: USER_VOICE, characterId: null }],
     };
 }
@@ -42,9 +43,11 @@ function normalizeConversation(conv) {
     if (!Array.isArray(next.pickedChatIndices)) next.pickedChatIndices = [];
     if (!Array.isArray(next.hiddenAnchors)) next.hiddenAnchors = [];
     if (!Array.isArray(next.voiceSessions)) next.voiceSessions = [];
+    if (!next.pages || typeof next.pages !== 'object') next.pages = {};
     for (const m of next.messages) {
         if (m.anchorIndex === undefined) m.anchorIndex = null;
         if (!m.ownerVoice) m.ownerVoice = USER_VOICE;
+        m.mode = turnMode(m);
     }
     const sessions = [{ ownerVoice: USER_VOICE, characterId: null }];
     const seen = new Set([USER_VOICE]);
@@ -121,6 +124,9 @@ export function getSettings() {
         includeUserPersonality: true,
         includeAlternateSwipes: false,
         systemPrompt: DEFAULT_SYSTEM_PROMPT,
+        chatSystemPrompt: DEFAULT_CHAT_SYSTEM_PROMPT,
+        chatPostHistoryText: '',
+        chatPostHistoryRole: 'user',
         memoryManagePrompt: DEFAULT_MEMORY_PROMPT,
         profiles: {},
         activeProfile: '',
@@ -552,8 +558,9 @@ export function deleteVoiceSession(conversation, ownerVoice) {
     conversation.messages = conversation.messages.filter(m => (m.ownerVoice || USER_VOICE) !== voice);
     conversation.voiceSessions = conversation.voiceSessions.filter(session => session.ownerVoice !== voice);
     conversation.hiddenAnchors = conversation.hiddenAnchors.filter(entry =>
-        ![...removedAnchors].some(anchor => entry === manualHideKey(anchor, voice))
+        ![...removedAnchors].some(anchor => ['iv', 'chat'].some(mode => entry === manualHideKey(anchor, voice, mode)))
     );
+    delete conversation.pages?.[voice];
     if (_activeVoice === voice) _activeVoice = USER_VOICE;
     saveConversation();
     refreshSimulationView();
@@ -568,6 +575,24 @@ export function setActiveVoice(conversation, ownerVoice) {
     const voice = ownerVoice || USER_VOICE;
     if (!getVoiceSession(conversation, voice)) return false;
     _activeVoice = voice;
+    return true;
+}
+
+// The page controls display and the next request, never the meaning of saved turns.
+export function turnMode(turn) {
+    return turn?.mode === 'chat' ? 'chat' : 'iv';
+}
+
+export function getActiveMode(conversation = getConversation()) {
+    return _activeVoice !== USER_VOICE && conversation.pages?.[_activeVoice] === 'chat' ? 'chat' : 'iv';
+}
+
+export function setActiveMode(conversation, mode) {
+    if (!['iv', 'chat'].includes(mode) || (_activeVoice === USER_VOICE && mode === 'chat')) return false;
+    if (!conversation.pages) conversation.pages = {};
+    // Names are player-authored keys; define an own property even for __proto__.
+    Object.defineProperty(conversation.pages, _activeVoice, { value: mode, enumerable: true, writable: true, configurable: true });
+    saveConversation();
     return true;
 }
 
@@ -594,9 +619,10 @@ function refreshSimulationView() {
 }
 
 export function addTurn(conversation, role, content, extra = {}) {
-    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ownerVoice: _activeVoice, ...extra };
+    const msg = { id: genId('msg'), role, content, timestamp: Date.now(), anchorIndex: getLiveEdgeIndex(), ownerVoice: _activeVoice, mode: getActiveMode(conversation), ...extra };
     conversation.messages.push(msg);
-    if (conversation.messages.length > 400) conversation.messages = conversation.messages.slice(-400);
+    // Saved transcripts follow their anchors; a context/display limit is not
+    // permission to erase history from this shared chronological list.
     saveConversation();
     refreshSimulationView();
     return msg;
@@ -609,18 +635,21 @@ export function addTurnAt(conversation, anchorIndex, role, content, extra = {}) 
     return addTurn(conversation, role, content, extra);
 }
 
-// Groups turns into exchanges — one per (anchor, owner voice), in order.
-export function getExchanges(conversation, ownerVoice) {
+// Groups exchanges for visibility/depth, not transcript ordering. Model context
+// uses getOrderedExchangeParts to preserve interleaving across these groups.
+export function getExchanges(conversation, ownerVoice, mode) {
     const groups = new Map();
     for (const m of conversation.messages) {
         const anchor = m.anchorIndex === undefined ? null : m.anchorIndex;
         const voice = m.ownerVoice || USER_VOICE;
         if (ownerVoice !== undefined && voice !== ownerVoice) continue;
-        const key = JSON.stringify([anchor, voice]);
+        if (mode !== undefined && turnMode(m) !== mode) continue;
+        const key = JSON.stringify([anchor, voice, turnMode(m)]);
         if (!groups.has(key)) {
             groups.set(key, {
                 anchorIndex: anchor,
                 ownerVoice: voice,
+                mode: turnMode(m),
                 turns: [],
             });
         }
@@ -629,19 +658,20 @@ export function getExchanges(conversation, ownerVoice) {
     return [...groups.values()];
 }
 
-export function getExchangeAt(conversation, anchorIndex, ownerVoice = _activeVoice) {
-    return getExchanges(conversation, ownerVoice).find(e => e.anchorIndex === anchorIndex) || null;
+export function getExchangeAt(conversation, anchorIndex, ownerVoice = _activeVoice, mode = 'iv') {
+    return getExchanges(conversation, ownerVoice, mode).find(e => e.anchorIndex === anchorIndex) || null;
 }
 
 // The exchange at the live edge — the only one that can still grow.
-export function getLiveExchange(conversation, ownerVoice = _activeVoice) {
+export function getLiveExchange(conversation, ownerVoice = _activeVoice, mode = 'iv') {
     const edge = getLiveEdgeIndex();
     if (edge === null) return null;
-    return getExchangeAt(conversation, edge, ownerVoice);
+    return getExchangeAt(conversation, edge, ownerVoice, mode);
 }
 
-export function getVoiceTurns(conversation, ownerVoice = _activeVoice) {
-    return conversation.messages.filter(m => (m.ownerVoice || USER_VOICE) === ownerVoice);
+export function getVoiceTurns(conversation, ownerVoice = _activeVoice, mode) {
+    return conversation.messages.filter(m => (m.ownerVoice || USER_VOICE) === ownerVoice
+        && (mode === undefined || turnMode(m) === mode));
 }
 
 // ─── Hide ───────────────────────────────────────────────────────────────────
@@ -670,22 +700,23 @@ export function isAnchorHiddenInMainChat(anchorIndex) {
     }
 }
 
-function manualHideKey(anchorIndex, ownerVoice = USER_VOICE) {
+function manualHideKey(anchorIndex, ownerVoice = USER_VOICE, mode = 'iv') {
     const anchor = anchorIndex === undefined ? null : anchorIndex;
+    if (mode === 'chat') return JSON.stringify([anchor, ownerVoice, mode]);
     return ownerVoice === USER_VOICE ? anchor : JSON.stringify([anchor, ownerVoice]);
 }
 
-export function isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice = _activeVoice) {
-    return conversation.hiddenAnchors.includes(manualHideKey(anchorIndex, ownerVoice));
+export function isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice = _activeVoice, mode = 'iv') {
+    return conversation.hiddenAnchors.includes(manualHideKey(anchorIndex, ownerVoice, mode));
 }
 
-export function isExchangeHidden(conversation, anchorIndex, ownerVoice = _activeVoice) {
-    return isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice) || isAnchorHiddenInMainChat(anchorIndex);
+export function isExchangeHidden(conversation, anchorIndex, ownerVoice = _activeVoice, mode = 'iv') {
+    return isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice, mode) || isAnchorHiddenInMainChat(anchorIndex);
 }
 
-export function setExchangeHidden(conversation, anchorIndex, hidden, ownerVoice = _activeVoice) {
-    const key = manualHideKey(anchorIndex, ownerVoice);
-    const has = isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice);
+export function setExchangeHidden(conversation, anchorIndex, hidden, ownerVoice = _activeVoice, mode = 'iv') {
+    const key = manualHideKey(anchorIndex, ownerVoice, mode);
+    const has = isExchangeManuallyHidden(conversation, anchorIndex, ownerVoice, mode);
     if (hidden && !has) conversation.hiddenAnchors.push(key);
     if (!hidden && has) conversation.hiddenAnchors = conversation.hiddenAnchors.filter(entry => entry !== key);
     saveConversation();
@@ -693,10 +724,29 @@ export function setExchangeHidden(conversation, anchorIndex, hidden, ownerVoice 
 }
 
 // The turns the Inner Voice remembers: every turn whose exchange is not hidden.
-export function getVisibleTurns(conversation, ownerVoice = _activeVoice) {
-    return getVoiceTurns(conversation, ownerVoice).filter(m =>
-        !isExchangeHidden(conversation, m.anchorIndex, ownerVoice)
+export function getVisibleTurns(conversation, ownerVoice = _activeVoice, mode = 'iv') {
+    return getVoiceTurns(conversation, ownerVoice, mode).filter(m =>
+        !isExchangeHidden(conversation, m.anchorIndex, ownerVoice, mode)
     );
+}
+
+// Array order is the saved timeline, including switches within one anchor.
+// Context portions are contiguous runs, not a second canonical transcript.
+export function getOrderedExchangeParts(conversation, eligible = () => true) {
+    const parts = [];
+    for (const turn of conversation.messages) {
+        if (!turn.content || turn._tcTemp || !eligible(turn)) continue;
+        const anchorIndex = turn.anchorIndex ?? null;
+        const ownerVoice = turn.ownerVoice || USER_VOICE;
+        const mode = turnMode(turn);
+        const previous = parts.at(-1);
+        if (previous && previous.anchorIndex === anchorIndex && previous.ownerVoice === ownerVoice && previous.mode === mode) {
+            previous.turns.push(turn);
+        } else {
+            parts.push({ anchorIndex, ownerVoice, mode, turns: [turn] });
+        }
+    }
+    return parts;
 }
 
 // ─── Turn Editing Helpers ───────────────────────────────────────────────────
@@ -705,8 +755,9 @@ export function truncateAfter(conversation, msgId) {
     const idx = conversation.messages.findIndex(m => m.id === msgId);
     if (idx !== -1) {
         const ownerVoice = conversation.messages[idx].ownerVoice || USER_VOICE;
+        const mode = turnMode(conversation.messages[idx]);
         conversation.messages = conversation.messages.filter((m, messageIndex) =>
-            messageIndex <= idx || (m.ownerVoice || USER_VOICE) !== ownerVoice
+            messageIndex <= idx || (m.ownerVoice || USER_VOICE) !== ownerVoice || turnMode(m) !== mode
         );
         saveConversation();
         refreshSimulationView();
@@ -722,8 +773,9 @@ export function truncateFrom(conversation, msgId) {
     const idx = conversation.messages.findIndex(m => m.id === msgId);
     if (idx !== -1) {
         const ownerVoice = conversation.messages[idx].ownerVoice || USER_VOICE;
+        const mode = turnMode(conversation.messages[idx]);
         conversation.messages = conversation.messages.filter((m, messageIndex) =>
-            messageIndex < idx || (m.ownerVoice || USER_VOICE) !== ownerVoice
+            messageIndex < idx || (m.ownerVoice || USER_VOICE) !== ownerVoice || turnMode(m) !== mode
         );
         saveConversation();
         refreshSimulationView();
